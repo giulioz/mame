@@ -100,6 +100,10 @@ std::unique_ptr<midi_input_port> pm_module::create_input(std::string_view name)
 	{
 		found_dev = Pm_GetDefaultInputDeviceID();
 	}
+	else if (name == "virtual")
+	{
+		found_dev = Pm_CreateVirtualInput("MAME", NULL, NULL);
+	}
 	else
 	{
 		int const num_devs = Pm_CountDevices();

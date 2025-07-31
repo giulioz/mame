@@ -51,8 +51,8 @@ void v25_common_device::ida_sfr_map(address_map &map)
 	map(0x182, 0x183).rw(FUNC(v25_common_device::md0_r), FUNC(v25_common_device::md0_w));
 	map(0x188, 0x189).rw(FUNC(v25_common_device::tm1_r), FUNC(v25_common_device::tm1_w));
 	map(0x18a, 0x18b).rw(FUNC(v25_common_device::md1_r), FUNC(v25_common_device::md1_w));
-	map(0x190, 0x190).w(FUNC(v25_common_device::tmc0_w));
-	map(0x191, 0x191).w(FUNC(v25_common_device::tmc1_w));
+	map(0x190, 0x190).rw(FUNC(v25_common_device::tmc0_r), FUNC(v25_common_device::tmc0_w));
+	map(0x191, 0x191).rw(FUNC(v25_common_device::tmc1_r), FUNC(v25_common_device::tmc1_w));
 	map(0x194, 0x196).rw(FUNC(v25_common_device::tmms_r), FUNC(v25_common_device::tmms_w));
 	map(0x19c, 0x19c).rw(FUNC(v25_common_device::tmic0_r), FUNC(v25_common_device::tmic0_w));
 	map(0x19d, 0x19d).rw(FUNC(v25_common_device::tmic1_r), FUNC(v25_common_device::tmic1_w));
@@ -537,6 +537,16 @@ void v25_common_device::tmc1_w(uint8_t d)
 	}
 	else
 		m_timers[2]->adjust(attotime::never);
+}
+
+uint8_t v25_common_device::tmc0_r(offs_t a)
+{
+	return m_TMC0;
+}
+
+uint8_t v25_common_device::tmc1_r(offs_t a)
+{
+	return m_TMC1;
 }
 
 uint8_t v25_common_device::tmms_r(offs_t a)

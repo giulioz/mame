@@ -1,8 +1,7 @@
 // license:BSD-3-Clause
-// copyright-holders:Bryan McPhail, Alex W. Jackson
-/* ASG 971222 -- rewrote this interface */
-#ifndef MAME_CPU_NEC_V25_H
-#define MAME_CPU_NEC_V25_H
+// copyright-holders:Bryan McPhail, Alex W. Jackson,giulioz
+#ifndef MAME_CPU_NEC_V55_H
+#define MAME_CPU_NEC_V55_H
 
 #pragma once
 
@@ -15,21 +14,52 @@
 
 enum
 {
-	V25_PC=0,
-	V25_AW, V25_CW, V25_DW, V25_BW, V25_SP, V25_BP, V25_IX, V25_IY,
-	V25_DS1, V25_PS, V25_SS, V25_DS0,
-	V25_AL, V25_AH, V25_CL, V25_CH, V25_DL, V25_DH, V25_BL, V25_BH,
-	V25_PSW,
-	V25_IDB,
-	V25_PENDING
+	V55_PC=0,
+	V55_AW, V55_CW, V55_DW, V55_BW, V55_SP, V55_BP, V55_IX, V55_IY,
+	V55_DS1, V55_PS, V55_SS, V55_DS0,
+	V55_DS2, V55_DS3,
+	V55_AL, V55_AH, V55_CL, V55_CH, V55_DL, V55_DH, V55_BL, V55_BH,
+	V55_PSW,
+	V55_PENDING
 };
 
-class v25_common_device : public cpu_device, public nec_disassembler::config
+/* interrupt sources */
+enum INTSOURCES
+{
+	BRK        = 0,
+	INT_IRQ    = 1,
+	NMI_IRQ    = 1 << 1,
+	INT_WDT    = 1 << 2,
+	INT_INTP0  = 1 << 3,
+	INT_INTP1  = 1 << 4,
+	INT_INTP2  = 1 << 5,
+	INT_INTP3  = 1 << 6,
+	INT_INTP4  = 1 << 7,
+	INT_INTP5  = 1 << 8,
+	INT_CM00   = 1 << 9,
+	INT_CM01   = 1 << 10,
+	INT_CM10   = 1 << 11,
+	INT_CM11   = 1 << 12,
+	INT_CM21   = 1 << 13,
+	INT_CM31   = 1 << 14,
+	INT_D0     = 1 << 15,
+	INT_D0S    = 1 << 16,
+	INT_D1     = 1 << 17,
+	INT_D1S    = 1 << 18,
+	INT_SER0   = 1 << 19,
+	INT_SER1   = 1 << 20,
+	INT_SR0    = 1 << 21,
+	INT_SR1    = 1 << 22,
+	INT_ST0    = 1 << 23,
+	INT_ST1    = 1 << 24,
+	INT_SIT    = 1 << 25,
+	INT_PAI    = 1 << 26,
+	INT_AD     = 1 << 27,
+};
+
+class v55_device : public cpu_device, public nec_disassembler::config
 {
 public:
-	// configuration helpers
-	void set_decryption_table(const uint8_t *decryption_table) { m_v25v35_decryptiontable = decryption_table; }
-
 	auto pt_in_cb() { return m_pt_in.bind(); }
 	auto p0_in_cb() { return m_p0_in.bind(); }
 	auto p1_in_cb() { return m_p1_in.bind(); }
@@ -45,41 +75,43 @@ public:
 	auto dma0_write_cb() { return m_dma_write[0].bind(); }
 	auto dma1_write_cb() { return m_dma_write[1].bind(); }
 
-	TIMER_CALLBACK_MEMBER(v25_timer_callback);
+	TIMER_CALLBACK_MEMBER(v55_timer_callback);
 
-protected:
+	v55_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
+
+// protected:
 	// construction/destruction
-	v25_common_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, bool is_16bit, uint8_t prefetch_size, uint8_t prefetch_cycles, uint32_t chip_type);
-
+	v55_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, bool is_16bit, uint8_t prefetch_size, uint8_t prefetch_cycles, uint32_t chip_type);
+	
 	// device-level overrides
-	virtual void device_start() override ATTR_COLD;
-	virtual void device_reset() override ATTR_COLD;
-	virtual void device_post_load() override { notify_clock_changed(); }
+	void device_start() override ATTR_COLD;
+	void device_reset() override ATTR_COLD;
+	void device_post_load() override { notify_clock_changed(); }
 
 	// device_execute_interface overrides
-	virtual uint64_t execute_clocks_to_cycles(uint64_t clocks) const noexcept override { return clocks / m_PCK; }
-	virtual uint64_t execute_cycles_to_clocks(uint64_t cycles) const noexcept override { return cycles * m_PCK; }
-	virtual uint32_t execute_min_cycles() const noexcept override { return 1; }
-	virtual uint32_t execute_max_cycles() const noexcept override { return 80; }
-	virtual uint32_t execute_default_irq_vector(int inputnum) const noexcept override { return 0xff; }
-	virtual bool execute_input_edge_triggered(int inputnum) const noexcept override { return inputnum == INPUT_LINE_NMI || (inputnum >= NEC_INPUT_LINE_INTP0 && inputnum <= NEC_INPUT_LINE_INTP2); }
-	virtual void execute_run() override;
-	virtual void execute_set_input(int inputnum, int state) override;
+	uint64_t execute_clocks_to_cycles(uint64_t clocks) const noexcept override { return clocks / m_PCK; }
+	uint64_t execute_cycles_to_clocks(uint64_t cycles) const noexcept override { return cycles * m_PCK; }
+	uint32_t execute_min_cycles() const noexcept override { return 1; }
+	uint32_t execute_max_cycles() const noexcept override { return 80; }
+	uint32_t execute_default_irq_vector(int inputnum) const noexcept override { return 0xff; }
+	bool execute_input_edge_triggered(int inputnum) const noexcept override { return inputnum == INPUT_LINE_NMI || (inputnum >= NEC_INPUT_LINE_INTP0 && inputnum <= NEC_INPUT_LINE_INTP2); }
+	void execute_run() override;
+	void execute_set_input(int inputnum, int state) override;
 
 	// device_memory_interface overrides
-	virtual space_config_vector memory_space_config() const override;
-	virtual bool memory_translate(int spacenum, int intention, offs_t &address, address_space *&target_space) override;
+	space_config_vector memory_space_config() const override;
+	bool memory_translate(int spacenum, int intention, offs_t &address, address_space *&target_space) override;
 
 	// device_state_interface overrides
-	virtual void state_string_export(const device_state_entry &entry, std::string &str) const override;
-	virtual void state_import(const device_state_entry &entry) override;
-	virtual void state_export(const device_state_entry &entry) override;
+	void state_string_export(const device_state_entry &entry, std::string &str) const override;
+	void state_import(const device_state_entry &entry) override;
+	void state_export(const device_state_entry &entry) override;
 
 	// device_disasm_interface overrides
-	virtual std::unique_ptr<util::disasm_interface> create_disassembler() override;
-	virtual int get_mode() const override { return 1; }
+	std::unique_ptr<util::disasm_interface> create_disassembler() override;
+	int get_mode() const override { return 1; }
 
-private:
+// private:
 	address_space_config m_program_config;
 	address_space_config m_data_config;
 	address_space_config m_io_config;
@@ -88,7 +120,8 @@ private:
 	memory_access<20, 1, 0, ENDIANNESS_LITTLE>::cache m_cache16;
 
 	/* internal RAM and register banks */
-	required_shared_ptr<uint16_t> m_internal_ram;
+	// required_shared_ptr<uint16_t> m_internal_ram;
+	std::array<uint16_t, 0x200> m_internal_ram;
 
 	uint16_t  m_ip;
 	uint16_t  m_prev_ip;
@@ -96,8 +129,8 @@ private:
 	/* PSW flags */
 	int32_t   m_SignVal;
 	uint32_t  m_AuxVal, m_OverVal, m_ZeroVal, m_CarryVal, m_ParityVal;  /* 0 or non-0 valued flags */
-	uint8_t   m_IBRK, m_F0, m_F1, m_TF, m_IF, m_DF, m_MF;   /* 0 or 1 valued flags */
-	uint8_t   m_RBW, m_RBB;   /* current register bank base, preshifted for word and byte registers */
+	uint8_t   m_IBRK, m_TF, m_IF, m_DF;   /* 0 or 1 valued flags */
+	uint16_t   m_RBW, m_RBB;   /* current register bank base, preshifted for word and byte registers */
 
 	/* interrupt related */
 	uint32_t  m_pending_irq;
@@ -113,11 +146,14 @@ private:
 	uint32_t  m_nmi_state;
 	uint32_t  m_irq_state;
 	uint32_t  m_poll_state;
-	uint32_t  m_mode_state;
 	uint32_t  m_intp_state[3];
 	uint8_t   m_intm;
 	uint8_t   m_no_interrupt;
 	uint8_t   m_halted;
+	uint8_t   m_imc;
+	uint16_t  m_imc_base;
+	uint8_t   m_intm0;
+	uint8_t   m_ic[64];
 
 	// timer related
 	uint16_t  m_TM0, m_MD0, m_TM1, m_MD1;
@@ -131,16 +167,19 @@ private:
 	uint8_t   m_sce[2];
 
 	// DMA related
-	uint8_t   m_dmac[2];
-	uint8_t   m_dmam[2];
-	int8_t    m_dma_channel;
-	int8_t    m_last_dma_channel;
+	uint32_t tc0;
+	uint32_t udc0;
+	uint32_t dcm0;
+	uint32_t mar0;
+	uint32_t dptc0;
+	uint8_t dmam0;
+	uint8_t dmac0;
+	uint8_t dmas;
 
 	// system control
-	uint8_t   m_RAMEN, m_TB, m_PCK; // PRC register
+	uint8_t   m_TB, m_PCK; // PRC register
 	uint8_t   m_RFM;
 	uint16_t  m_WTC;
-	uint32_t  m_IDB;
 
 	address_space *m_program;
 	std::function<u8 (offs_t address)> m_dr8;
@@ -176,10 +215,8 @@ private:
 
 	uint32_t m_debugger_temp;
 
-	const uint8_t *m_v25v35_decryptiontable;  // internal decryption table
-
-	typedef void (v25_common_device::*nec_ophandler)();
-	typedef uint32_t (v25_common_device::*nec_eahandler)();
+	typedef void (v55_device::*nec_ophandler)();
+	typedef uint32_t (v55_device::*nec_eahandler)();
 	static const nec_ophandler s_nec_instruction[256];
 	static const nec_eahandler s_GetEA[192];
 
@@ -192,119 +229,115 @@ private:
 	void nec_bankswitch(unsigned bank_num);
 	void nec_trap();
 	void external_int();
-	void dma_process();
+	void do_int(unsigned int_num, int source, bool can_bankswitch);
 
 	void ida_sfr_map(address_map &map) ATTR_COLD;
-	uint8_t read_irqcontrol(int /*INTSOURCES*/ source, uint8_t priority);
-	void write_irqcontrol(int /*INTSOURCES*/ source, uint8_t d);
-	uint8_t p0_r();
-	void p0_w(uint8_t d);
-	void pm0_w(uint8_t d);
-	void pmc0_w(uint8_t d);
-	uint8_t p1_r();
-	void p1_w(uint8_t d);
-	void pm1_w(uint8_t d);
-	void pmc1_w(uint8_t d);
-	uint8_t p2_r();
-	void p2_w(uint8_t d);
-	void pm2_w(uint8_t d);
-	void pmc2_w(uint8_t d);
-	uint8_t pt_r();
-	void pmt_w(uint8_t d);
-	uint8_t intm_r();
-	void intm_w(uint8_t d);
-	uint8_t ems_r(offs_t a);
-	void ems_w(offs_t a, uint8_t d);
-	uint8_t exic0_r();
-	void exic0_w(uint8_t d);
-	uint8_t exic1_r();
-	void exic1_w(uint8_t d);
-	uint8_t exic2_r();
-	void exic2_w(uint8_t d);
-	uint8_t srms0_r();
-	void srms0_w(uint8_t d);
-	uint8_t stms0_r();
-	void stms0_w(uint8_t d);
-	uint8_t scm0_r();
-	void scm0_w(uint8_t d);
-	uint8_t scc0_r();
-	void scc0_w(uint8_t d);
-	uint8_t brg0_r();
-	void brg0_w(uint8_t d);
-	uint8_t sce0_r();
-	uint8_t seic0_r();
-	void seic0_w(uint8_t d);
-	uint8_t sric0_r();
-	void sric0_w(uint8_t d);
-	uint8_t stic0_r();
-	void stic0_w(uint8_t d);
-	uint8_t srms1_r();
-	void srms1_w(uint8_t d);
-	uint8_t stms1_r();
-	void stms1_w(uint8_t d);
-	uint8_t scm1_r();
-	void scm1_w(uint8_t d);
-	uint8_t scc1_r();
-	void scc1_w(uint8_t d);
-	uint8_t brg1_r();
-	void brg1_w(uint8_t d);
-	uint8_t sce1_r();
-	uint8_t seic1_r();
-	void seic1_w(uint8_t d);
-	uint8_t sric1_r();
-	void sric1_w(uint8_t d);
-	uint8_t stic1_r();
-	void stic1_w(uint8_t d);
-	uint16_t tm0_r();
-	void tm0_w(uint16_t d);
-	uint16_t md0_r();
-	void md0_w(uint16_t d);
-	uint16_t tm1_r();
-	void tm1_w(uint16_t d);
-	uint16_t md1_r();
-	void md1_w(uint16_t d);
-	void tmc0_w(uint8_t d);
-	void tmc1_w(uint8_t d);
-	uint8_t tmc0_r(offs_t a);
-	uint8_t tmc1_r(offs_t a);
-	uint8_t tmms_r(offs_t a);
-	void tmms_w(offs_t a, uint8_t d);
-	uint8_t tmic0_r();
-	void tmic0_w(uint8_t d);
-	uint8_t tmic1_r();
-	void tmic1_w(uint8_t d);
-	uint8_t tmic2_r();
-	void tmic2_w(uint8_t d);
-	uint8_t dmac0_r();
-	void dmac0_w(uint8_t d);
-	uint8_t dmam0_r();
-	void dmam0_w(uint8_t d);
-	uint8_t dmac1_r();
-	void dmac1_w(uint8_t d);
-	uint8_t dmam1_r();
-	void dmam1_w(uint8_t d);
-	uint8_t dic0_r();
-	void dic0_w(uint8_t d);
-	uint8_t dic1_r();
-	void dic1_w(uint8_t d);
-	uint8_t rfm_r();
-	void rfm_w(uint8_t d);
-	uint16_t wtc_r();
-	void wtc_w(offs_t a, uint16_t d, uint16_t m);
-	uint8_t flag_r();
-	void flag_w(uint8_t d);
-	uint8_t prc_r();
-	void prc_w(uint8_t d);
-	uint8_t tbic_r();
-	void tbic_w(uint8_t d);
-	uint8_t irqs_r();
+	uint8_t adm_r();
+	void adm_w(uint8_t data);
 	uint8_t ispr_r();
-	uint8_t idb_r();
-	void idb_w(uint8_t d);
-	uint8_t v25_read_byte(unsigned a);
-	uint16_t v25_read_word(unsigned a);
-	void v25_write_byte(unsigned a, uint8_t d);
-	void v25_write_word(unsigned a, uint16_t d);
+	uint8_t imc_r();
+	void imc_w(uint8_t data);
+	uint8_t ic_r(offs_t pos);
+	void ic_w(offs_t pos, uint8_t data);
+	uint8_t p0_r();
+	void p0_w(uint8_t data);
+	uint8_t p2_r();
+	void p2_w(uint8_t data);
+	uint8_t p4_r();
+	void p4_w(uint8_t data);
+	uint8_t pm0_r();
+	void pm0_w(uint8_t data);
+	uint8_t pm2_r();
+	void pm2_w(uint8_t data);
+	uint8_t pm4_r();
+	void pm4_w(uint8_t data);
+	uint8_t pm8_r();
+	void pm8_w(uint8_t data);
+	uint8_t pmc2_r();
+	void pmc2_w(uint8_t data);
+	uint8_t pmc4_r();
+	void pmc4_w(uint8_t data);
+	uint8_t pmc8_r();
+	void pmc8_w(uint8_t data);
+	uint8_t tmc0_r();
+	void tmc0_w(uint8_t data);
+	uint8_t intm0_r();
+	void intm0_w(uint8_t data);
+	uint8_t tm3_r();
+	void tm3_w(uint8_t data);
+	uint8_t cm00_r();
+	void cm00_w(uint8_t data);
+	uint8_t cm10_r();
+	void cm10_w(uint8_t data);
+	uint8_t cm31_r();
+	void cm31_w(uint8_t data);
+	uint8_t pwm_r();
+	void pwm_w(uint8_t data);
+	uint8_t pwc0_r();
+	void pwc0_w(uint8_t data);
+	uint8_t mbc_r();
+	void mbc_w(uint8_t data);
+	uint8_t rfm_r();
+	void rfm_w(uint8_t data);
+	uint8_t stbc_r();
+	void stbc_w(uint8_t data);
+
+	uint8_t adcr0_r();
+	void adcr0_w(uint8_t data);
+	uint8_t adcr3_r();
+	void adcr3_w(uint8_t data);
+	uint8_t cm21_r();
+	void cm21_w(uint8_t data);
+	uint8_t txbrg0_r();
+	void txbrg0_w(uint8_t data);
+	uint8_t rxbrg0_r();
+	void rxbrg0_w(uint8_t data);
+	uint8_t prs0_r();
+	void prs0_w(uint8_t data);
+	uint8_t uartm0_r();
+	void uartm0_w(uint8_t data);
+	uint8_t txbrg1_r();
+	void txbrg1_w(uint8_t data);
+	uint8_t rxbrg1_r();
+	void rxbrg1_w(uint8_t data);
+	uint8_t prs1_r();
+	void prs1_w(uint8_t data);
+	uint8_t txb1_r();
+	void txb1_w(uint8_t data);
+	uint8_t asp_r();
+	void asp_w(uint8_t data);
+
+	uint8_t v55_read_byte(unsigned a);
+	uint16_t v55_read_word(unsigned a);
+	void v55_write_byte(unsigned a, uint8_t d);
+	void v55_write_word(unsigned a, uint16_t d);
+	
+	uint16_t tc0l_r();
+	void tc0l_w(uint16_t data);
+	uint16_t tc0h_r();
+	void tc0h_w(uint16_t data);
+	uint16_t udc0l_r();
+	void udc0l_w(uint16_t data);
+	uint16_t dcm0l_r();
+	void dcm0l_w(uint16_t data);
+	uint16_t mar0l_r();
+	void mar0l_w(uint16_t data);
+	uint16_t dptc0l_r();
+	void dptc0l_w(uint16_t data);
+	uint16_t udc0h_r();
+	void udc0h_w(uint16_t data);
+	uint16_t dcm0h_r();
+	void dcm0h_w(uint16_t data);
+	uint16_t mar0h_r();
+	void mar0h_w(uint16_t data);
+	uint16_t dptc0h_r();
+	void dptc0h_w(uint16_t data);
+	uint8_t dmam0_r();
+	void dmam0_w(uint8_t data);
+	uint8_t dmac0_r();
+	void dmac0_w(uint8_t data);
+	uint8_t dmas_r();
+	void dmas_w(uint8_t data);
 
 	void i_add_br8();
 	void i_add_wr16();
@@ -322,7 +355,7 @@ private:
 	void i_or_axd16();
 	void i_push_cs();
 	void i_pre_nec();
-	void i_pre_v25();
+	void i_pre_v55();
 	void i_adc_br8();
 	void i_adc_wr16();
 	void i_adc_r8b();
@@ -553,8 +586,9 @@ private:
 	void i_fepre();
 	void i_ffpre();
 	void i_wait();
-	void i_brkn();
-	void i_brks();
+	void i_v55_ds2();
+	void i_v55_ds3();
+	void i_v55_iram();
 
 	uint32_t EA_000();
 	uint32_t EA_001();
@@ -580,25 +614,37 @@ private:
 	uint32_t EA_205();
 	uint32_t EA_206();
 	uint32_t EA_207();
+
+	uint32_t EAI_000();
+	uint32_t EAI_001();
+	uint32_t EAI_002();
+	uint32_t EAI_003();
+	uint32_t EAI_004();
+	uint32_t EAI_005();
+	uint32_t EAI_006();
+	uint32_t EAI_007();
+	uint32_t EAI_100();
+	uint32_t EAI_101();
+	uint32_t EAI_102();
+	uint32_t EAI_103();
+	uint32_t EAI_104();
+	uint32_t EAI_105();
+	uint32_t EAI_106();
+	uint32_t EAI_107();
+	uint32_t EAI_200();
+	uint32_t EAI_201();
+	uint32_t EAI_202();
+	uint32_t EAI_203();
+	uint32_t EAI_204();
+	uint32_t EAI_205();
+	uint32_t EAI_206();
+	uint32_t EAI_207();
+
+	static const nec_eahandler s_GetEA_IRAM[192];
 };
 
 
-class v25_device : public v25_common_device
-{
-public:
-	v25_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
-};
+DECLARE_DEVICE_TYPE(V55, v55_device)
 
 
-class v35_device : public v25_common_device
-{
-public:
-	v35_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
-};
-
-
-DECLARE_DEVICE_TYPE(V25, v25_device)
-DECLARE_DEVICE_TYPE(V35, v35_device)
-
-
-#endif // MAME_CPU_NEC_V25_H
+#endif // MAME_CPU_NEC_V55_H

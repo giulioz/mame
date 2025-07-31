@@ -118,7 +118,7 @@ const nec_disassembler::NEC_I386_OPCODE nec_disassembler::necv_opcode_table1[256
 	{"push    r",       0,              0,                  0,                  0               },
 	{"pop     r",       0,              0,                  0,                  0               },
 	{"chkind",          MODRM,          PARAM_REG16,        PARAM_RM16,         0               },
-	{"brkn",            0,              PARAM_UI8,          0,                  0,              STEP_OVER},    /* V25S/V35S only */
+	{"ds2",             0,              0,         				  0,                  0               },    /* V55PI only */
 	{"repnc",           PREFIX,         0,                  0,                  0               },
 	{"repc",            PREFIX,         0,                  0,                  0               },
 	{"fpo2    0",       0,              0,                  0,                  0               },  /* for a coprocessor that was never made */
@@ -240,7 +240,7 @@ const nec_disassembler::NEC_I386_OPCODE nec_disassembler::necv_opcode_table1[256
 	{"shiftwv",         GROUP,          0,                  0,                  0               },
 	{"cvtbd",           0,              PARAM_I8,           0,                  0               },
 	{"cvtdb",           0,              PARAM_I8,           0,                  0               },
-	{"???",             0,              0,                  0,                  0               },
+	{"ds3",             0,              0,                  0,                  0               },
 	{"trans",           0,              0,                  0,                  0               },
 	{"escape",          FPU,            0,                  0,                  0               },
 	{"escape",          FPU,            0,                  0,                  0               },
@@ -269,7 +269,7 @@ const nec_disassembler::NEC_I386_OPCODE nec_disassembler::necv_opcode_table1[256
 	{"out",             0,              PARAM_DW,           PARAM_AW,           0               },
 	// 0xf0
 	{"buslock",         PREFIX,         0,                  0,                  0               },
-	{"brks",            0,              PARAM_UI8,          0,                  0,              STEP_OVER},    /* V25S/V35S only */
+	{"iram",            0,              0,                  0,                  0               },    /* V25S/V35S only */
 	{"repne",           PREFIX,         0,                  0,                  0               },
 	{"rep",             PREFIX,         0,                  0,                  0               },
 	{"halt",            0,              0,                  0,                  0               },

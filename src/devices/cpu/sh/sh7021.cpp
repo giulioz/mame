@@ -197,6 +197,16 @@ sh7021_device::sh7021_device(const machine_config &mconfig, const char *tag, dev
 	m_isdrc = false; // FIXME
 }
 
+sh7021_device::sh7021_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock)
+	: sh2_device(mconfig, type, tag, owner, clock, CPU_TYPE_SH2, address_map_constructor(FUNC(sh7021_device::internal_map), this), 28, 0xc7ffffff)
+	, m_pa_out(*this)
+	, m_pb_out(*this)
+	, m_pa_bit_out(*this)
+	, m_pb_bit_out(*this)
+{
+	m_isdrc = false; // FIXME
+}
+
 void sh7021_device::execute_run()
 {
 	int consumed_cycles = 0;

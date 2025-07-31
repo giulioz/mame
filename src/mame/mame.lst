@@ -39420,6 +39420,9 @@ d70
 @source:roland/roland_jd800.cpp
 jd800
 
+@source:roland/roland_jv1080.cpp
+jv1080
+
 @source:roland/roland_jv80.cpp
 jv880
 rd500
@@ -39505,6 +39508,16 @@ tr808
 
 @source:roland/roland_tr909.cpp
 tr909
+
+@source:roland/roland_u110.cpp
+u110
+
+@source:roland/roland_rsp550.cpp
+rsp550
+
+@source:roland/roland_sd330.cpp
+sde330
+srv330
 
 @source:roland/roland_u20.cpp
 u20
@@ -47797,6 +47810,9 @@ rx15
 
 @source:yamaha/ymsy35.cpp
 sy35
+
+@source:yamaha/ymspx90.cpp
+spx90
 
 @source:yamaha/ymtx81z.cpp
 tx81z

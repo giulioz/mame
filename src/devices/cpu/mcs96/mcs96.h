@@ -87,7 +87,7 @@ protected:
 
 	inline void next(int cycles) { icount -= cycles_scaling*cycles; inst_state = STATE_FETCH; }
 	inline void next_noirq(int cycles) { icount -= cycles_scaling*cycles; inst_state = STATE_FETCH_NOIRQ; }
-	void check_irq();
+	virtual void check_irq();
 	inline uint8_t read_pc() { return m_pr8(PC++); }
 
 	void int_mask_w(u8 data);
@@ -102,6 +102,7 @@ protected:
 
 	uint8_t reg_r8(uint8_t adr);
 	uint16_t reg_r16(uint8_t adr);
+	uint32_t reg_r32(uint8_t adr);
 	uint8_t any_r8(uint16_t adr);
 	uint16_t any_r16(uint16_t adr);
 

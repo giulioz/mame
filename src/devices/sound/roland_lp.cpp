@@ -76,8 +76,8 @@ void mb87419_mb87420_device::rom_bank_pre_change()
 u8 mb87419_mb87420_device::read(offs_t offset)
 {
 	// Note: only offset 0x01 is verified, the rest is probably all wrong
-	if (offset != 0x01)
-		logerror("Reading Reg %02X\n", offset);
+	// if (offset != 0x01)
+	// 	logerror("Reading Reg %02X\n", offset);
 	if (offset < 0x10)
 	{
 		pcm_channel& chn = m_chns[m_sel_chn];
@@ -147,7 +147,7 @@ u8 mb87419_mb87420_device::read(offs_t offset)
 
 void mb87419_mb87420_device::write(offs_t offset, u8 data)
 {
-	logerror("Reg %02X = %02X\n", offset, data);
+	// logerror("Reg %02X = %02X\n", offset, data);
 	if (offset < 0x10)
 	{
 		pcm_channel& chn = m_chns[m_sel_chn];

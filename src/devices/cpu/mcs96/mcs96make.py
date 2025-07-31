@@ -69,6 +69,7 @@ class Macro:
 
 class OpcodeList:
     def __init__(self, fname, is_196):
+        self.is_196 = is_196
         self.opcode_info = []
         self.opcode_per_id = {}
         self.ea = {}
@@ -92,7 +93,7 @@ class OpcodeList:
                 tokens = line.split()
                 if tokens[0] in self.macros:
                     self.macros[tokens[0]].apply(inf, tokens)
-                else:
+                elif inf is not None:
                     inf.add_source_line(line)
             else:
                 # New something
@@ -102,8 +103,18 @@ class OpcodeList:
                     inf = Special(tokens[1])
                     self.ea[inf.name] = inf
                 elif tokens[0] == "fetch":
-                    inf = Special(tokens[0])
-                    self.fetch = inf
+                    if not is_196:
+                        inf = Special(tokens[0])
+                        self.fetch = inf
+                    else:
+                        inf = None
+                elif tokens[0] == "fetch_196":
+                    if is_196:
+                        inf = Special(tokens[0])
+                        self.fetch = inf
+                        inf.is_196 = True
+                    else:
+                        inf = None
                 elif tokens[0] == "fetch_noirq":
                     inf = Special(tokens[0])
                     self.fetch_noirq = inf
@@ -151,6 +162,8 @@ class OpcodeList:
         if not is_196:
             save_full_one(f, t, "fetch", self.fetch.source)
             save_full_one(f, t, "fetch_noirq", self.fetch_noirq.source)
+        if is_196:
+            save_full_one(f, t, "fetch_196", self.fetch.source)
     
     def save_exec(self, f, t):
         print("void %s_device::do_exec_full()" % t, file=f)
@@ -167,7 +180,10 @@ class OpcodeList:
                 if opc.is_196:
                     nm += "_196"
                 print("\tcase 0x%03x: %s_full(); break;" % (i, nm), file=f)
-        print("\tcase 0x200: fetch_full(); break;", file=f)
+        if self.is_196:
+            print("\tcase 0x200: fetch_196_full(); break;", file=f)
+        else:
+            print("\tcase 0x200: fetch_full(); break;", file=f)
         print("\tcase 0x201: fetch_noirq_full(); break;", file=f)
         print("\t}", file=f)
         print("}", file=f)

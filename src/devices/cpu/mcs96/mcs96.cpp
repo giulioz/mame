@@ -135,6 +135,7 @@ void mcs96_device::execute_run()
 		while(icount > bcount) {
 			int picount = inst_state >= 0x200 ? -1 : icount;
 			do_exec_full();
+			// printf("pc %04x\n", PPC);
 			if(icount == picount) {
 				fatalerror("Unhandled %x (%04x)\n", inst_state, PPC);
 			}
@@ -205,6 +206,11 @@ uint8_t mcs96_device::reg_r8(uint8_t adr)
 uint16_t mcs96_device::reg_r16(uint8_t adr)
 {
 	return regs->read_word(adr & 0xfe);
+}
+
+uint32_t mcs96_device::reg_r32(uint8_t adr)
+{
+	return regs->read_dword(adr & 0xf8);
 }
 
 void mcs96_device::any_w8(u16 adr, u8 data)

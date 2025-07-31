@@ -353,13 +353,13 @@ void mu80_state::mu80(machine_config &config)
 
 	MEG(config, m_meg);
 
-	auto &mdin_a(MIDI_PORT(config, "mdin_a"));
-	midiin_slot(mdin_a);
+	auto &mdin_a(MIDI_PORT(config, "mdin", midiin_slot, "midiin"));
+	// midiin_slot(mdin_a);
 	mdin_a.rxd_handler().set(m_mu80cpu, FUNC(h83002_device::sci_rx_w<1>));
 
-	auto &mdin_b(MIDI_PORT(config, "mdin_b"));
-	midiin_slot(mdin_b);
-	mdin_b.rxd_handler().set(m_mu80cpu, FUNC(h83002_device::sci_rx_w<0>));
+	// auto &mdin_b(MIDI_PORT(config, "mdin_b"));
+	// midiin_slot(mdin_b);
+	// mdin_b.rxd_handler().set(m_mu80cpu, FUNC(h83002_device::sci_rx_w<0>));
 
 	auto &mdout(MIDI_PORT(config, "mdout"));
 	midiout_slot(mdout);

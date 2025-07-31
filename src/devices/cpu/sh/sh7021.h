@@ -26,6 +26,8 @@ public:
 	template <int Line> void write_pbdr_bit(int state);
 
 protected:
+	sh7021_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock);
+
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
 

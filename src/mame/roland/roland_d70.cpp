@@ -128,7 +128,7 @@ static INPUT_PORTS_START(d70)
 	PORT_BIT(0x01, IP_ACTIVE_LOW, IPT_OTHER) PORT_NAME("Lower 1")
 
 	PORT_START("KEY7")
-	PORT_BIT(0x80, IP_ACTIVE_LOW, IPT_UNUSED)
+	PORT_BIT(0x80, IP_ACTIVE_LOW, IPT_OTHER) PORT_NAME("DEBUG note") PORT_CODE(KEYCODE_P)
 	PORT_BIT(0x40, IP_ACTIVE_LOW, IPT_UNUSED)
 	PORT_BIT(0x20, IP_ACTIVE_LOW, IPT_UNUSED)
 	PORT_BIT(0x10, IP_ACTIVE_LOW, IPT_UNUSED)
@@ -174,10 +174,14 @@ public:
 	roland_d70_state(const machine_config &mconfig, device_type type, const char *tag) :
 		driver_device(mconfig, type, tag),
 		m_bank_view(*this, "bank"),
-		m_ram(*this, "ram", 128 * 1024, ENDIANNESS_LITTLE),
+		m_ram1(*this, "ram1", 16 * 1024, ENDIANNESS_LITTLE),
+		m_ram2(*this, "ram2", 32 * 1024, ENDIANNESS_LITTLE),
+		m_cardram(*this, "cardram", 32 * 1024, ENDIANNESS_LITTLE),
 		m_dsp_ram(*this, "dsp_ram", 8 * 1024, ENDIANNESS_LITTLE),
+		m_tvf_ram(*this, "tvf_ram", 0x80, ENDIANNESS_LITTLE),
 		m_rom_bank(*this, "rom_bank"),
 		m_ram_bank(*this, "ram_bank"),
+		m_card_bank(*this, "card_bank"),
 		m_pcm_rom(*this, "pcm"),
 		m_cpu(*this, "maincpu"),
 		m_pcm(*this, "pcm"),
@@ -188,10 +192,7 @@ public:
 		m_protect_sw(*this, "PROTECT_SW"),
 		m_selected_slider(0),
 		m_sw_scan_index(0),
-		m_sw_scan_bank(-1),
-		m_sw_scan_state(0xff),
-		m_sw_scan_mode(0),
-		m_sw_scan_current_out(0xff),
+		m_sw_scan_bank(0),
 		m_midi_rx(0),
 		m_midi_pos(0)
 	{
@@ -210,7 +211,7 @@ private:
 	void bank_w(u8 data);
 	u8 ksga_io_r(offs_t offset);
 	void ksga_io_w(offs_t offset, u8 data);
-	u16 port0_r();
+	u8 port0_r();
 	u8 port1_r();
 	u8 port2_r();
 	void port1_w(u8 data);
@@ -229,7 +230,7 @@ private:
 	u8 ach4_r();
 
 	TIMER_DEVICE_CALLBACK_MEMBER(midi_timer_cb);
-	TIMER_DEVICE_CALLBACK_MEMBER(samples_timer_cb);
+	TIMER_DEVICE_CALLBACK_MEMBER(test_timer_cb);
 
 	void midi_in_w(int state);
 
@@ -239,12 +240,16 @@ private:
 	void descramble_rom_external(u8 *dst, const u8 *src) ATTR_COLD;
 
 	memory_view m_bank_view;
-	memory_share_creator<u16> m_ram;
+	memory_share_creator<u16> m_ram1;
+	memory_share_creator<u16> m_ram2;
+	memory_share_creator<u16> m_cardram;
 	memory_share_creator<u8> m_dsp_ram;
+	memory_share_creator<u8> m_tvf_ram;
 	required_memory_bank m_rom_bank;
 	required_memory_bank m_ram_bank;
+	required_memory_bank m_card_bank;
 	required_region_ptr<u8> m_pcm_rom;
-	required_device<i8x9x_device> m_cpu;
+	required_device<i8xc196_device> m_cpu;
 	required_device<mb87419_mb87420_device> m_pcm;
 	required_device<t6963c_device> m_lcd;
 	required_device<timer_device> m_midi_timer;
@@ -257,9 +262,9 @@ private:
 	u8 m_selected_slider;
 	int m_sw_scan_index;
 	int m_sw_scan_bank;
-	u8 m_sw_scan_state;
-	u8 m_sw_scan_mode;
-	u8 m_sw_scan_current_out;
+	u8 m_sw_scan_prev = 0;
+	bool m_sw_scan_write = true;
+	bool m_sw_scan_ad = true;
 	u8 m_midi_rx;
 	int m_midi_pos;
 	std::queue<u8> midi_queue;
@@ -268,14 +273,21 @@ private:
 void roland_d70_state::machine_start() {
 	m_bank_view.select(0);
 	m_rom_bank->configure_entries(0, 8, memregion("maincpu")->base(), 0x4000);
-	m_ram_bank->configure_entries(0, 2, &m_ram[0], 0x4000);
-	m_cpu->space(AS_PROGRAM).install_ram(0xc000, 0xffff, &m_ram[0]);
+	m_ram_bank->configure_entries(0, 2, &m_ram2[0], 0x4000);
+	m_card_bank->configure_entries(0, 2, &m_cardram[0], 0x4000);
+
+	m_sw_scan_index = 0;
+  m_sw_scan_bank = 0;
+	m_sw_scan_prev = 0;
+	m_sw_scan_write = true;
+	m_sw_scan_ad = true;
 }
 
 void roland_d70_state::bank_w(u8 data) {
-	m_bank_view.select(BIT(data, 5));
+	m_bank_view.select(data >> 4);
 	m_rom_bank->set_entry(data & 0x07);
 	m_ram_bank->set_entry(data & 0x01);
+	m_card_bank->set_entry(data & 0x01);
 }
 
 u8 roland_d70_state::ksga_io_r(offs_t offset) {
@@ -310,63 +322,88 @@ TIMER_DEVICE_CALLBACK_MEMBER(roland_d70_state::midi_timer_cb) {
 		return;
 
 	u8 midi = midi_queue.front();
-	if (midi == 0x90)
-		midi = 0x9a;
-	if (midi == 0x80)
-		midi = 0x8a;
 	midi_queue.pop();
-	logerror("midi_in %02x\n", midi);
+	// logerror("midi_in %02x\n", midi);
 	m_cpu->serial_w(midi);
 }
 
-u16 roland_d70_state::port0_r() {
+u8 roland_d70_state::port0_r() {
 	return 0x00;
 }
 
-u8 roland_d70_state::port1_r() {
-	m_sw_scan_current_out = m_ram[0x0f / 2] >> 8;
-	// logerror("p1r %02x\n", m_sw_scan_current_out);
-	return m_sw_scan_current_out;
-}
+bool debugButtonLast = false;
 
-void roland_d70_state::port1_w(u8 data) {
-	// logerror("p1w %02x\n", data);
-	// m_sw_scan_current_out = data & ~(SO_MASK);
+u8 roland_d70_state::roland_d70_state::port1_r() {
+	u8 result = 0xff;
 
-	if (data & RW_MASK) {
-		if ((data & CONT_MASK) && !(m_sw_scan_state & CONT_MASK)) {
-			m_sw_scan_index = 0;
-			m_sw_scan_bank += 1;
+	if (!m_sw_scan_write && m_sw_scan_ad) {
+		if (m_sw_scan_bank == 0xff) {
+			return 0x00; // encoder?	
 		}
 
-		// Clock cycle
-		if ((data & SCK_MASK) && !(m_sw_scan_state & SCK_MASK)) {
-			if ((data & AD_MASK)) {
-				if (m_sw_scan_mode == 0) {
-					m_sw_scan_current_out &= ~(SO_MASK);
-				} else if (m_sw_scan_mode == 1) {
-					u8 buttonState = m_sw_scan_bank != -1 ? BIT(m_keys[m_sw_scan_bank]->read(), m_sw_scan_index) : 1;
+		if (m_sw_scan_bank < 0 || m_sw_scan_bank >= 8 || m_sw_scan_index < 0 || m_sw_scan_index >= 8) {
+			return 0xff;
+		}
 
-					if (buttonState) {
-						m_sw_scan_current_out |= SO_MASK;
-					} else {
-						m_sw_scan_current_out &= ~(SO_MASK);
-					}
-					m_sw_scan_index += 1;
+		u8 buttonState = m_sw_scan_bank != -1 ? BIT(m_keys[m_sw_scan_bank]->read(), m_sw_scan_index) : 1;
+		if (buttonState) {
+			result |= SO_MASK;
+		} else {
+			result &= ~(SO_MASK);
+		}
+
+		if (m_sw_scan_bank == 7 && m_sw_scan_index == 7) {
+			if (buttonState != debugButtonLast) {
+				debugButtonLast = buttonState;
+				// logerror("DEBUG BUTTON %x\n", buttonState);
+				if (!buttonState) {
+					midi_queue.push(0x90);
+					midi_queue.push(0x36);
+					midi_queue.push(0x7f);
+				} else {
+					midi_queue.push(0x80);
+					midi_queue.push(0x36);
+					midi_queue.push(0x00);
 				}
-			} else {
-				m_sw_scan_mode += 1;
 			}
 		}
-	} else {
-		m_sw_scan_mode = 0;
-		m_sw_scan_index = 0;
-		m_sw_scan_bank = -1;
 	}
 
-	m_sw_scan_state = data;
+	return result;
+}
 
-	m_ram[0x0f / 2] = (m_ram[0x0f / 2] & 0x00ff) | (u16(m_sw_scan_current_out) << 8);
+void roland_d70_state::roland_d70_state::port1_w(u8 data) {
+	if ((m_sw_scan_prev & SCK_MASK) && !(data & SCK_MASK)) {
+		if (!m_sw_scan_write && !m_sw_scan_ad) {
+			m_sw_scan_index = -1;
+  		m_sw_scan_bank = -1;
+		} else if (!m_sw_scan_write && m_sw_scan_ad) {
+			m_sw_scan_index += 1;
+		}
+  }
+
+  if (!(m_sw_scan_prev & RW_MASK) && (data & RW_MASK)) {
+    m_sw_scan_write = false;
+		m_sw_scan_index = 0;
+		m_sw_scan_bank = 0xfe;
+  }
+  if ((m_sw_scan_prev & RW_MASK) && !(data & RW_MASK)) {
+    m_sw_scan_write = true;
+  }
+
+  if (!(m_sw_scan_prev & AD_MASK) && (data & AD_MASK)) {
+    m_sw_scan_ad = true;
+  }
+  if ((m_sw_scan_prev & AD_MASK) && !(data & AD_MASK)) {
+    m_sw_scan_ad = false;
+  }
+  
+  if (!(m_sw_scan_prev & CONT_MASK) && (data & CONT_MASK)) {
+		m_sw_scan_index = -1;
+		m_sw_scan_bank += 1;
+  }
+
+  m_sw_scan_prev = data;
 }
 
 u8 roland_d70_state::port2_r() {
@@ -408,16 +445,17 @@ void roland_d70_state::dsp_io_w(offs_t offset, u8 data) {
 }
 
 u8 roland_d70_state::tvf_io_r(offs_t offset) {
-	logerror("tvf read %04x\n", offset);
+	printf("tvf read %04x\n", offset);
 	return 0;
 }
 
 void roland_d70_state::tvf_io_w(offs_t offset, u8 data) {
-	logerror("tvf write %04x= %02x\n", offset, data);
+	printf("tvf write %04x= %02x\n", offset, data);
+	m_tvf_ram[offset] = data;
 }
 
 u8 roland_d70_state::snd_io_r(offs_t offset) {
-	// logerror("lp read %x\n", offset);
+	// printf("lp read %x\n", offset);
 	// lots of offset modification magic to achieve the following:
 	//  - offsets 00..1F are "sound chip read"
 	//  - offsets 20..3F are a readback of what was written to registers 00..1F
@@ -449,6 +487,7 @@ u8 roland_d70_state::snd_io_r(offs_t offset) {
 }
 
 void roland_d70_state::snd_io_w(offs_t offset, u8 data) {
+	// printf("lp write %02x %02x\n", offset, data);
 	// register map
 	// ------------
 	// Note: 16-bit words are Little Endian, the firmware writes the odd byte is
@@ -477,7 +516,7 @@ u8 roland_d70_state::ach2_r() { return 128; } // TODO: BENDER
 u8 roland_d70_state::ach3_r() { return 128; } // TODO: BATTERY
 u8 roland_d70_state::ach4_r() { return 128; } // TODO: RAM CARD (VBB)
 
-TIMER_DEVICE_CALLBACK_MEMBER(roland_d70_state::samples_timer_cb) {
+TIMER_DEVICE_CALLBACK_MEMBER(roland_d70_state::test_timer_cb) {
 }
 
 void roland_d70_state::lcd_palette(palette_device &palette) const {
@@ -495,12 +534,13 @@ void roland_d70_state::d70_map(address_map &map) {
 	map(0x1000, 0x7fff).rom().region("maincpu", 0x1000);
 	map(0x8000, 0xbfff).view(m_bank_view);
 	m_bank_view[0](0x8000, 0xbfff).bankr(m_rom_bank);
-	m_bank_view[1](0x8000, 0xbfff).bankrw(m_ram_bank);
-	//map(0xc000, 0xffff) fixed RAM - will install on start
+	m_bank_view[2](0x8000, 0xbfff).bankrw(m_ram_bank);
+	m_bank_view[3](0x8000, 0xbfff).bankrw(m_card_bank);
+	map(0xc000, 0xffff).ram().share("ram1");
 }
 
 void roland_d70_state::d70(machine_config &config) {
-	i8x9x_device &maincpu(N8097BH(config, m_cpu, 12_MHz_XTAL));
+	i8xc196_device &maincpu(C80C196KB(config, m_cpu, 12_MHz_XTAL));
 	maincpu.set_addrmap(AS_PROGRAM, &roland_d70_state::d70_map);
 	maincpu.serial_tx_cb().set("mdout", FUNC(midi_port_device::write_txd));
 	maincpu.in_p0_cb().set(FUNC(roland_d70_state::port0_r));
@@ -517,7 +557,7 @@ void roland_d70_state::d70(machine_config &config) {
 	SPEAKER(config, "speaker", 2).front();
 
 	MB87419_MB87420(config, m_pcm, 32.768_MHz_XTAL);
-	m_pcm->int_callback().set_inputline(m_cpu, i8x9x_device::EXTINT_LINE);
+	m_pcm->int_callback().set_inputline(m_cpu, i8xc196_device::EXTINT_LINE);
 	m_pcm->add_route(0, "speaker", 1.0, 0);
 	m_pcm->add_route(1, "speaker", 1.0, 1);
 
@@ -535,7 +575,7 @@ void roland_d70_state::d70(machine_config &config) {
 
 	TIMER(config, m_midi_timer).configure_periodic(FUNC(roland_d70_state::midi_timer_cb), attotime::from_hz(1250));
 
-	TIMER(config, "samples_timer").configure_periodic(FUNC(roland_d70_state::samples_timer_cb), attotime::from_hz(32000 * 2));
+	TIMER(config, "test_timer").configure_periodic(FUNC(roland_d70_state::test_timer_cb), attotime::from_hz(1));
 
 	midi_port_device &mdin(MIDI_PORT(config, "mdin", midiin_slot, "midiin"));
 	mdin.rxd_handler().set(FUNC(roland_d70_state::midi_in_w));
@@ -550,7 +590,7 @@ void roland_d70_state::d70(machine_config &config) {
 void roland_d70_state::init_d70() {
 	// Roland did a fair amount of scrambling on the address and data lines.
 	// Only the first 0x80 bytes of the ROMs are readable text in a raw dump.
-	// The U-110 actually checks some of these header bytes, but it uses
+	// The D-70 actually checks some of these header bytes, but it uses
 	// post-scrambling variants of offsets/values.
 	u8 *src = reinterpret_cast<u8 *>(memregion("pcmorg")->base());
 	u8 *dst = reinterpret_cast<u8 *>(memregion("pcm")->base());
@@ -572,7 +612,8 @@ void roland_d70_state::descramble_rom_internal(u8 *dst, const u8 *src) {
 
 ROM_START(d70)
 	ROM_REGION(0x20000, "maincpu", 0)
-	ROM_DEFAULT_BIOS("v119")
+	// ROM_DEFAULT_BIOS("v119")
+	ROM_DEFAULT_BIOS("v110")
 	ROM_SYSTEM_BIOS( 0, "v119", "Version 1.19 - March 9, 1993" )
 	ROM_SYSTEM_BIOS( 1, "v116", "Version 1.16 - January 28, 1991" )
 	ROM_SYSTEM_BIOS( 2, "v114", "Version 1.14 - September 20, 1990" )
