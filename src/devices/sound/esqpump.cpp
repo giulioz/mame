@@ -71,12 +71,12 @@ void esq_5505_5510_pump_device::sound_stream_update(sound_stream &stream)
 	stream.put(3, 0, stream.get(1, 0));
 
 	// Push the 'FX1', 'FX2' and 'DRY' samples into the ESP
-	m_esp->ser_w(0, s32(stream.get(2, 0) * input_scale));
-	m_esp->ser_w(1, s32(stream.get(3, 0) * input_scale));
-	m_esp->ser_w(2, s32(stream.get(4, 0) * input_scale));
-	m_esp->ser_w(3, s32(stream.get(5, 0) * input_scale));
-	m_esp->ser_w(4, s32(stream.get(6, 0) * input_scale));
-	m_esp->ser_w(5, s32(stream.get(7, 0) * input_scale));
+	m_esp->ser_w(1, s32(stream.get(2, 0) * input_scale));
+	m_esp->ser_w(0, s32(stream.get(3, 0) * input_scale));
+	m_esp->ser_w(3, s32(stream.get(4, 0) * input_scale)); // problem
+	m_esp->ser_w(2, s32(stream.get(5, 0) * input_scale));
+	m_esp->ser_w(5, s32(stream.get(6, 0) * input_scale));
+	m_esp->ser_w(4, s32(stream.get(7, 0) * input_scale));
 
 #if PUMP_FAKE_ESP_PROCESSING
 	m_esp->ser_w(6, m_esp->ser_r(0) + m_esp->ser_r(2) + m_esp->ser_r(4));
@@ -92,8 +92,8 @@ void esq_5505_5510_pump_device::sound_stream_update(sound_stream &stream)
 #endif
 
 	// Read the processed result from the ESP.
-	sound_stream::sample_t l = sound_stream::sample_t(m_esp->ser_r(6)) * output_scale;
-	sound_stream::sample_t r = sound_stream::sample_t(m_esp->ser_r(7)) * output_scale;
+	sound_stream::sample_t l = sound_stream::sample_t(m_esp->ser_r(7)) * output_scale;
+	sound_stream::sample_t r = sound_stream::sample_t(m_esp->ser_r(6)) * output_scale;
 
 #if !PUMP_FAKE_ESP_PROCESSING && PUMP_REPLACE_ESP_PROGRAM
 	// if we're processing the fake program through the ESP, the result should just be that of adding the inputs

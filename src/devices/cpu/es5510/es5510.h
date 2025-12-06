@@ -113,16 +113,6 @@ public:
 	bool get_HALT() { return halt_asserted; }
 
 	void run_once();
-	void list_program(void(p)(const char *, ...));
-
-	// for testing purposes
-	uint64_t &_instr(int pc) { return instr[pc % 160]; }
-	int16_t &_dram(int addr) { return dram[addr & DRAM_MASK]; }
-
-	// publicly visible for testing purposes
-	int32_t read_reg(uint8_t reg);
-	void write_reg(uint8_t reg, int32_t value);
-	void write_to_dol(int32_t value);
 
 protected:
 	virtual void device_start() override ATTR_COLD;
@@ -136,62 +126,72 @@ protected:
 	virtual void execute_set_input(int linenum, int state) override;
 	virtual std::unique_ptr<util::disasm_interface> create_disassembler() override;
 
-	int32_t alu_operation(uint8_t op, int32_t aValue, int32_t bValue, uint8_t &flags);
-	void alu_operation_end();
-
 private:
 	int icount;
 	bool halt_asserted;
-	uint8_t pc;
-	state_t state;
-	std::unique_ptr<int32_t[]> gpr;
-	int16_t ser0r;
-	int16_t ser0l;
-	int16_t ser1r;
-	int16_t ser1l;
-	int16_t ser2r;
-	int16_t ser2l;
-	int16_t ser3r;
-	int16_t ser3l;
-	int64_t machl;        // 48 bits, right justified and sign extended
-	bool mac_overflow;  // whether reading the MAC register should return a saturated replacement value
-	int32_t dil;
-	int32_t memsiz;
-	int32_t memmask;
-	int32_t memincrement;
-	int8_t memshift;
-	int32_t dlength;
-	int32_t abase;
-	int32_t bbase;
-	int32_t dbase;
-	int32_t sigreg;
-	int mulshift;
-	int8_t ccr;           // really, 5 bits, left justified
-	int8_t cmr;           // really, 6 bits, left justified
-	int32_t dol[2];
-	int dol_count;
 
-	std::unique_ptr<uint64_t[]> instr;
-	std::unique_ptr<int16_t[]> dram;
+	void handle_instr(int opaddr);
 
-	// TODO : Masked address?
-	int16_t dram_r(int addr) { return dram[addr & DRAM_MASK]; }
-	void dram_w(int addr, int16_t data) { dram[addr & DRAM_MASK] = data; }
-
-	// latch registers for host interaction
-	int32_t  dol_latch;     // 24 bits
-	int32_t  dil_latch;     // 24 bits
-	uint32_t dadr_latch;    // 24 bits
-	int32_t  gpr_latch;     // 24 bits, holding up to 20 address bits, left justified
-	uint64_t instr_latch;   // 48 bits, right justified
-	uint8_t  ram_sel;       // effectively a boolean
-	uint8_t  host_control;  // ESP state / host control register
-	uint8_t  host_serial;   // serial I/O format and control
-
-	// currently executing instruction(s)
-	alu_t alu;
-	mulacc_t mulacc;
-	ram_t ram, ram_p, ram_pp; // ram operations for cycles N, N-1 and N-2
+	inline int32_t se24(int32_t x) {return (x & 0x800000) ? (x | 0xff000000) : (x & 0x7fffff);}
+	inline int32_t se24(int64_t x) {return se24((int32_t)x);}
+	void writeReg(uint8_t which, int32_t val)
+	{
+		if (which == 0xf4) {memsiz = host_gpr & 0xffffff;return;}
+		else if (which == 0xf2)
+		{
+			mulacc &= ~0xffffff;
+			mulacc |= (val & 0xffffff);
+		}
+		else if (which == 0xf3)
+		{
+			mulacc &= 0xffffff;
+			mulacc |= (int64_t)(val) << 24;
+		}
+		if (which < 0xfc) gprs[which] = val;
+	}
+	void ccrf(int32_t &ccr, int32_t flag, bool set)
+	{
+		ccr &= ~flag;
+		if (set) ccr |= flag;
+	}
+	void ccrf_lt(int32_t &ccr) {ccrf(ccr, ccr_lt, ((ccr & ccr_v) ? 1 : 0) != ((ccr & ccr_n) ? 1 : 0));}
+	const char *regName(uint8_t which, bool read = true)
+	{
+		const char *names[22] = {"SER0R", "SER0L", "SER1R", "SER1L", "SER2R", "SER2L", "SER3R", "SER3L", "MACL", "MACH",
+			"DIL", "DLENGTH", "ABASE", "BBASE", "DBASE", "SIGREG", "CCR", "CMR", "MINUS 1", "MIN (-1)", "MAX (1)", "Zero"};
+		if (!read && which == 244) return "MEMSIZ";
+		if (which >= 234) return names[which - 234];
+		static char buf[32]; snprintf(buf, 32, "GPR%d", which);
+		return buf;
+	}
+	void fifoout(int32_t x)
+	{
+		dol[1] = dol[0];
+		dol[0] = x >> 8;
+		if (dolfill < 2) dolfill++;
+	}
+	// Host interface
+	uint32_t host_gpr {0}, host_dil {0}, host_dol {0}, host_dadr {0};
+	uint64_t host_instr {};
+	uint8_t hostregs[0x100] {};
+	
+	// Core
+	enum ccr_flags
+	{
+		ccr_not = (1 << 18),
+		ccr_z = (1 << 19),
+		ccr_lt = (1 << 20),
+		ccr_v = (1 << 21),
+		ccr_c = (1 << 22),
+		ccr_n = (1 << 23),
+	};
+	uint64_t instructions[0xa0] {};
+	int32_t gprs[0x100] {}, alures {}, memsiz {}, ccr {};
+	int64_t mulacc;
+	int16_t ram[65536] {}, dol[2] {}, dolfill {0};
+	uint8_t pc, writealuresulttogpr {};
+	struct ram_action {uint32_t addr; bool read; bool flush; bool io;};
+	ram_action ramact;
 };
 
 DECLARE_DEVICE_TYPE(ES5510, es5510_device)
