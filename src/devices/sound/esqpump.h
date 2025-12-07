@@ -58,7 +58,8 @@ public:
 			}
 #endif
 
-			// m_esp->list_program(print_to_stderr);
+			// m_esp->list_program(printf);
+			m_esp->transpile();
 		}
 	}
 	bool get_esp_halted() {

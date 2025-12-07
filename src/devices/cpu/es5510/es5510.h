@@ -113,6 +113,7 @@ public:
 	bool get_HALT() { return halt_asserted; }
 
 	void run_once();
+	void transpile();
 
 protected:
 	virtual void device_start() override ATTR_COLD;
