@@ -26,6 +26,8 @@ public:
 	template <int Line> void write_pbdr_bit(int state);
 
 protected:
+	sh7021_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, address_map_constructor internal_map = address_map_constructor());
+
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
 
@@ -186,6 +188,8 @@ protected:
 
 	void internal_map(address_map &map) ATTR_COLD;
 
+	virtual void execute_set_input(int inputnum, int state) override;
+
 	void recalc_irq();
 
 	virtual uint8_t read_byte(offs_t offset) override;
@@ -197,6 +201,7 @@ protected:
 	virtual void write_long(offs_t offset, uint32_t data) override;
 
 	// Interrupt Controller (INTC)
+	uint8_t m_ext_irq_pending = 0; // bits 0-7 for IRQ0-IRQ7
 	uint16_t m_ipra = 0;
 	uint16_t m_iprb = 0;
 	uint16_t m_iprc = 0;

@@ -40153,6 +40153,9 @@ d70
 @source:roland/roland_jd800.cpp
 jd800
 
+@source:roland/roland_jv1080.cpp
+jv1080
+
 @source:roland/roland_jv80.cpp
 jv880
 rd500

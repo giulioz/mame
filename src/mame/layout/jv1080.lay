@@ -1,0 +1,197 @@
+<?xml version="1.0"?>
+<!--
+license:CC0-1.0
+copyright-holders:giulioz
+Roland JV-1080 front panel layout
+-->
+<mamelayout version="2">
+
+<!-- Elements -->
+	<element name="red_led" defstate="0">
+		<disk state="1"><color red="1.0" green="0.1" blue="0.1" /></disk>
+		<disk state="0"><color red="0.15" green="0.02" blue="0.02" /></disk>
+	</element>
+
+	<element name="panel"><rect><color red="0.12" green="0.12" blue="0.14" /></rect></element>
+	<element name="lcd_bezel"><rect><color red="0.04" green="0.04" blue="0.06" /></rect></element>
+	<element name="lcd_bg"><rect><color red="0.192" green="0.514" blue="0.180" /></rect></element>
+
+	<element name="btn" defstate="0">
+		<rect state="0"><color red="0.18" green="0.18" blue="0.20" /></rect>
+		<rect state="1"><color red="0.35" green="0.35" blue="0.40" /></rect>
+	</element>
+
+	<element name="btn_tall" defstate="0">
+		<rect state="0"><color red="0.15" green="0.15" blue="0.17" /></rect>
+		<rect state="1"><color red="0.35" green="0.35" blue="0.40" /></rect>
+	</element>
+
+	<element name="encoder_outer"><disk><color red="0.08" green="0.08" blue="0.10" /></disk></element>
+	<element name="encoder_inner"><disk><color red="0.16" green="0.16" blue="0.18" /></disk></element>
+
+	<!-- Text labels -->
+	<element name="t_roland"><text string="Roland"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_superjv"><text string="SUPER JV"><color red="0.5" green="0.5" blue="0.5" /></text></element>
+	<element name="t_jv1080"><text string="JV-1080"><color red="0.8" green="0.8" blue="0.8" /></text></element>
+	<element name="t_volume"><text string="VOLUME"><color red="0.5" green="0.5" blue="0.5" /></text></element>
+	<element name="t_partsel"><text string="PART SELECT"><color red="0.5" green="0.5" blue="0.5" /></text></element>
+	<element name="t_value"><text string="VALUE"><color red="0.5" green="0.5" blue="0.5" /></text></element>
+
+	<element name="t_preview"><text string="PREVIEW"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_18"><text string="1-8/9-16"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_1"><text string="1"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_2"><text string="2"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_3"><text string="3"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_4"><text string="4"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_5"><text string="5"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_6"><text string="6"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_7"><text string="7"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_8"><text string="8"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+
+	<element name="t_palette"><text string="PALETTE"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_param"><text string="PARAM"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+
+	<element name="t_perform"><text string="PERFORM"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_patch"><text string="PATCH"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_rhythm"><text string="RHYTHM"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_system"><text string="SYSTEM"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_utility"><text string="UTILITY"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_efx"><text string="EFX"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+
+	<element name="t_user"><text string="USER"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_preset"><text string="PRESET"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_exp"><text string="EXP"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_a"><text string="A"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_b"><text string="B"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_c"><text string="C"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_d"><text string="D"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+
+	<element name="t_shift"><text string="SHIFT"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_exit"><text string="EXIT"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_enter"><text string="ENTER"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_dec"><text string="DEC"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_inc"><text string="INC"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_up"><text string="UP"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_down"><text string="DN"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_left"><text string="LT"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+	<element name="t_right"><text string="RT"><color red="0.7" green="0.7" blue="0.7" /></text></element>
+
+<!-- =========================================== -->
+	<view name="Front Panel">
+
+	<!-- Panel background -->
+		<element ref="panel"><bounds x="0" y="0" width="920" height="160" /></element>
+
+	<!-- Branding -->
+		<element ref="t_roland"><bounds x="8" y="6" width="50" height="10" /></element>
+		<element ref="t_superjv"><bounds x="62" y="4" width="60" height="8" /></element>
+		<element ref="t_jv1080"><bounds x="62" y="12" width="60" height="12" /></element>
+
+	<!--LCD -->
+		<element ref="lcd_bezel"><bounds x="140" y="8" width="366" height="52" /></element>
+		<element ref="lcd_bg"><bounds x="143" y="11" width="360" height="46" /></element>
+		<screen index="0"><bounds x="143" y="11" width="360" height="46" /></screen>
+
+	<!--PART SELECT row (below LCD) -->
+		<element ref="t_partsel"><bounds x="140" y="65" width="70" height="8" /></element>
+
+		<!-- PREVIEW -->
+		<element ref="t_preview"><bounds x="56" y="75" width="40" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS1" inputmask="0x01"><bounds x="58" y="83" width="36" height="14" /></element>
+
+		<!-- 1-8/9-16 -->
+		<element ref="t_18"><bounds x="100" y="75" width="38" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS1" inputmask="0x08"><bounds x="102" y="83" width="34" height="14" /></element>
+
+		<!-- Part 1-8 buttons -->
+		<element ref="t_1"><bounds x="143" y="75" width="20" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS1" inputmask="0x10"><bounds x="143" y="83" width="26" height="14" /></element>
+		<element ref="t_2"><bounds x="173" y="75" width="20" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS1" inputmask="0x20"><bounds x="173" y="83" width="26" height="14" /></element>
+		<element ref="t_3"><bounds x="203" y="75" width="20" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS1" inputmask="0x40"><bounds x="203" y="83" width="26" height="14" /></element>
+		<element ref="t_4"><bounds x="233" y="75" width="20" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS1" inputmask="0x80"><bounds x="233" y="83" width="26" height="14" /></element>
+		<element ref="t_5"><bounds x="263" y="75" width="20" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS2" inputmask="0x01"><bounds x="263" y="83" width="26" height="14" /></element>
+		<element ref="t_6"><bounds x="293" y="75" width="20" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS2" inputmask="0x02"><bounds x="293" y="83" width="26" height="14" /></element>
+		<element ref="t_7"><bounds x="323" y="75" width="20" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS2" inputmask="0x04"><bounds x="323" y="83" width="26" height="14" /></element>
+		<element ref="t_8"><bounds x="353" y="75" width="20" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS2" inputmask="0x08"><bounds x="353" y="83" width="26" height="14" /></element>
+
+	<!--PALETTE / PARAMETER -->
+		<element ref="t_palette"><bounds x="56" y="105" width="40" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS1" inputmask="0x02"><bounds x="58" y="113" width="36" height="14" /></element>
+		<element ref="t_param"><bounds x="100" y="105" width="38" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS1" inputmask="0x04"><bounds x="102" y="113" width="34" height="14" /></element>
+
+	<!--Mode buttons: PERFORM / PATCH / RHYTHM -->
+		<element ref="t_perform"><bounds x="143" y="105" width="40" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS2" inputmask="0x10"><bounds x="143" y="113" width="38" height="14" /></element>
+		<element ref="t_patch"><bounds x="185" y="105" width="34" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS2" inputmask="0x20"><bounds x="185" y="113" width="34" height="14" /></element>
+		<element ref="t_rhythm"><bounds x="223" y="105" width="38" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS2" inputmask="0x40"><bounds x="223" y="113" width="38" height="14" /></element>
+
+	<!--SYSTEM / UTILITY / EFX -->
+		<element ref="t_system"><bounds x="267" y="105" width="38" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS2" inputmask="0x80"><bounds x="267" y="113" width="38" height="14" /></element>
+		<element ref="t_utility"><bounds x="309" y="105" width="40" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS3" inputmask="0x01"><bounds x="309" y="113" width="40" height="14" /></element>
+		<element ref="t_efx"><bounds x="353" y="105" width="26" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS4" inputmask="0x01"><bounds x="353" y="113" width="26" height="14" /></element>
+
+	<!--Bank: USER / PRESET / EXP -->
+		<element ref="t_user"><bounds x="143" y="135" width="34" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS3" inputmask="0x02"><bounds x="143" y="143" width="34" height="14" /></element>
+		<element ref="t_preset"><bounds x="181" y="135" width="38" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS3" inputmask="0x04"><bounds x="181" y="143" width="38" height="14" /></element>
+		<element ref="t_exp"><bounds x="223" y="135" width="26" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS3" inputmask="0x08"><bounds x="223" y="143" width="26" height="14" /></element>
+
+	<!--Sound group: A B C D -->
+		<element ref="t_a"><bounds x="265" y="135" width="22" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS3" inputmask="0x10"><bounds x="265" y="143" width="22" height="14" /></element>
+		<element ref="t_b"><bounds x="291" y="135" width="22" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS3" inputmask="0x20"><bounds x="291" y="143" width="22" height="14" /></element>
+		<element ref="t_c"><bounds x="317" y="135" width="22" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS3" inputmask="0x40"><bounds x="317" y="143" width="22" height="14" /></element>
+		<element ref="t_d"><bounds x="343" y="135" width="22" height="7" /></element>
+		<element ref="btn" inputtag="BUTTONS3" inputmask="0x80"><bounds x="343" y="143" width="22" height="14" /></element>
+
+	<!--Right section -->
+
+		<!-- SHIFT / EXIT / ENTER -->
+		<element ref="t_shift"><bounds x="540" y="8" width="34" height="7" /></element>
+		<element ref="btn_tall" inputtag="BUTTONS4" inputmask="0x02"><bounds x="540" y="16" width="34" height="18" /></element>
+		<element ref="t_exit"><bounds x="580" y="8" width="30" height="7" /></element>
+		<element ref="btn_tall" inputtag="BUTTONS4" inputmask="0x04"><bounds x="580" y="16" width="30" height="18" /></element>
+		<element ref="t_enter"><bounds x="616" y="8" width="34" height="7" /></element>
+		<element ref="btn_tall" inputtag="BUTTONS4" inputmask="0x08"><bounds x="616" y="16" width="34" height="18" /></element>
+
+		<!-- DEC / INC -->
+		<element ref="t_dec"><bounds x="540" y="44" width="28" height="7" /></element>
+		<element ref="btn_tall" inputtag="BUTTONS4" inputmask="0x10"><bounds x="540" y="52" width="50" height="18" /></element>
+		<element ref="t_inc"><bounds x="596" y="44" width="28" height="7" /></element>
+		<element ref="btn_tall" inputtag="BUTTONS4" inputmask="0x20"><bounds x="596" y="52" width="54" height="18" /></element>
+
+		<!-- Cursor cross -->
+		<element ref="t_up"><bounds x="580" y="80" width="20" height="14" /></element>
+		<element ref="btn" inputtag="BUTTONS4" inputmask="0x40"><bounds x="576" y="78" width="28" height="20" /></element>
+		<element ref="t_down"><bounds x="580" y="112" width="20" height="14" /></element>
+		<element ref="btn" inputtag="BUTTONS4" inputmask="0x80"><bounds x="576" y="108" width="28" height="20" /></element>
+		<element ref="t_left"><bounds x="552" y="96" width="20" height="14" /></element>
+		<element ref="btn" inputtag="BUTTONS5" inputmask="0x01"><bounds x="548" y="93" width="26" height="20" /></element>
+		<element ref="t_right"><bounds x="608" y="96" width="20" height="14" /></element>
+		<element ref="btn" inputtag="BUTTONS5" inputmask="0x02"><bounds x="606" y="93" width="26" height="20" /></element>
+
+	<!--VALUE encoder -->
+		<element ref="encoder_outer"><bounds x="680" y="12" width="90" height="90" /></element>
+		<element ref="encoder_inner"><bounds x="692" y="24" width="66" height="66" /></element>
+		<element ref="btn" inputtag="BUTTONS5" inputmask="0x04"><bounds x="700" y="32" width="50" height="50" /></element>
+		<element ref="t_value"><bounds x="690" y="106" width="70" height="10" /></element>
+
+	</view>
+</mamelayout>
