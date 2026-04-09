@@ -64,7 +64,7 @@ private:
 	struct pcm_voice
 	{
 		uint32_t wave_ctrl = 0;       // area 0x0000
-		uint32_t sample_start = 0;    // area 0x0100, reused as current decode/read position
+		uint32_t sample_start = 0;    // area 0x0100
 		uint32_t sample_loop = 0;     // area 0x0200
 		uint32_t sample_end = 0;      // area 0x0300
 		
@@ -92,8 +92,10 @@ private:
 		uint32_t tvf_q_target_val = 0;
 		uint32_t tvf_q_interp_ctrl = 0;
 
+		uint32_t current_addr = 0;    // runtime decode/read position
 		int32_t dpcm_val = 0;
 		uint16_t subphase = 0;
+		bool alt_loop_dir = false;
 
 		int32_t tvf_bp;
     	int32_t tvf_lp;

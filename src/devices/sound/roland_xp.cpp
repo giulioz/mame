@@ -142,8 +142,10 @@ void roland_xp_device::device_start()
 		save_item(NAME(m_voices[i].pitch_current_val), i);
 		save_item(NAME(m_voices[i].pitch_target_val), i);
 		save_item(NAME(m_voices[i].pitch_interp_ctrl), i);
+		save_item(NAME(m_voices[i].current_addr), i);
 		save_item(NAME(m_voices[i].dpcm_val), i);
 		save_item(NAME(m_voices[i].subphase), i);
+		save_item(NAME(m_voices[i].alt_loop_dir), i);
 	}
 	save_item(NAME(m_reg));
 	save_item(NAME(m_dsp_program));
@@ -170,8 +172,10 @@ void roland_xp_device::device_reset()
 		v.pitch_current_val = 0;
 		v.pitch_target_val = 0;
 		v.pitch_interp_ctrl = 0;
+		v.current_addr = 0;
 		v.dpcm_val = 0;
 		v.subphase = 0;
+		v.alt_loop_dir = false;
 		for (auto &s : v.mixer_send)
 			s = 0;
 	}
@@ -257,11 +261,20 @@ void roland_xp_device::write(offs_t offset, u8 data)
 		m_reg[reg_idx] = (m_reg[reg_idx] & mask) | (uint32_t(data) << shift);
 		const uint32_t reg_val = m_reg[reg_idx];
 
-		pcm_voice &v = m_voices[voice_idx];
-		switch (bank)
-		{
-			case 0x0000: v.wave_ctrl = reg_val; break;
-			case 0x0100: v.sample_start = reg_val; break;
+			pcm_voice &v = m_voices[voice_idx];
+			switch (bank)
+			{
+			case 0x0000:
+				v.wave_ctrl = reg_val;
+				v.current_addr = v.sample_start & 0xfffff;
+				v.dpcm_val = 0;
+				v.subphase = 0;
+				v.alt_loop_dir = false;
+				break;
+			case 0x0100:
+				v.sample_start = reg_val;
+				v.current_addr = reg_val & 0xfffff;
+				break;
 			case 0x0200: v.sample_loop = reg_val; break;
 			case 0x0300: v.sample_end = reg_val; break;
 			case 0x0400: break;
@@ -353,6 +366,30 @@ int32_t roland_xp_device::decode_sample(uint32_t sample_addr, uint32_t wave_ctrl
 
 int32_t roland_xp_device::do_voice(pcm_voice &v)
 {
+	auto advance_sample_address = [&v](uint32_t &address, bool &alt_loop_dir)
+	{
+		const bool alt_loop = BIT(v.wave_ctrl, 10);
+		const bool reverse = BIT(v.wave_ctrl, 5);
+		const uint32_t loop_start = v.sample_loop & 0xfffff;
+		const uint32_t loop_end = v.sample_end & 0xfffff;
+		const uint32_t compare = alt_loop_dir ? loop_start : loop_end;
+		const bool at_boundary = ((compare ^ address) & 0xfffff) == 0;
+
+		if (!alt_loop && at_boundary)
+			address = loop_start;
+
+		const int do_add = (!at_boundary && alt_loop && !alt_loop_dir) || (!at_boundary && !alt_loop);
+		const int do_sub = !at_boundary && alt_loop && alt_loop_dir;
+
+		if (reverse)
+			address -= do_add - do_sub;
+		else
+			address += do_add - do_sub;
+
+		address &= 0xfffff;
+		alt_loop_dir = alt_loop && (alt_loop_dir ^ at_boundary);
+	};
+
 	// increment phase
 	uint32_t old_subphase = v.subphase;
 	uint32_t subphase_full = old_subphase + pitch_to_increment(v.pitch_current_val);
@@ -363,19 +400,30 @@ int32_t roland_xp_device::do_voice(pcm_voice &v)
 	// dpcm
 	int32_t reference = v.dpcm_val;
 	int32_t temp_samples[4] = { 0 };
-	uint32_t start_addr = v.sample_start;
+	uint32_t address = v.current_addr & 0xfffff;
+	bool alt_loop_dir = v.alt_loop_dir;
 	for (uint32_t i = 0; i < 4; i++)
 	{
-		temp_samples[i] = decode_sample(start_addr + i, v.wave_ctrl);
+		temp_samples[i] = decode_sample(address, v.wave_ctrl);
 
 		if (i < subphase_overflow)
-		{
 			reference += temp_samples[i];
-			v.sample_start++;
 
-			if (v.sample_start == v.sample_end)
-				v.sample_start = v.sample_loop;
+		advance_sample_address(address, alt_loop_dir);
+
+		if (i + 1 == subphase_overflow)
+		{
+			v.current_addr = address;
+			v.alt_loop_dir = alt_loop_dir;
 		}
+	}
+
+	for (uint32_t i = 4; i < subphase_overflow; i++)
+	{
+		reference += decode_sample(address, v.wave_ctrl);
+		advance_sample_address(address, alt_loop_dir);
+		v.current_addr = address;
+		v.alt_loop_dir = alt_loop_dir;
 	}
 
 	// interpolation
@@ -410,7 +458,8 @@ void roland_xp_device::sound_stream_update(sound_stream &stream)
 {
 	for (int smpl = 0; smpl < stream.samples(); smpl++)
 	{
-		int64_t mix = 0;
+		int64_t mixL = 0;
+		int64_t mixR = 0;
 
 		for (unsigned v_idx = 0; v_idx < NUM_VOICES; v_idx++)
 		{
@@ -420,10 +469,12 @@ void roland_xp_device::sound_stream_update(sound_stream &stream)
 			if (v.sample_start == v.sample_end || v.amp_current_val == 0)
 				continue;
 			
-			mix += do_voice(v);
+			int32_t voice = do_voice(v);
+			mixL += (voice * (v.mixer_send[0] >> 10)) >> 10;
+			mixR += (voice * (v.mixer_send[1] >> 10)) >> 10;
 		}
 
-		stream.add_int(0, smpl, mix, 1<<18);
-		stream.add_int(1, smpl, mix, 1<<18);
+		stream.add_int(0, smpl, mixL, 1<<19);
+		stream.add_int(1, smpl, mixR, 1<<19);
 	}
 }
