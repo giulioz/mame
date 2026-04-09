@@ -474,7 +474,7 @@ void roland_xp_device::sound_stream_update(sound_stream &stream)
 			mixR += (voice * (v.mixer_send[1] >> 10)) >> 10;
 		}
 
-		stream.add_int(0, smpl, mixL, 1<<19);
-		stream.add_int(1, smpl, mixR, 1<<19);
+		stream.add_int(0, smpl, mixL, 1<<18);
+		stream.add_int(1, smpl, mixR, 1<<18);
 	}
 }

@@ -515,7 +515,7 @@ INPUT_PORTS_END
 
 void roland_jv1080_state::jv1080(machine_config &config)
 {
-	SH7032(config, m_maincpu, 20_MHz_XTAL);
+	SH7032(config, m_maincpu, 20_MHz_XTAL / 2); // SH7034 internal clock φ = EXTAL/2
 	m_maincpu->set_addrmap(AS_PROGRAM, &roland_jv1080_state::jv1080_mem_map);
 
 	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);
