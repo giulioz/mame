@@ -61,6 +61,17 @@ private:
 	static constexpr unsigned DRAM_SIZE = 0x40000;                   // 2Mbit = 256KB
 	static constexpr unsigned REG_ARRAY_SIZE = 0x4000 / 4;          // full register space as 32-bit words
 
+	struct interp_state
+	{
+		uint16_t flags = 0;
+		int16_t rate = 0;
+		uint32_t counter = 0;
+		int32_t current = 0;
+		int32_t target = 0;
+		int32_t aux = 0;
+		int32_t output_i = 0;
+	};
+
 	struct pcm_voice
 	{
 		uint32_t wave_ctrl = 0;       // area 0x0000
@@ -98,11 +109,45 @@ private:
 		bool alt_loop_dir = false;
 
 		int32_t tvf_bp;
-    	int32_t tvf_lp;
+		int32_t tvf_lp;
+
+		interp_state pitch_interp;
+		interp_state amp_interp;
+		interp_state ampmod_interp;
+		interp_state tvf_q_interp;
+		interp_state tvf_f_interp;
 	};
 
 	// Pitch/cutoff conversion: log value -> linear increment
 	static int32_t pitch_to_increment(int32_t pitch_val);
+	static uint16_t decode_interp_flags(uint32_t ctrl, bool force_log = false);
+	static uint32_t interp_mask(uint16_t flags);
+	static int32_t clamp_s32(int32_t v, int32_t lo, int32_t hi);
+	static int16_t interp_q14_output(const interp_state &s);
+	static void interp_start_linear(interp_state &s);
+	static void interp_start_log(interp_state &s);
+	static void interp_start_trunk(interp_state &s);
+	static void interp_set_newdist_linear(interp_state &s);
+	static bool interp_tick_due(interp_state &s);
+	static void interp_update_linear(interp_state &s);
+	static void interp_update_log(interp_state &s);
+	static void interp_update_trunk(interp_state &s);
+	static void interp_update_pitch(interp_state &s);
+	static void interp_update_f(interp_state &s);
+	static void interp_update_q(interp_state &s);
+	static void interp_update_a(interp_state &s);
+	static void interp_update_am(interp_state &s);
+	void reload_pitch_interp(pcm_voice &v);
+	void reload_amp_interp(pcm_voice &v);
+	void reload_ampmod_interp(pcm_voice &v);
+	void reload_tvf_q_interp(pcm_voice &v);
+	void reload_tvf_f_interp(pcm_voice &v);
+	void reload_all_interps(pcm_voice &v);
+	void retarget_pitch_interp(pcm_voice &v);
+	void retarget_amp_interp(pcm_voice &v);
+	void retarget_ampmod_interp(pcm_voice &v);
+	void retarget_tvf_q_interp(pcm_voice &v);
+	void retarget_tvf_f_interp(pcm_voice &v);
 
 	int32_t do_voice(pcm_voice &v);
 	int32_t decode_sample(uint32_t sample_addr, uint32_t wave_ctrl);
