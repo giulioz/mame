@@ -368,8 +368,8 @@ int32_t roland_xp_device::do_voice(pcm_voice &v)
 {
 	auto advance_sample_address = [&v](uint32_t &address, bool &alt_loop_dir)
 	{
-		const bool alt_loop = BIT(v.wave_ctrl, 10);
-		const bool reverse = BIT(v.wave_ctrl, 5);
+		const bool alt_loop = BIT(v.wave_ctrl, 12);
+		const bool reverse = BIT(v.wave_ctrl, 11);
 		const uint32_t loop_start = v.sample_loop & 0xfffff;
 		const uint32_t loop_end = v.sample_end & 0xfffff;
 		const uint32_t compare = alt_loop_dir ? loop_start : loop_end;
