@@ -131,26 +131,31 @@ void roland_xp_device::device_start()
 
 	m_dram = std::make_unique<uint8_t[]>(DRAM_SIZE);
 
-	// save state
-	for (int i = 0; i < NUM_VOICES; i++)
-	{
-		save_item(NAME(m_voices[i].wave_ctrl), i);
-		save_item(NAME(m_voices[i].sample_start), i);
-		save_item(NAME(m_voices[i].sample_loop), i);
-		save_item(NAME(m_voices[i].sample_end), i);
-		save_item(NAME(m_voices[i].mixer_send), i);
-		save_item(NAME(m_voices[i].pitch_current_val), i);
-		save_item(NAME(m_voices[i].pitch_target_val), i);
-		save_item(NAME(m_voices[i].pitch_interp_ctrl), i);
-		save_item(NAME(m_voices[i].current_addr), i);
-		save_item(NAME(m_voices[i].dpcm_val), i);
-		save_item(NAME(m_voices[i].subphase), i);
-		save_item(NAME(m_voices[i].alt_loop_dir), i);
-	}
 	save_item(NAME(m_reg));
 	save_item(NAME(m_dsp_program));
 	save_item(NAME(m_global_config));
 	save_pointer(NAME(m_dram), DRAM_SIZE);
+	
+	save_pointer(&m_reg[0x0000/4], "wave_ctrl", 64);
+	save_pointer(&m_reg[0x0100/4], "sample_start", 64);
+	save_pointer(&m_reg[0x0200/4], "sample_loop", 64);
+	save_pointer(&m_reg[0x0300/4], "sample_end", 64);
+	save_pointer(&m_reg[0x1100/4], "tvf_q_current_val", 64);
+	save_pointer(&m_reg[0x1200/4], "pitch_current_val", 64);
+	save_pointer(&m_reg[0x1300/4], "tvf_f_current_val", 64);
+	save_pointer(&m_reg[0x1400/4], "ampmod_current_val", 64);
+	save_pointer(&m_reg[0x1500/4], "amp_current_val", 64);
+	save_pointer(&m_reg[0x1600/4], "tvf_q_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1700/4], "pitch_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1800/4], "tvf_f_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1900/4], "ampmod_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1a00/4], "amp_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1b00/4], "pitch_target_val", 64);
+	save_pointer(&m_reg[0x1c00/4], "tvf_f_target_val", 64);
+	save_pointer(&m_reg[0x1d00/4], "ampmod_target_val", 64);
+	save_pointer(&m_reg[0x1e00/4], "amp_target_val", 64);
+	save_pointer(&m_reg[0x2000/4], "filter_type_select", 64);
+	save_pointer(&m_reg[0x2100/4], "tvf_q_target_val", 64);
 
 	logerror("Roland XP: Clock %u, Rate %u\n", clock(), m_rate);
 }
@@ -354,6 +359,45 @@ void roland_xp_device::write(offs_t offset, u8 data)
 	}
 }
 
+static inline int32_t mul_q27_q14(int32_t a_q27, int16_t b_q14)
+{
+    return (int32_t)(((int64_t)a_q27 * b_q14) >> 14);
+}
+
+static inline int32_t sat_q27(int64_t v)
+{
+	if (v > 0x07ffffff)
+		return 0x07ffffff;
+	if (v < -0x08000000)
+		return -0x08000000;
+	return (int32_t)v;
+}
+
+static inline int32_t sat16(int64_t v)
+{
+	if (v > 0x7fff)
+		return 0x7fff;
+	if (v < -0x8000)
+		return -0x8000;
+	return (int32_t)v;
+}
+
+int32_t run_svf_sample(int32_t in_q27, int16_t f_q14, int16_t q_q14,
+                    int32_t &bp_q27, int32_t &lp_q27, int type)
+{
+    lp_q27 = sat_q27((int64_t)lp_q27 + mul_q27_q14(bp_q27, f_q14));
+    int32_t hp_q27 = sat_q27((int64_t)in_q27 - mul_q27_q14(bp_q27, q_q14) - lp_q27);
+    bp_q27 = sat_q27((int64_t)bp_q27 + mul_q27_q14(hp_q27, f_q14));
+
+    switch (type) {
+		case 0: return lp_q27;
+		case 1: return hp_q27;
+		case 2: return bp_q27;
+		case 3: return sat_q27((int64_t)lp_q27 - hp_q27);
+		default: return 0;
+    }
+}
+
 int32_t roland_xp_device::decode_sample(uint32_t sample_addr, uint32_t wave_ctrl)
 {
 	uint32_t rom_high = (wave_ctrl & 0b1111) << 20;
@@ -374,7 +418,7 @@ int32_t roland_xp_device::do_voice(pcm_voice &v)
 		const uint32_t loop_end = v.sample_end & 0xfffff;
 		const uint32_t compare = alt_loop_dir ? loop_start : loop_end;
 		const bool at_boundary = ((compare ^ address) & 0xfffff) == 0;
-
+		
 		if (!alt_loop && at_boundary)
 			address = loop_start;
 
@@ -418,6 +462,7 @@ int32_t roland_xp_device::do_voice(pcm_voice &v)
 		}
 	}
 
+	// only for when the subphase is too big, technically not necessary
 	for (uint32_t i = 4; i < subphase_overflow; i++)
 	{
 		reference += decode_sample(address, v.wave_ctrl);
@@ -433,20 +478,11 @@ int32_t roland_xp_device::do_voice(pcm_voice &v)
 	interp_sum += (temp_samples[2] * interp_lut[2][interp_ratio]) >> 12;
 	v.dpcm_val = reference;
 
-	// int32_t tvf_f = v.tvf_f_current_val;
-	// int32_t tvf_q = v.tvf_q_current_val >> 2;
-
-    // v.tvf_lp = (int64_t)(v.tvf_bp * tvf_f) + v.tvf_lp;
-    // int32_t hp = (int64_t)interp_sum - (v.tvf_bp * tvf_q) - v.tvf_lp;
-    // v.tvf_bp = (int64_t)(hp * tvf_f) + v.tvf_bp;
-
-    // switch ((v.filter_type_select >> 10) & 0x03) {
-    // case 0: interp_sum = v.tvf_lp; break;
-    // case 1: interp_sum = hp; break;
-    // case 2: interp_sum = v.tvf_bp; break;
-    // case 3: interp_sum = (int64_t)v.tvf_lp - hp; break;
-    // default: interp_sum = v.tvf_lp; break;
-    // }
+	int32_t f_internal = pitch_to_increment(v.tvf_f_current_val);
+	int32_t q_internal = v.tvf_q_current_val;
+	int32_t f_q14 = sat16(f_internal >> 3);
+	int32_t q_q14 = sat16(q_internal >> 3);
+    interp_sum = run_svf_sample(interp_sum, f_q14, q_q14, v.tvf_bp, v.tvf_lp, v.filter_type_select >> 18);
 
 	interp_sum *= v.amp_current_val;
 	interp_sum >>= 16;
@@ -474,7 +510,7 @@ void roland_xp_device::sound_stream_update(sound_stream &stream)
 			mixR += (voice * (v.mixer_send[1] >> 10)) >> 10;
 		}
 
-		stream.add_int(0, smpl, mixL, 1<<18);
-		stream.add_int(1, smpl, mixR, 1<<18);
+		stream.add_int(0, smpl, mixL, 1<<16);
+		stream.add_int(1, smpl, mixR, 1<<16);
 	}
 }

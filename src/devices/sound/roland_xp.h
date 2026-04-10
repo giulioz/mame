@@ -76,19 +76,19 @@ private:
 		uint32_t pitch_target_val = 0;
 		uint32_t pitch_interp_ctrl = 0;
 		
-		uint32_t amp_current_val = 0;
+		uint32_t amp_current_val = 0; // max:0x1ffc0?
 		uint32_t amp_target_val = 0;
 		uint32_t amp_interp_ctrl = 0;
 		
-		uint32_t ampmod_current_val = 0;
+		uint32_t ampmod_current_val = 0; // max:0x20000?
 		uint32_t ampmod_target_val = 0;
 		uint32_t ampmod_interp_ctrl = 0;
 		
-		uint32_t tvf_f_current_val = 0;
+		uint32_t tvf_f_current_val = 0; // max(open filter):0x3c000  min:0x14000
 		uint32_t tvf_f_target_val = 0;
 		uint32_t tvf_f_interp_ctrl = 0;
 		
-		uint32_t tvf_q_current_val = 0;
+		uint32_t tvf_q_current_val = 0; // max(no resonance):0x80000  min(full reso):0x00   depends on cutoff!
 		uint32_t tvf_q_target_val = 0;
 		uint32_t tvf_q_interp_ctrl = 0;
 
