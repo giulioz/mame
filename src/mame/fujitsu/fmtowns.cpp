@@ -244,6 +244,7 @@ Notes:
 #define LOG_SYS        (1U << 1)
 #define LOG_CD         (1U << 2)
 #define LOG_CD_UNKNOWN (1U << 3)
+#define LOG_IRQ        (1U << 4)
 
 #define VERBOSE (LOG_GENERAL | LOG_CD_UNKNOWN)
 #include "logmacro.h"
@@ -494,7 +495,7 @@ void towns_state::mb8877a_irq_w(int state)
 	if(m_towns_fdc_irq6mask == 0)
 		state = 0;
 	m_pic_master->ir6_w(state);  // IRQ6 = FDC
-	if(IRQ_LOG) logerror("PIC: IRQ6 (FDC) set to %i\n",state);
+	LOGMASKED(LOG_IRQ,"PIC: IRQ6 (FDC) set to %i\n",state);
 }
 
 void towns_state::mb8877a_drq_w(int state)
@@ -695,7 +696,7 @@ void towns_state::kb_sendcode(uint8_t scancode, int release)
 	if(m_towns_kb_irq1_enable)
 	{
 		m_pic_master->ir1_w(1);
-		if(IRQ_LOG) logerror("PIC: IRQ1 (keyboard) set high\n");
+		LOGMASKED(LOG_IRQ,"PIC: IRQ1 (keyboard) set high\n");
 	}
 	//logerror("KB: sending scancode 0x%02x\n",scancode);
 }
@@ -731,7 +732,7 @@ uint8_t towns_state::towns_keyboard_r(offs_t offset)
 			ret = m_towns_kb_output;
 			//logerror("KB: read keyboard output port, returning %02x\n",ret);
 			m_pic_master->ir1_w(0);
-			if(IRQ_LOG) logerror("PIC: IRQ1 (keyboard) set low\n");
+			LOGMASKED(LOG_IRQ,"PIC: IRQ1 (keyboard) set low\n");
 			if(m_towns_kb_extend != 0xff)
 			{
 				kb_sendcode(m_towns_kb_extend,2);
@@ -876,7 +877,7 @@ uint8_t towns_state::towns_sound_ctrl_r(offs_t offset)
 			if(m_towns_fm_irq_flag == 0)
 			{
 				m_pic_slave->ir5_w(0);
-				if(IRQ_LOG) logerror("PIC: IRQ13 (PCM) set low\n");
+				LOGMASKED(LOG_IRQ,"PIC: IRQ13 (PCM) set low\n");
 			}
 			break;
 //      default:
@@ -1101,7 +1102,7 @@ void towns_state::towns_cdrom_set_irq(int line,int state)
 					{
 						m_towns_cd.status |= 0x80;
 						m_pic_slave->ir1_w(1);
-						if(IRQ_LOG) logerror("PIC: IRQ9 (CD-ROM) set high\n");
+						LOGMASKED(LOG_IRQ,"PIC: IRQ9 (CD-ROM) set high\n");
 					}
 				}
 				else
@@ -1111,7 +1112,7 @@ void towns_state::towns_cdrom_set_irq(int line,int state)
 			{
 				m_towns_cd.status &= ~0x80;
 				m_pic_slave->ir1_w(0);
-				if(IRQ_LOG) logerror("PIC: IRQ9 (CD-ROM) set low\n");
+				LOGMASKED(LOG_IRQ,"PIC: IRQ9 (CD-ROM) set low\n");
 			}
 			break;
 		case TOWNS_CD_IRQ_DMA:
@@ -1123,7 +1124,7 @@ void towns_state::towns_cdrom_set_irq(int line,int state)
 					{
 						m_towns_cd.status |= 0x40;
 						m_pic_slave->ir1_w(1);
-						if(IRQ_LOG) logerror("PIC: IRQ9 (CD-ROM DMA) set high\n");
+						LOGMASKED(LOG_IRQ,"PIC: IRQ9 (CD-ROM DMA) set high\n");
 					}
 				}
 				else
@@ -1133,7 +1134,7 @@ void towns_state::towns_cdrom_set_irq(int line,int state)
 			{
 				m_towns_cd.status &= ~0x40;
 				m_pic_slave->ir1_w(0);
-				if(IRQ_LOG) logerror("PIC: IRQ9 (CD-ROM DMA) set low\n");
+				LOGMASKED(LOG_IRQ,"PIC: IRQ9 (CD-ROM DMA) set low\n");
 			}
 			break;
 	}
@@ -1761,8 +1762,7 @@ void towns_state::rtc_busy_w(int state)
 void towns_state::towns_scsi_irq(int state)
 {
 	m_pic_slave->ir0_w(state);
-	if(IRQ_LOG)
-		logerror("PIC: IRQ8 (SCSI) set to %i\n",state);
+	LOGMASKED(LOG_IRQ,"PIC: IRQ8 (SCSI) set to %i\n",state);
 }
 
 void towns_state::towns_scsi_drq(int state)
@@ -1849,7 +1849,7 @@ void towns_state::towns_fm_irq(int state)
 	{
 		m_towns_fm_irq_flag = 1;
 		m_pic_slave->ir5_w(1);
-		if(IRQ_LOG) logerror("PIC: IRQ13 (FM) set high\n");
+		LOGMASKED(LOG_IRQ,"PIC: IRQ13 (FM) set high\n");
 	}
 	else
 	{
@@ -1857,7 +1857,7 @@ void towns_state::towns_fm_irq(int state)
 		if(m_towns_pcm_irq_flag == 0)
 		{
 			m_pic_slave->ir5_w(0);
-			if(IRQ_LOG) logerror("PIC: IRQ13 (FM) set low\n");
+			LOGMASKED(LOG_IRQ,"PIC: IRQ13 (FM) set low\n");
 		}
 	}
 }
@@ -1870,7 +1870,7 @@ RF5C68_SAMPLE_END_CB_MEMBER(towns_state::towns_pcm_irq)
 		m_towns_pcm_irq_flag = 1;
 		m_towns_pcm_channel_flag |= (1 << channel);
 		m_pic_slave->ir5_w(1);
-		if(IRQ_LOG) logerror("PIC: IRQ13 (PCM) set high (channel %i)\n",channel);
+		LOGMASKED(LOG_IRQ,"PIC: IRQ13 (PCM) set high (channel %i)\n",channel);
 	}
 }
 
@@ -1881,7 +1881,7 @@ void towns_state::towns_pit_out0_changed(int state)
 	if(m_towns_timer_mask & 0x01)
 	{
 		m_timer0 = state;
-		if(IRQ_LOG) logerror("PIC: IRQ0 (PIT Timer ch0) set to %i\n",state);
+		LOGMASKED(LOG_IRQ,"PIC: IRQ0 (PIT Timer ch0) set to %i\n",state);
 	}
 	else
 		m_timer0 = 0;
@@ -1896,7 +1896,7 @@ void towns_state::towns_pit_out1_changed(int state)
 	if(m_towns_timer_mask & 0x02)
 	{
 		m_timer1 = state;
-		if(IRQ_LOG) logerror("PIC: IRQ0 (PIT Timer ch1) set to %i\n",state);
+		LOGMASKED(LOG_IRQ,"PIC: IRQ0 (PIT Timer ch1) set to %i\n",state);
 	}
 	else
 		m_timer1 = 0;
@@ -1926,6 +1926,7 @@ void towns_state::towns_serial_w(offs_t offset, uint8_t data)
 			break;
 		case 4:
 			m_serial_irq_enable = data;
+			// TODO: should this trigger a previously masked serial IRQ, or drop a newly masked one?
 			break;
 		default:
 			logerror("Invalid or unimplemented serial port write [offset=%02x, data=%02x]\n",offset,data);
@@ -1949,27 +1950,45 @@ uint8_t towns_state::towns_serial_r(offs_t offset)
 
 void towns_state::towns_serial_irq(int state)
 {
-	m_serial_irq_source = state ? 0x01 : 0x00;
-	m_pic_master->ir2_w(state);
-	popmessage("Serial IRQ state: %i\n",state);
+	if((state ? 0x01 : 0x00) != m_serial_irq_source)
+	{
+		m_serial_irq_source = state ? 0x01 : 0x00;
+		m_pic_master->ir2_w(state);
+		popmessage("Serial IRQ state: %i\n",state);
+	}
 }
 
 void towns_state::towns_rxrdy_irq(int state)
 {
+	if(state)
+		m_serial_irq_state |= RXRDY_IRQ_ENABLE;
+	else
+		m_serial_irq_enable &= ~RXRDY_IRQ_ENABLE;
+
 	if(m_serial_irq_enable & RXRDY_IRQ_ENABLE)
-		towns_serial_irq(state);
+		towns_serial_irq((m_serial_irq_enable & m_serial_irq_state) ? 1 : 0);
 }
 
 void towns_state::towns_txrdy_irq(int state)
 {
+	if(state)
+		m_serial_irq_state |= TXRDY_IRQ_ENABLE;
+	else
+		m_serial_irq_enable &= ~TXRDY_IRQ_ENABLE;
+
 	if(m_serial_irq_enable & TXRDY_IRQ_ENABLE)
-		towns_serial_irq(state);
+		towns_serial_irq((m_serial_irq_enable & m_serial_irq_state) ? 1 : 0);
 }
 
 void towns_state::towns_syndet_irq(int state)
 {
+	if(state)
+		m_serial_irq_state |= SYNDET_IRQ_ENABLE;
+	else
+		m_serial_irq_enable &= ~SYNDET_IRQ_ENABLE;
+
 	if(m_serial_irq_enable & SYNDET_IRQ_ENABLE)
-		towns_serial_irq(state);
+		towns_serial_irq((m_serial_irq_enable & m_serial_irq_state) ? 1 : 0);
 }
 
 
@@ -2382,7 +2401,7 @@ void towns_state::driver_start()
 	save_item(NAME(m_towns_ram_enable));
 	save_pointer(NAME(m_towns_vram), 0x20000);
 	save_pointer(NAME(m_towns_gfxvram), 0x80000);
-	save_pointer(NAME(m_towns_txtvram), 0x20000);;
+	save_pointer(NAME(m_towns_txtvram), 0x20000);
 	save_item(NAME(m_towns_selected_drive));
 	save_item(NAME(m_towns_fdc_irq6mask));
 	save_pointer(NAME(m_towns_serial_rom), 256/8);
@@ -2409,7 +2428,11 @@ void towns_state::driver_start()
 	save_item(NAME(m_pit_out0));
 	save_item(NAME(m_pit_out1));
 	save_item(NAME(m_pit_out2));
+	save_item(NAME(m_timer0));
+	save_item(NAME(m_timer1));
 	save_item(NAME(m_serial_irq_source));
+	save_item(NAME(m_serial_irq_enable));
+	save_item(NAME(m_serial_irq_state));
 
 	save_item(NAME(m_kb_prev));
 	save_item(NAME(m_prev_pad_mask));
@@ -2499,7 +2522,9 @@ void towns_state::machine_start()
 
 	m_timer0 = 0;
 	m_timer1 = 0;
+	m_serial_irq_source = 0;
 	m_serial_irq_enable = 0;
+	m_serial_irq_state = 0;
 }
 
 void towns_state::machine_reset()
@@ -2523,7 +2548,6 @@ void towns_state::machine_reset()
 	m_intervaltimer2_irqmask = 1;  // masked
 	m_towns_kb_timer->adjust(attotime::zero,0,attotime::from_msec(10));
 	m_towns_freerun_counter->adjust(attotime::zero,0,attotime::from_usec(1));
-	m_serial_irq_source = 0;
 	m_rtc_d = 0;
 	m_rtc_busy = false;
 	m_vram_mask_addr = 0;
@@ -2587,7 +2611,6 @@ void towns_state::towns_base(machine_config &config)
 	m_maincpu->set_addrmap(AS_IO, &towns_state::towns_1g_io);
 	m_maincpu->set_vblank_int("screen", FUNC(towns_state::towns_vsync_irq));
 	m_maincpu->set_irq_acknowledge_callback("pic8259_master", FUNC(pic8259_device::inta_cb));
-	//MCFG_MACHINE_RESET_OVERRIDE(towns_state,towns)
 
 	/* pad ports */
 	MSX_GENERAL_PURPOSE_PORT(config, m_pad_ports[0], msx_general_purpose_port_devices, "townspad");
@@ -2635,7 +2658,7 @@ void towns_state::towns_base(machine_config &config)
 	m_speaker->add_route(ALL_OUTPUTS, "speaker", 0.50, 0);
 	m_speaker->add_route(ALL_OUTPUTS, "speaker", 0.50, 1);
 
-	PIT8253(config, m_pit, 0);
+	PIT8253(config, m_pit);
 	m_pit->set_clk<0>(307200);
 	m_pit->out_handler<0>().set(FUNC(towns_state::towns_pit_out0_changed));
 	m_pit->set_clk<1>(307200);
@@ -2643,18 +2666,18 @@ void towns_state::towns_base(machine_config &config)
 	m_pit->set_clk<2>(307200);
 	m_pit->out_handler<2>().set(FUNC(towns_state::pit_out2_changed));
 
-	pit8253_device &pit2(PIT8253(config, "pit2", 0));
+	pit8253_device &pit2(PIT8253(config, "pit2"));
 	pit2.set_clk<0>(307200); // reserved
 	pit2.set_clk<1>(1228800); // RS-232
 	pit2.out_handler<1>().set(FUNC(towns_state::pit2_out1_changed));
 	pit2.set_clk<2>(307200); // reserved
 
-	PIC8259(config, m_pic_master, 0);
+	PIC8259(config, m_pic_master);
 	m_pic_master->out_int_callback().set_inputline(m_maincpu, 0);
 	m_pic_master->in_sp_callback().set_constant(1);
 	m_pic_master->read_slave_ack_callback().set(FUNC(towns_state::get_slave_ack));
 
-	PIC8259(config, m_pic_slave, 0);
+	PIC8259(config, m_pic_slave);
 	m_pic_slave->out_int_callback().set(m_pic_master, FUNC(pic8259_device::ir7_w));
 	m_pic_slave->in_sp_callback().set_constant(0);
 
@@ -2670,23 +2693,22 @@ void towns_state::towns_base(machine_config &config)
 	CDROM(config, m_cdrom).set_interface("cdrom");
 	m_cdda->set_cdrom_tag(m_cdrom);
 	SOFTWARE_LIST(config, "cd_list").set_original("fmtowns_cd");
+//  SOFTWARE_LIST(config, "win_cd_list").set_original("generic_cdrom");
 
-	UPD71071(config, m_dma[0], 0);
+	UPD71071(config, m_dma[0]);
 	m_dma[0]->set_cpu_tag("maincpu");
 	m_dma[0]->set_clock(4000000);
 	m_dma[0]->dma_read_callback<0>().set(FUNC(towns_state::towns_fdc_dma_r));
 	m_dma[0]->dma_read_callback<3>().set(FUNC(towns_state::towns_state::towns_cdrom_dma_r));
 	m_dma[0]->dma_write_callback<0>().set(FUNC(towns_state::towns_fdc_dma_w));
-	UPD71071(config, m_dma[1], 0);
+	UPD71071(config, m_dma[1]);
 	m_dma[1]->set_cpu_tag("maincpu");
 	m_dma[1]->set_clock(4000000);
 	m_dma[1]->dma_read_callback<0>().set(FUNC(towns_state::towns_fdc_dma_r));
 	m_dma[1]->dma_read_callback<3>().set(FUNC(towns_state::towns_state::towns_cdrom_dma_r));
 	m_dma[1]->dma_write_callback<0>().set(FUNC(towns_state::towns_fdc_dma_w));
 
-	//MCFG_VIDEO_START_OVERRIDE(towns_state,towns)
-
-	I8251(config, m_i8251, 0);
+	I8251(config, m_i8251);
 	m_i8251->rxrdy_handler().set(FUNC(towns_state::towns_rxrdy_irq));
 	m_i8251->txrdy_handler().set(FUNC(towns_state::towns_txrdy_irq));
 	m_i8251->syndet_handler().set(FUNC(towns_state::towns_syndet_irq));
@@ -2699,7 +2721,7 @@ void towns_state::towns_base(machine_config &config)
 	rs232c.dsr_handler().set(m_i8251, FUNC(i8251_device::write_dsr));
 	rs232c.cts_handler().set(m_i8251, FUNC(i8251_device::write_cts));
 
-	FMT_ICMEM(config, m_icmemcard, 0);
+	FMT_ICMEM(config, m_icmemcard);
 
 	/* First-generation models: 1 MB onboard, 3 SIMM slots with 1 or 2 MB each, except slot 1 (limited to 1 MB).
 	   Model 2 comes with a 1 MB SIMM preinstalled on slot 1, Model 1 doesn't. */
@@ -2740,14 +2762,14 @@ void towns16_state::townsux(machine_config &config)
 	m_maincpu->set_vblank_int("screen", FUNC(towns_state::towns_vsync_irq));
 	m_maincpu->set_irq_acknowledge_callback("pic8259_master", FUNC(pic8259_device::inta_cb));
 
-	scsi_port_device &scsi(SCSI_PORT(config, "scsi", 0));
+	scsi_port_device &scsi(SCSI_PORT(config, "scsi"));
 	scsi.set_slot_device(1, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_0));
 	scsi.set_slot_device(2, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_1));
 	scsi.set_slot_device(3, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_2));
 	scsi.set_slot_device(4, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_3));
 	scsi.set_slot_device(5, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_4));
 
-	FMSCSI(config, m_scsi, 0);
+	FMSCSI(config, m_scsi);
 	m_scsi->set_scsi_port("scsi");
 	m_scsi->irq_handler().set(FUNC(towns16_state::towns_scsi_irq));
 	m_scsi->drq_handler().set(FUNC(towns16_state::towns_scsi_drq));
@@ -2773,14 +2795,14 @@ void towns_state::townssj(machine_config &config)
 	m_maincpu->set_vblank_int("screen", FUNC(towns_state::towns_vsync_irq));
 	m_maincpu->set_irq_acknowledge_callback("pic8259_master", FUNC(pic8259_device::inta_cb));
 
-	scsi_port_device &scsi(SCSI_PORT(config, "scsi", 0));
+	scsi_port_device &scsi(SCSI_PORT(config, "scsi"));
 	scsi.set_slot_device(1, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_0));
 	scsi.set_slot_device(2, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_1));
 	scsi.set_slot_device(3, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_2));
 	scsi.set_slot_device(4, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_3));
 	scsi.set_slot_device(5, "harddisk", SCSIHD, DEVICE_INPUT_DEFAULTS_NAME(SCSI_ID_4));
 
-	FMSCSI(config, m_scsi, 0);
+	FMSCSI(config, m_scsi);
 	m_scsi->set_scsi_port("scsi");
 	m_scsi->irq_handler().set(FUNC(towns_state::towns_scsi_irq));
 	m_scsi->drq_handler().set(FUNC(towns_state::towns_scsi_drq));

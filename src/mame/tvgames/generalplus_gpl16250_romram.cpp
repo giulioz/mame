@@ -282,23 +282,23 @@ static INPUT_PORTS_START( jak_ths )
 	PORT_DIPSETTING(      0x0000, DEF_STR( On ) )
 INPUT_PORTS_END
 
-uint16_t wrlshunt_game_state::cs0_r(offs_t offset)
+u16 wrlshunt_game_state::cs0_r(offs_t offset)
 {
 	return m_romregion[offset & m_romwords_mask];
 }
 
-void wrlshunt_game_state::cs0_w(offs_t offset, uint16_t data)
+void wrlshunt_game_state::cs0_w(offs_t offset, u16 data)
 {
 	logerror("cs0_w write to ROM?\n");
 	//m_romregion[offset & 0x3ffffff] = data;
 }
 
-uint16_t wrlshunt_game_state::cs1_r(offs_t offset)
+u16 wrlshunt_game_state::cs1_r(offs_t offset)
 {
 	return m_sdram[offset & 0x3fffff];
 }
 
-void wrlshunt_game_state::cs1_w(offs_t offset, uint16_t data)
+void wrlshunt_game_state::cs1_w(offs_t offset, u16 data)
 {
 	m_sdram[offset & 0x3fffff] = data;
 }
@@ -306,6 +306,8 @@ void wrlshunt_game_state::cs1_w(offs_t offset, uint16_t data)
 
 void wrlshunt_game_state::machine_start()
 {
+	gcm394_game_state::machine_start();
+
 	m_romwords_mask = (memregion("maincpu")->bytes()/2)-1;
 	save_item(NAME(m_sdram));
 }
@@ -313,11 +315,9 @@ void wrlshunt_game_state::machine_start()
 void wrlshunt_game_state::machine_reset()
 {
 	cs_callback(0x00, 0x00, 0x00, 0x00, 0x00);
-	m_maincpu->set_cs_space(m_memory->get_program());
 	m_maincpu->reset(); // reset CPU so vector gets read etc.
 
 	//m_maincpu->set_paldisplaybank_high_hack(1);
-	m_maincpu->set_alt_tile_addressing_hack(1);
 }
 
 void wrlshunt_game_state::init_wrlshunt()
@@ -335,19 +335,19 @@ void wrlshunt_game_state::gpl16250_romram(machine_config &config)
 	gcm394_game_state::base(config);
 }
 
-uint16_t wrlshunt_game_state::porta_r()
+u16 wrlshunt_game_state::porta_r()
 {
-	uint16_t data = m_io[0]->read();
+	u16 data = m_io[0]->read();
 	logerror("%s: Port A Read: %04x\n",  machine().describe_context(), data);
 	return data;
 }
 
-void wrlshunt_game_state::porta_w(uint16_t data)
+void wrlshunt_game_state::porta_w(u16 data)
 {
 	logerror("%s: Port A:WRITE %04x\n", machine().describe_context(), data);
 
 	// HACK
-	address_space& mem = m_maincpu->space(AS_PROGRAM);
+	address_space &mem = m_maincpu->space(AS_PROGRAM);
 	if (mem.read_word(0x5b354) == 0xafd0)   // wrlshubt - skip check (EEPROM?)
 		mem.write_word(0x5b354, 0xB403);
 }
@@ -355,12 +355,15 @@ void wrlshunt_game_state::porta_w(uint16_t data)
 
 
 
-uint16_t jak_s500_game_state::porta_r()
+u16 jak_s500_game_state::porta_r()
 {
-	uint16_t data = m_io[0]->read();
+	u16 data = m_io[0]->read();
 	logerror("%s: Port A Read: %04x\n", machine().describe_context(), data);
 
-	//address_space& mem = m_maincpu->space(AS_PROGRAM);
+	// these are debug helpers to access the test modes while we don't have the
+	// secret codes / controls mapped properly
+
+	//address_space &mem = m_maincpu->space(AS_PROGRAM);
 
 	//if (mem.read_word(0x22b408) == 0x4846)
 	//  mem.write_word(0x22b408, 0x4840);    // jak_s500 force service mode
@@ -368,18 +371,21 @@ uint16_t jak_s500_game_state::porta_r()
 	//if (mem.read_word(0x236271) == 0x4846)
 	//  mem.write_word(0x236271, 0x4840);    // jak_totm force service mode
 
-	//if (mem.read_word(0x22D6F7) == 0x4846)
-	//  mem.write_word(0x22D6F7, 0x4840);    // jak_pf force service mode
+	//if (mem.read_word(0x22d6f7) == 0x4846)
+	//  mem.write_word(0x22d6f7, 0x4840);    // jak_pf force service mode
 
-	//if (mem.read_word(0x23E295) == 0x4846)
-	//  mem.write_word(0x23E295, 0x4840);    // jak_smwm force service mode
+	//if (mem.read_word(0x23e295) == 0x4846)
+	//  mem.write_word(0x23e295, 0x4840);    // jak_smwm force service mode
+
+	//if (mem.read_word(0x22e92e) == 0x4646)
+	//  mem.write_word(0x22e92e, 0x4640);    // jak_swcl force service mode
 
 	return data;
 }
 
-uint16_t jak_s500_game_state::portb_r()
+u16 jak_s500_game_state::portb_r()
 {
-	uint16_t data = m_io[1]->read();
+	u16 data = m_io[1]->read();
 	logerror("%s: Port B Read: %04x\n", machine().describe_context(), data);
 	return data;
 }
@@ -388,11 +394,9 @@ uint16_t jak_s500_game_state::portb_r()
 void jak_s500_game_state::machine_reset()
 {
 	cs_callback(0x00, 0x00, 0x00, 0x00, 0x00);
-	m_maincpu->set_cs_space(m_memory->get_program());
 	m_maincpu->reset(); // reset CPU so vector gets read etc.
 
 	//m_maincpu->set_paldisplaybank_high_hack(0);
-	m_maincpu->set_alt_tile_addressing_hack(1);
 }
 
 
@@ -419,12 +423,10 @@ void jak_pf_game_state::machine_reset()
 void jak_prft_game_state::machine_reset()
 {
 	jak_s500_game_state::machine_reset();
-	//m_maincpu->set_alt_tile_addressing_hack(0);
-	m_maincpu->set_alt_extrasprite_hack(1);
 }
 
 
-uint16_t paccon_game_state::paccon_speedup_hack_r()
+u16 paccon_game_state::paccon_speedup_hack_r()
 {
 	u32 const pc = m_maincpu->pc();
 	if (pc == 0x30033)
@@ -432,7 +434,7 @@ uint16_t paccon_game_state::paccon_speedup_hack_r()
 	return m_maincpu->get_ram_addr(0x6593);
 }
 
-uint16_t jak_pf_game_state::jak_pf_speedup_hack_r()
+u16 jak_pf_game_state::jak_pf_speedup_hack_r()
 {
 	u32 const pc = m_maincpu->pc();
 	if (pc == 0x30010)
@@ -440,7 +442,7 @@ uint16_t jak_pf_game_state::jak_pf_speedup_hack_r()
 	return m_maincpu->get_ram_addr(0x0001);
 }
 
-uint16_t jak_pf_game_state::jak_pf_speedup_hack2_r()
+u16 jak_pf_game_state::jak_pf_speedup_hack2_r()
 {
 	u32 const pc = m_maincpu->pc();
 	if (pc == 0x2611b4)
@@ -466,12 +468,28 @@ ROM_START(lazertag)
 	ROM_LOAD16_WORD_SWAP("lazertag.bin", 0x000000, 0x1000000, CRC(8bf16a28) SHA1(90d05e1876332324b074e4845e28b90fcb007122) )
 ROM_END
 
+ROM_START(jak_sinv)
+	//ROM_REGION16_BE( 0x40000, "maincpu:internal", ROMREGION_ERASE00 ) // not on this model? (or at least not this size, as CS base is different)
+	//ROM_LOAD16_WORD_SWAP( "internal.rom", 0x00000, 0x40000, NO_DUMP )
+
+	ROM_REGION(0x800000, "maincpu", ROMREGION_ERASE00)
+	ROM_LOAD16_WORD_SWAP("jakkspaceinvaders.u3", 0x000000, 0x800000, CRC(2ccb1fc9) SHA1(21d92829de4b03b92894d92853bb5ec360dfad3c) )
+ROM_END
+
 ROM_START(jak_s500)
 	//ROM_REGION16_BE( 0x40000, "maincpu:internal", ROMREGION_ERASE00 ) // not on this model? (or at least not this size, as CS base is different)
 	//ROM_LOAD16_WORD_SWAP( "internal.rom", 0x00000, 0x40000, NO_DUMP )
 
 	ROM_REGION(0x800000, "maincpu", ROMREGION_ERASE00)
 	ROM_LOAD16_WORD_SWAP("spbwheel.bin", 0x000000, 0x800000, CRC(6ba1d335) SHA1(1bb3e4d02c7b35dd4d336971c6a9f82071cc6ce1) )
+ROM_END
+
+ROM_START(jak_swcl)
+	//ROM_REGION16_BE( 0x40000, "maincpu:internal", ROMREGION_ERASE00 ) // not on this model? (or at least not this size, as CS base is different)
+	//ROM_LOAD16_WORD_SWAP( "internal.rom", 0x00000, 0x40000, NO_DUMP )
+
+	ROM_REGION(0x800000, "maincpu", ROMREGION_ERASE00)
+	ROM_LOAD16_WORD_SWAP("jakksclonewars.bin", 0x000000, 0x800000, CRC(549bb326) SHA1(992a60321580a4e014801d401b3a7ee000d2b465) )
 ROM_END
 
 ROM_START(jak_smwm)
@@ -633,16 +651,21 @@ CONS(2012, paccon,   0, 0, gpl16250_romram, paccon, paccon_game_state, init_wrls
 
 CONS(2008, lazertag, 0, 0, gpl16250_romram, jak_s500, lazertag_game_state, init_wrlshunt, "Tiger Electronics", "Lazer Tag Video Game Module", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
 
-CONS(2009, jak_s500, 0, 0, gpl16250_romram, jak_s500, jak_s500_game_state, init_wrlshunt, "JAKKS Pacific Inc / HotGen Ltd",          "SpongeBob SquarePants Bikini Bottom 500 (JAKKS Pacific TV Motion Game)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
-CONS(2009, jak_smwm, 0, 0, gpl16250_romram, jak_s500, jak_s500_game_state, init_wrlshunt, "JAKKS Pacific Inc / HotGen Ltd",          "Spider-Man Web Master (JAKKS Pacific TV Motion Game)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
-CONS(2010, jak_pf,   0, 0, gpl16250_romram, jak_s500, jak_pf_game_state,   init_wrlshunt, "JAKKS Pacific Inc / HotGen Ltd",          "Phineas and Ferb: Best Game Ever! (JAKKS Pacific TV Motion Game)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND) // build date is 2009, but onscreen display is 2010
-CONS(200?, jak_totm, 0, 0, gpl16250_romram, jak_s500, jak_s500_game_state, init_wrlshunt, "JAKKS Pacific Inc / HotGen Ltd",          "Toy Story - Toys on the Move (JAKKS Pacific TV Motion Game)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND) // Toys on the Move has ISSI 404A
+CONS(2009, jak_swcl, 0, 0, gpl16250_romram, jak_s500, jak_s500_game_state, init_wrlshunt, "JAKKS Pacific Inc / HotGen Ltd",          "Star Wars: The Clone Wars - Republic Squadron (JAKKS Pacific TV Motion Game) (May 6 2009 12:53:31)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
+CONS(2009, jak_s500, 0, 0, gpl16250_romram, jak_s500, jak_s500_game_state, init_wrlshunt, "JAKKS Pacific Inc / HotGen Ltd",          "SpongeBob SquarePants Bikini Bottom 500 (JAKKS Pacific TV Motion Game) (Apr 16 2009 15:11:17)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
+CONS(2009, jak_smwm, 0, 0, gpl16250_romram, jak_s500, jak_s500_game_state, init_wrlshunt, "JAKKS Pacific Inc / HotGen Ltd",          "Spider-Man Web Master (JAKKS Pacific TV Motion Game) (Apr 23 2009 17:10:04)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
+CONS(2010, jak_pf,   0, 0, gpl16250_romram, jak_s500, jak_pf_game_state,   init_wrlshunt, "JAKKS Pacific Inc / HotGen Ltd",          "Phineas and Ferb: Best Game Ever! (JAKKS Pacific TV Motion Game) (Sep 16 2009 17:36:00)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND) // build date is 2009, but onscreen display is 2010
+CONS(2009, jak_totm, 0, 0, gpl16250_romram, jak_s500, jak_s500_game_state, init_wrlshunt, "JAKKS Pacific Inc / HotGen Ltd",          "Toy Story - Toys on the Move (JAKKS Pacific TV Motion Game) (Dec 24 2009 17:34:29)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND) // Toys on the Move has ISSI 404A
+
 CONS(2009, jak_prft, 0, 0, gpl16250_romram, jak_s500, jak_prft_game_state, init_wrlshunt, "JAKKS Pacific Inc / Santa Cruz Games",    "Power Rangers Force In Time (JAKKS Pacific TV Motion Game)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
 CONS(2009, jak_tink, 0, 0, gpl16250_romram, jak_s500, jak_prft_game_state, init_wrlshunt, "JAKKS Pacific Inc / Santa Cruz Games",    "Tinker Bell and the Lost Treasure (JAKKS Pacific TV Motion Game)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
+
 CONS(2009, jak_ths,  0, 0, gpl16250_romram, jak_ths,  jak_s500_game_state, init_ths,      "JAKKS Pacific Inc / Super Happy Fun Fun", "Triple Header Sports (JAKKS Pacific TV Motion Game)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
+
+CONS(2011, jak_sinv, 0, 0, gpl16250_romram, jak_s500, jak_s500_game_state, init_wrlshunt, "JAKKS Pacific Inc / Code Mystics",        "Retro Arcade featuring Space Invaders (JAKKS Pacific TV Game)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
 
 CONS(2011, wrlshunt, 0, 0, gpl16250_romram, wrlshunt, wrlshunt_game_state, init_wrlshunt, "Hamy / Kids Station Toys Inc", "Wireless Hunting Video Game System", MACHINE_NO_SOUND | MACHINE_NOT_WORKING)
 
 // ぼくはトミカドライバー はたらくのりもの大集合！
-CONS(2014, tomycar,  0, 0, gpl16250_romram, paccon, jak_prft_game_state, init_wrlshunt, "Tomy Takara", "Boku wa Tomica Driver - Hataraku Norimono Daishuugou! (Japan)", MACHINE_NO_SOUND | MACHINE_NOT_WORKING)
+CONS(2014, tomycar,  0, 0, gpl16250_romram, paccon, jak_prft_game_state, init_wrlshunt, "Takara Tomy", "Boku wa Tomica Driver - Hataraku Norimono Daishuugou! (Japan)", MACHINE_NO_SOUND | MACHINE_NOT_WORKING)
 

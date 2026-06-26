@@ -145,7 +145,7 @@ static INPUT_PORTS_START( isa_hdc )
 INPUT_PORTS_END
 
 DEFINE_DEVICE_TYPE(XT_HDC,     xt_hdc_device, "xt_hdc", "Generic PC-XT Fixed Disk Controller")
-DEFINE_DEVICE_TYPE(EC1841_HDC, ec1841_device, "ec1481", "EX1841 Fixed Disk Controller")
+DEFINE_DEVICE_TYPE(EC1841_HDC, ec1841_device, "ec1841_hdc", "EC1841 Fixed Disk Controller")
 DEFINE_DEVICE_TYPE(ST11M_HDC,  st11m_device,  "st11m",  "Seagate ST11M Fixed Disk Controller")
 
 xt_hdc_device::xt_hdc_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock) :
@@ -915,7 +915,7 @@ DEFINE_DEVICE_TYPE(ISA8_HDC_EC1841, isa8_hdc_ec1841_device, "isa_hdc_ec1841", "E
 
 void isa8_hdc_device::device_add_mconfig(machine_config &config)
 {
-	XT_HDC(config, m_hdc,0);
+	XT_HDC(config, m_hdc);
 	m_hdc->irq_handler().set(FUNC(isa8_hdc_device::irq_w));
 	m_hdc->drq_handler().set(FUNC(isa8_hdc_device::drq_w));
 	HARDDISK(config, "hdc:primary", "st_hdd");
@@ -924,7 +924,7 @@ void isa8_hdc_device::device_add_mconfig(machine_config &config)
 
 void isa8_hdc_ec1841_device::device_add_mconfig(machine_config &config)
 {
-	EC1841_HDC(config, m_hdc,0);
+	EC1841_HDC(config, m_hdc);
 	m_hdc->irq_handler().set(FUNC(isa8_hdc_ec1841_device::irq_w));
 	m_hdc->drq_handler().set(FUNC(isa8_hdc_ec1841_device::drq_w));
 	HARDDISK(config, "hdc:primary", "st_hdd");

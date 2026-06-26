@@ -60,7 +60,7 @@ public:
 		, m_duart(*this, "duart%u", 0U)
 		, m_serial(*this, "serial%u", 0U)
 		, m_iop(*this, "iop")
-		, m_scsi(*this, "scsi:7:ncr5385")
+		, m_scsi(*this, "ncr5385")
 		, m_led(*this, "led%u", 1U)
 		, m_boot(*this, "boot")
 	{
@@ -155,8 +155,6 @@ private:
 
 void icm3216_state::machine_start()
 {
-	m_led.resolve();
-
 	save_item(NAME(m_iop_cmd));
 	save_item(NAME(m_iop_sts));
 	save_item(NAME(m_nmi_state));
@@ -288,7 +286,7 @@ void icm3216_state::icm3216(machine_config &config)
 	NS32202(config, m_icu, 18.432_MHz_XTAL / 10);
 	m_icu->out_int().set_inputline(m_cpu, INPUT_LINE_IRQ0).invert();
 
-	MM58274C(config, m_rtc, 0);
+	MM58274C(config, m_rtc);
 
 	// we are dte, therefore: tx,rx,rts,cts,dsr,dtr,dcd
 	// rts o
@@ -322,7 +320,7 @@ void icm3216_state::icm3216(machine_config &config)
 	m_iop->set_addrmap(AS_IO, &icm3216_state::iop_pio_map);
 	m_iop->set_irq_acknowledge_callback(FUNC(icm3216_state::iop_ack));
 
-	NSCSI_BUS(config, "scsi");
+	auto &scsi(NSCSI_BUS(config, "scsi"));
 	NSCSI_CONNECTOR(config, "scsi:0", scsi_devices, nullptr, false);
 	NSCSI_CONNECTOR(config, "scsi:1", scsi_devices, nullptr, false);
 	NSCSI_CONNECTOR(config, "scsi:2", scsi_devices, nullptr, false);
@@ -330,16 +328,11 @@ void icm3216_state::icm3216(machine_config &config)
 	NSCSI_CONNECTOR(config, "scsi:4", scsi_devices, nullptr, false);
 	NSCSI_CONNECTOR(config, "scsi:5", scsi_devices, nullptr, false);
 	NSCSI_CONNECTOR(config, "scsi:6", scsi_devices, nullptr, false);
-	NSCSI_CONNECTOR(config, "scsi:7").option_set("ncr5385", NCR5385).machine_config(
-		[this](device_t *device)
-		{
-			ncr5385_device &ncr5385(downcast<ncr5385_device &>(*device));
 
-			ncr5385.set_clock(10'000'000);
-
-			ncr5385.irq().set(*this, FUNC(icm3216_state::iop_int<2>));
-			ncr5385.dreq().set_inputline(m_iop, INPUT_LINE_NMI);
-		});
+	NCR5385(config, m_scsi, 10'000'000);
+	scsi.set_external_device(7, m_scsi);
+	m_scsi->irq().set(DEVICE_SELF, FUNC(icm3216_state::iop_int<2>));
+	m_scsi->dreq().set_inputline(m_iop, INPUT_LINE_NMI);
 }
 
 void icm3216_state::parity_select_w(u8 data)

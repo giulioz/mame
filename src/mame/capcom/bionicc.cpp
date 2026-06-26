@@ -42,7 +42,11 @@
     Clocks verified on 86612-A-2 and 86612-B-2 boards, serial no. 39646
     ("Bionic Commando", US region) by scope measurement at clock pins.
     Timings verified at SYNC pin and BLUE pin (jamma edge),
-    using an Agilent DSO9404A scope and two N2873A 500MHz probes
+    using an Agilent DSO9404A scope and two N2873A 500MHz probes.
+
+    The above claims result in 6MHz/(386*260) = ~59.78Hz, not 60.024Hz. MAME
+    is using 384*260 instead like tigeroad, which nearly matches an older
+    Bionic Commando measurement of H=15.625kHz, V=60.093Hz.
 
     BTANB [MT00209] (verified on real PCB):
     - misplaced sprites (see beginning of level 1 or 2 for example)
@@ -70,24 +74,23 @@
       dword RAM location. The dword RAM location is rotated by 8 bits each time
       this happens. This is probably done to be pedantic about coin insertions
       (might be protection related).
-
-    TODO:
-    - Firing IRQ4 at line 16 causes the game to often miss coin inserts. Set
-      to 128 currently to compensate.
-    - The game doesn't set the coin lockout in service mode, so the coin inputs
-      can't be tested there if you uncomment and enable it.
+    - Coin lockouts are set in service mode, assumed deliberate as you can
+      still press the physical coin switches. In MAME, set -nocoinlock to
+      be able to test the coin inputs.
 
 ***************************************************************************/
 
 #include "emu.h"
 
+#include "tigeroad_spr.h"
+
 #include "cpu/m68000/m68000.h"
-#include "cpu/mcs51/mcs51.h"
+#include "cpu/mcs51/i8051.h"
 #include "cpu/z80/z80.h"
 #include "machine/timer.h"
-#include "video/bufsprite.h"
-#include "tigeroad_spr.h"
 #include "sound/ymopm.h"
+#include "video/bufsprite.h"
+
 #include "emupal.h"
 #include "screen.h"
 #include "speaker.h"
@@ -110,6 +113,7 @@ public:
 		m_mcu(*this, "mcu"),
 		m_gfxdecode(*this, "gfxdecode"),
 		m_palette(*this, "palette"),
+		m_screen(*this, "screen"),
 		m_spritegen(*this, "spritegen"),
 		m_spriteram(*this, "spriteram") ,
 		m_txvideoram(*this, "txvideoram"),
@@ -130,6 +134,7 @@ private:
 	required_device<i8751_device> m_mcu;
 	required_device<gfxdecode_device> m_gfxdecode;
 	required_device<palette_device> m_palette;
+	required_device<screen_device> m_screen;
 	required_device<tigeroad_spr_device> m_spritegen;
 	required_device<buffered_spriteram16_device> m_spriteram;
 
@@ -139,7 +144,7 @@ private:
 
 	void main_map(address_map &map) ATTR_COLD;
 	void sound_map(address_map &map) ATTR_COLD;
-	void mcu_io(address_map &map) ATTR_COLD;
+	void mcu_data(address_map &map) ATTR_COLD;
 
 	void output_w(u8 data);
 
@@ -156,10 +161,10 @@ private:
 	void txvideoram_w(offs_t offset, u16 data, u16 mem_mask = ~0);
 	void scroll_w(offs_t offset, u16 data, u16 mem_mask = ~0);
 
-	tilemap_t   *m_tx_tilemap = nullptr;
-	tilemap_t   *m_bg_tilemap = nullptr;
-	tilemap_t   *m_fg_tilemap = nullptr;
-	uint16_t    m_scroll[4]{};
+	tilemap_t *m_tx_tilemap = nullptr;
+	tilemap_t *m_bg_tilemap = nullptr;
+	tilemap_t *m_fg_tilemap = nullptr;
+	uint16_t m_scroll[4]{};
 
 	// audio
 	void audiocpu_nmi_w(u8 data);
@@ -185,15 +190,17 @@ void bionicc_state::main_map(address_map &map)
 {
 	map.global_mask(0xfffff);
 	map(0x00000, 0x3ffff).rom();
-	map(0xe0000, 0xe07ff).ram(); // RAM?
-	map(0xe0800, 0xe0cff).ram().share("spriteram");
-	map(0xe0d00, 0xe3fff).ram(); // RAM?
+
+	map(0xe0000, 0xe07ff).mirror(0x3000).ram();
+	map(0xe0800, 0xe0cff).mirror(0x3000).ram().share("spriteram");
+	map(0xe0d00, 0xe0fff).mirror(0x3000).ram();
+
 	map(0xe4000, 0xe4000).mirror(0x3ffc).w(FUNC(bionicc_state::output_w));
 	map(0xe4000, 0xe4001).mirror(0x3ffc).portr("INPUTS");
 	map(0xe4002, 0xe4002).mirror(0x3ffc).w(FUNC(bionicc_state::audiocpu_nmi_w));
 	map(0xe4002, 0xe4003).mirror(0x3ffc).portr("DSW");
 	map(0xe8010, 0xe8017).w(FUNC(bionicc_state::scroll_w));
-	map(0xe8018, 0xe8019).nopw(); // vblank irq ack?
+	map(0xe8018, 0xe8019).w(m_spriteram, FUNC(buffered_spriteram16_device::write)); // should only work in vblank?
 	map(0xe801a, 0xe801b).w(FUNC(bionicc_state::dmaon_w));
 	map(0xec000, 0xecfff).mirror(0x3000).ram().w(FUNC(bionicc_state::txvideoram_w)).share("txvideoram");
 	map(0xf0000, 0xf3fff).ram().w(FUNC(bionicc_state::fgvideoram_w)).share("fgvideoram");
@@ -210,7 +217,7 @@ void bionicc_state::sound_map(address_map &map)
 	map(0xc000, 0xc7ff).ram();
 }
 
-void bionicc_state::mcu_io(address_map &map)
+void bionicc_state::mcu_data(address_map &map)
 {
 	map.global_mask(0x7ff);
 	map(0x000, 0x7ff).rw(FUNC(bionicc_state::mcu_dma_r), FUNC(bionicc_state::mcu_dma_w));
@@ -402,13 +409,6 @@ void bionicc_state::video_start()
 	m_fg_tilemap->set_transmask(0, 0xffff, 0x8000); /* split type 0 is completely transparent in front half */
 	m_fg_tilemap->set_transmask(1, 0xffc1, 0x803e); /* split type 1 has pens 1-5 opaque in front half */
 	m_bg_tilemap->set_transparent_pen(15);
-
-	m_tx_tilemap->set_scrolldx(128, 128);
-	m_tx_tilemap->set_scrolldy(  6,   6);
-	m_bg_tilemap->set_scrolldx(128, 128);
-	m_bg_tilemap->set_scrolldy(  6,   6);
-	m_fg_tilemap->set_scrolldx(128, 128);
-	m_fg_tilemap->set_scrolldy(  6,   6);
 }
 
 
@@ -517,7 +517,7 @@ u8 bionicc_state::mcu_dma_r(offs_t offset)
 {
 	u8 data = 0xff;
 
-	if (BIT(m_mcu_p3, 5) == 0)
+	if (!BIT(m_mcu_p3, 5))
 	{
 		// various address bits are pulled high because the mcu doesn't drive them
 		// the 3 upper address bits (p2.0, p2.1, p2.2) are connected to a14 to a16
@@ -530,7 +530,7 @@ u8 bionicc_state::mcu_dma_r(offs_t offset)
 
 void bionicc_state::mcu_dma_w(offs_t offset, u8 data)
 {
-	if (BIT(m_mcu_p3, 5) == 0)
+	if (!BIT(m_mcu_p3, 5))
 	{
 		offs_t address = 0xe3e01 | ((offset & 0x700) << 6) | ((offset & 0xff) << 1);
 		m_maincpu->space(AS_PROGRAM).write_byte(address, data);
@@ -548,16 +548,16 @@ void bionicc_state::mcu_p3_w(u8 data)
 	// ------1-  int0 flip-flop preset
 	// -------0  int0 ack
 
-	if (BIT(m_mcu_p3, 0) == 1 && BIT(data, 0) == 0)
+	if (BIT(m_mcu_p3, 0) && !BIT(data, 0))
 	{
 		m_mcu->set_input_line(MCS51_INT0_LINE, CLEAR_LINE);
 		m_maincpu->resume(SUSPEND_REASON_HALT);
 	}
 
-	if (BIT(m_mcu_p3, 4) == 1 && BIT(data, 4) == 0)
+	if (BIT(m_mcu_p3, 4) && !BIT(data, 4))
 		m_mcu->set_input_line(MCS51_INT1_LINE, CLEAR_LINE);
 
-	if (BIT(m_mcu_p3, 6) == 1 && BIT(data, 6) == 0)
+	if (BIT(m_mcu_p3, 6) && !BIT(data, 6))
 		m_mcu_to_audiocpu = m_mcu_p1;
 
 	m_mcu_p3 = data;
@@ -567,6 +567,9 @@ void bionicc_state::dmaon_w(u16 data)
 {
 	m_mcu->set_input_line(MCS51_INT0_LINE, ASSERT_LINE);
 	m_maincpu->suspend(SUSPEND_REASON_HALT, true);
+
+	// enough time for the MCU interrupt routine to finish
+	machine().scheduler().perfect_quantum(attotime::from_usec(1500));
 }
 
 
@@ -595,21 +598,19 @@ void bionicc_state::output_w(u8 data)
 
 	flip_screen_set(BIT(data, 0));
 
-	// commented out, else you can't test the coin inputs in service mode
-//  machine().bookkeeping().coin_lockout_w(1, BIT(~data, 4));
-//  machine().bookkeeping().coin_lockout_w(0, BIT(~data, 5));
+	machine().bookkeeping().coin_lockout_w(1, BIT(~data, 4));
+	machine().bookkeeping().coin_lockout_w(0, BIT(~data, 5));
 	machine().bookkeeping().coin_counter_w(1, BIT(data, 6));
 	machine().bookkeeping().coin_counter_w(0, BIT(data, 7));
 }
 
 TIMER_DEVICE_CALLBACK_MEMBER(bionicc_state::scanline)
 {
-	// vblank-out irq - drives the game (V256)
-	if (param == 256)
+	// IRQ2 is vblank (drives the game)
+	if (param == 240)
 		m_maincpu->set_input_line(2, HOLD_LINE);
 
-	// vblank-in irq - processes inputs (!LVBL)
-	// should be 16? but then often loses coin inserts
+	// IRQ4 processes inputs
 	if (param == 128)
 		m_maincpu->set_input_line(4, HOLD_LINE);
 }
@@ -650,21 +651,20 @@ void bionicc_state::bionicc(machine_config &config)
 
 	// Protection MCU Intel C8751H-88 @ 6 MHz
 	I8751(config, m_mcu, 24_MHz_XTAL / 4);
-	m_mcu->set_addrmap(AS_IO, &bionicc_state::mcu_io);
+	m_mcu->set_addrmap(AS_DATA, &bionicc_state::mcu_data);
 	m_mcu->port_in_cb<1>().set([this](){ return m_audiocpu_to_mcu; });
 	m_mcu->port_out_cb<1>().set([this](u8 data){ m_mcu_p1 = data; });
 	m_mcu->port_out_cb<3>().set(FUNC(bionicc_state::mcu_p3_w));
 
 	// video hardware
-	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_RASTER));
-	screen.set_raw(24_MHz_XTAL / 4, 384, 128, 0, 262, 22, 246); // hsync is 50..77, vsync is 257..259
-	screen.set_screen_update(FUNC(bionicc_state::screen_update));
-	screen.screen_vblank().set(m_spriteram, FUNC(buffered_spriteram16_device::vblank_copy_rising));
-	screen.set_palette(m_palette);
+	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
+	m_screen->set_raw(24_MHz_XTAL / 4, 384, 0, 256, 260, 16, 240);
+	m_screen->set_screen_update(FUNC(bionicc_state::screen_update));
+	m_screen->set_palette(m_palette);
 
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_bionicc);
 
-	TIGEROAD_SPRITE(config, m_spritegen, 0);
+	TIGEROAD_SPRITE(config, m_spritegen);
 	m_spritegen->set_palette(m_palette);
 	m_spritegen->set_color_base(512);    /* colors 512- 767 */
 
@@ -672,6 +672,7 @@ void bionicc_state::bionicc(machine_config &config)
 
 	BUFFERED_SPRITERAM16(config, m_spriteram);
 
+	// sound hardware
 	SPEAKER(config, "mono").front_center();
 
 	YM2151(config, "ymsnd", 14.318181_MHz_XTAL / 4).add_route(0, "mono", 0.60).add_route(1, "mono", 0.60);

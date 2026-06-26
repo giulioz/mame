@@ -82,7 +82,7 @@ class z80ctc_device :   public device_t,
 
 public:
 	// construction/destruction
-	z80ctc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	z80ctc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
 	auto intr_callback() { return m_intr_cb.bind(); }
 	template <int Channel> auto zc_callback() { return m_zc_cb[Channel].bind(); } // m_zc_cb[3] not supported on a standard ctc, only used for the tmpz84c015
@@ -114,6 +114,7 @@ protected:
 
 	// internal helpers
 	u8 channel_int_state(int ch) const noexcept { return m_channel[ch]->m_int_state; }
+	u8 channel_mode(int ch) const noexcept { return m_channel[ch]->m_mode; }
 	void interrupt_check();
 
 	z80ctc_channel_device &channel_config(int ch) { return *m_channel[ch].lookup(); }

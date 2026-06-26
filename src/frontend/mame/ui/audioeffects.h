@@ -21,7 +21,7 @@ namespace ui {
 class menu_audio_effects : public menu
 {
 public:
-	menu_audio_effects(mame_ui_manager &mui, render_container &container);
+	menu_audio_effects(mame_ui_manager &mui, render_target &target);
 	virtual ~menu_audio_effects() override;
 
 protected:
@@ -30,9 +30,22 @@ protected:
 	virtual void menu_activated() override;
 	virtual void menu_deactivated() override;
 
-private:	
+private:
+	enum { RS_TYPE = 0x1000, RS_LATENCY, RS_LENGTH, RS_PHASES };
+
 	virtual void populate() override;
 	virtual bool handle(event const *ev) override;
+
+	u32 flag_type() const;
+	u32 flag_latency() const;
+	u32 flag_length() const;
+	u32 flag_phases() const;
+
+	float change_f(float val, bool inc, bool alt_pressed, bool ctrl_pressed, bool shift_pressed);
+	u32 change_int(u16 which, int val, bool inc, bool alt_pressed, bool ctrl_pressed, bool shift_pressed);
+
+	static std::string format_lat(float latency);
+	static std::string format_u32(u32 val);
 };
 
 } // namespace ui

@@ -179,6 +179,7 @@ protected:
 	void update_sprites_active_area();
 	void taito_f2_tc360_spritemixdraw(screen_device &screen, bitmap_ind16 &dest_bmp, const rectangle &clip, gfx_element *gfx,
 	u32 code, u32 color, int flipx, int flipy, int sx, int sy, int scalex, int scaley, u64 primask = 0, bool use_mixer = false);
+	rgb_t color_xbgr555(u16 data);
 
 	void dinorex_map(address_map &map) ATTR_COLD;
 	void finalb_map(address_map &map) ATTR_COLD;
@@ -230,6 +231,7 @@ class mjnquest_state : public taitof2_state
 public:
 	mjnquest_state(const machine_config &mconfig, device_type type, const char *tag)
 		: taitof2_state(mconfig, type, tag)
+		, m_io_key(*this, "KEY%u", 0U)
 		, m_io_in(*this, "IN%u", 0U)
 		, m_io_dsw(*this, "DSW%c", 'A')
 	{ }
@@ -243,7 +245,8 @@ protected:
 	virtual void video_start() override ATTR_COLD;
 
 private:
-	required_ioport_array<7> m_io_in;
+	required_ioport_array<5> m_io_key;
+	required_ioport_array<2> m_io_in;
 	required_ioport_array<2> m_io_dsw;
 
 	s32 m_mjnquest_input = 0;

@@ -39,10 +39,7 @@ public:
 	plg1x0_connector(const machine_config &mconfig, const char *tag, device_t *owner, T &&opts, const char *dflt)
 		: plg1x0_connector(mconfig, tag, owner, (uint32_t)0)
 	{
-		option_reset();
-		opts(*this);
-		set_default_option(dflt);
-		set_fixed(false);
+		set_options(std::forward<T>(opts), dflt, false);
 	}
 
 	plg1x0_connector(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
@@ -53,7 +50,6 @@ public:
 	void do_midi_tx(int state) { m_midi_tx(state); }
 
 protected:
-	bool m_dummy_save = false; // needed for save-state support
 	devcb_write_line m_midi_tx;
 
 	virtual void device_start() override ATTR_COLD;

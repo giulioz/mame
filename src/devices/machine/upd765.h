@@ -11,8 +11,8 @@ class floppy_image_device;
 
 /*
  * ready = true if the ready line is physically connected to the floppy drive
- * select = true if the fdc controls the floppy drive selection
- * mode = mode_t::AT, mode_t::PS2 or mode_t::M30 for the fdcs that have reset-time selection
+ * select = true if the FDC controls the floppy drive selection
+ * mode = mode_t::AT, mode_t::PS2 or mode_t::M30 for the FDC's that have reset-time selection
  */
 
 class upd765_family_device : public device_t {
@@ -24,6 +24,7 @@ public:
 	auto hdl_wr_callback() { return hdl_cb.bind(); }
 	auto us_wr_callback() { return us_cb.bind(); }
 	auto idx_wr_callback() { return idx_cb.bind(); }
+	auto ts_rd_callback() { return ts_cb.bind(); }
 
 	virtual void map(address_map &map) = 0;
 
@@ -51,10 +52,11 @@ public:
 	void tc_line_w(int state) { tc_w(state == ASSERT_LINE); }
 	void reset_w(int state);
 
-	void set_rate(int rate); // rate in bps, to be used when the fdc is externally frequency-controlled
+	void set_rate(int rate); // rate in bps, to be used when the FDC is externally frequency-controlled
 
 	void set_ready_line_connected(bool ready);
 	void set_select_lines_connected(bool select);
+	void set_ts_line_connected(bool ts);
 	void set_floppy(floppy_image_device *image);
 	virtual void soft_reset();
 
@@ -67,7 +69,7 @@ protected:
 	TIMER_CALLBACK_MEMBER(update_floppy);
 
 	enum {
-		PHASE_CMD, PHASE_EXEC, PHASE_RESULT
+		PHASE_IDLE, PHASE_CMD, PHASE_EXEC, PHASE_RESULT
 	};
 
 	enum {
@@ -228,7 +230,7 @@ protected:
 
 	static constexpr int rates[4] = { 500000, 300000, 250000, 1000000 };
 
-	bool ready_connected, ready_polled, select_connected, select_multiplexed, has_dor;
+	bool ready_connected, ready_polled, select_connected, select_multiplexed, ts_connected, has_dor;
 
 	bool external_ready;
 
@@ -239,6 +241,7 @@ protected:
 
 	live_info cur_live, checkpoint_live;
 	devcb_write_line intrq_cb, drq_cb, hdl_cb, idx_cb;
+	devcb_read_line ts_cb;
 	devcb_write8 us_cb;
 	bool cur_irq, irq, drq, internal_drq, tc, tc_done, locked, mfm, scan_done;
 	floppy_info flopi[4];
@@ -429,6 +432,19 @@ private:
 	int delayed_command;
 };
 
+class fdc9266_device : public upd765_family_device {
+public:
+	fdc9266_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock, bool ready, bool select)
+		: fdc9266_device(mconfig, tag, owner, clock)
+	{
+		set_ready_line_connected(ready);
+		set_select_lines_connected(select);
+	}
+	fdc9266_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
+
+	virtual void map(address_map &map) override ATTR_COLD;
+};
+
 class ps2_fdc_device : public upd765_family_device {
 public:
 	void set_mode(mode_t mode);
@@ -471,6 +487,11 @@ public:
 
 protected:
 	upd72065_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock);
+};
+
+class upd72066_device : public upd72065_device {
+public:
+	upd72066_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
 };
 
 class upd72067_device : public upd72065_device {
@@ -540,13 +561,13 @@ public:
 	virtual void map(address_map &map) override ATTR_COLD;
 };
 
-class wd37c65c_device : public upd765_family_device {
+class wd37c65_device : public upd765_family_device {
 public:
-	wd37c65c_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
+	wd37c65_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
 
 	template <typename X>
-	wd37c65c_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock, X &&clock2)
-		: wd37c65c_device(mconfig, tag, owner, clock)
+	wd37c65_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock, X &&clock2)
+		: wd37c65_device(mconfig, tag, owner, clock)
 	{
 		set_clock2(std::forward<X>(clock2));
 	}
@@ -557,8 +578,35 @@ public:
 	virtual void map(address_map &map) override ATTR_COLD;
 	virtual uint8_t get_st3(floppy_info &fi) override;
 
+protected:
+	wd37c65_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock);
+
 private:
 	uint32_t m_clock2;
+};
+
+class wd37c65b_device : public wd37c65_device {
+public:
+	wd37c65b_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
+
+	template <typename X>
+	wd37c65b_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock, X &&clock2)
+		: wd37c65b_device(mconfig, tag, owner, clock)
+	{
+		set_clock2(std::forward<X>(clock2));
+	}
+};
+
+class wd37c65c_device : public wd37c65_device {
+public:
+	wd37c65c_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
+
+	template <typename X>
+	wd37c65c_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock, X &&clock2)
+		: wd37c65c_device(mconfig, tag, owner, clock)
+	{
+		set_clock2(std::forward<X>(clock2));
+	}
 };
 
 class mcs3201_device : public upd765_family_device {
@@ -582,6 +630,8 @@ public:
 	virtual void map(address_map &map) override ATTR_COLD;
 
 	void cr1_w(uint8_t data);
+	int c4_r() { return BIT(m_cr1, 4); }
+	int c6_r() { return BIT(m_cr1, 6); }
 
 protected:
 	virtual void device_start() override ATTR_COLD;
@@ -621,15 +671,19 @@ DECLARE_DEVICE_TYPE(UPD765A,        upd765a_device)
 DECLARE_DEVICE_TYPE(UPD765B,        upd765b_device)
 DECLARE_DEVICE_TYPE(I8272A,         i8272a_device)
 DECLARE_DEVICE_TYPE(UPD72065,       upd72065_device)
+DECLARE_DEVICE_TYPE(UPD72066,       upd72066_device)
 DECLARE_DEVICE_TYPE(UPD72067,       upd72067_device)
 DECLARE_DEVICE_TYPE(UPD72069,       upd72069_device)
 DECLARE_DEVICE_TYPE(I82072,         i82072_device)
+DECLARE_DEVICE_TYPE(FDC9266,        fdc9266_device)
 DECLARE_DEVICE_TYPE(SMC37C78,       smc37c78_device)
 DECLARE_DEVICE_TYPE(N82077AA,       n82077aa_device)
 DECLARE_DEVICE_TYPE(PC_FDC_SUPERIO, pc_fdc_superio_device)
 DECLARE_DEVICE_TYPE(DP8473,         dp8473_device)
 DECLARE_DEVICE_TYPE(PC8477A,        pc8477a_device)
 DECLARE_DEVICE_TYPE(PC8477B,        pc8477b_device)
+DECLARE_DEVICE_TYPE(WD37C65,        wd37c65_device)
+DECLARE_DEVICE_TYPE(WD37C65B,       wd37c65b_device)
 DECLARE_DEVICE_TYPE(WD37C65C,       wd37c65c_device)
 DECLARE_DEVICE_TYPE(MCS3201,        mcs3201_device)
 DECLARE_DEVICE_TYPE(TC8566AF,       tc8566af_device)

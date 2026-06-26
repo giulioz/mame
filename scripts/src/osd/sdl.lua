@@ -59,6 +59,8 @@ function maintargetosdoptions(_target,_subtarget)
 				links {
 					"SDL2main",
 					"SDL2",
+					"imm32",
+					"version",
 				}
 			configuration { "vs*" }
 				links {
@@ -214,12 +216,7 @@ end
 
 BASE_TARGETOS       = "unix"
 SDLOS_TARGETOS      = "unix"
-if _OPTIONS["targetos"]=="linux" then
-elseif _OPTIONS["targetos"]=="openbsd" then
-elseif _OPTIONS["targetos"]=="netbsd" then
-elseif _OPTIONS["targetos"]=="haiku" then
-elseif _OPTIONS["targetos"]=="asmjs" then
-elseif _OPTIONS["targetos"]=="windows" then
+if _OPTIONS["targetos"]=="windows" then
 	BASE_TARGETOS       = "win32"
 	SDLOS_TARGETOS      = "win32"
 elseif _OPTIONS["targetos"]=="macosx" then
@@ -314,7 +311,6 @@ project ("qtdbg_" .. _OPTIONS["osd"])
 	qtdebuggerbuild()
 
 project ("osd_" .. _OPTIONS["osd"])
-	targetsubdir(_OPTIONS["target"] .."_" .._OPTIONS["subtarget"])
 	uuid (os.uuid("osd_" .. _OPTIONS["osd"]))
 	kind (LIBTYPE)
 
@@ -394,7 +390,6 @@ project ("osd_" .. _OPTIONS["osd"])
 	}
 
 project ("ocore_" .. _OPTIONS["osd"])
-	targetsubdir(_OPTIONS["target"] .."_" .. _OPTIONS["subtarget"])
 	uuid (os.uuid("ocore_" .. _OPTIONS["osd"]))
 	kind (LIBTYPE)
 
@@ -452,5 +447,3 @@ project ("ocore_" .. _OPTIONS["osd"])
 			MAME_DIR .. "src/osd/modules/file/stdfile.cpp",
 		}
 	end
-
-

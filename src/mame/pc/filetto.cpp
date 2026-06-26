@@ -269,7 +269,9 @@ void filetto_state::fdc_dor_w(uint8_t data)
 void filetto_state::voice_start_w(uint8_t data)
 {
 	// TODO: accurate pitch frequency
-	m_sample->adjust(attotime::zero, 0, attotime::from_hz(44150));
+	// triggers after game over -> high score
+	// hand tuned, should be between ~30 and 44.1 kHz
+	m_sample->adjust(attotime::zero, 0, attotime::from_hz(44100));
 	m_bit = 7;
 	m_vaddr = ((m_voice & 0xf / 5) | (BIT(m_voice, 4) << 2)) * 0x8000;
 	logerror("%x %x\n",m_voice,m_vaddr);
@@ -382,13 +384,13 @@ void filetto_state::filetto(machine_config &config)
 	m_maincpu->set_addrmap(AS_IO, &filetto_state::filetto_io);
 	m_maincpu->set_irq_acknowledge_callback("mb:pic8259", FUNC(pic8259_device::inta_cb));
 
-	PCNOPPI_MOTHERBOARD(config, m_mb, 0).set_cputag(m_maincpu);
+	PCNOPPI_MOTHERBOARD(config, m_mb).set_cputag(m_maincpu);
 	m_mb->int_callback().set_inputline(m_maincpu, 0);
 	m_mb->nmi_callback().set_inputline(m_maincpu, INPUT_LINE_NMI);
 
 	ISA8_SLOT(config, "isa1", 0, "mb:isa", filetto_isa8_cards, "filetto", true); // FIXME: determine ISA bus clock
 
-	HC55516(config, m_cvsd, 0).add_route(ALL_OUTPUTS, "mb:mono", 0.60); //8923S-UM5100 is a HC55536 with ROM hook-up
+	HC55516(config, m_cvsd).add_route(ALL_OUTPUTS, "mb:mono", 0.60); //8923S-UM5100 is a HC55536 with ROM hook-up
 
 	RAM(config, RAM_TAG).set_default_size("640K");
 
@@ -397,14 +399,14 @@ void filetto_state::filetto(machine_config &config)
 
 ROM_START( filetto )
 	ROM_REGION( 0x10000, "bios", 0 )
-	ROM_LOAD("u49.bin", 0xc000, 0x2000, CRC(1be6948a) SHA1(9c433f63d347c211ee4663f133e8417221bc4bf0))
-	ROM_RELOAD(         0x8000, 0x2000 )
-	ROM_RELOAD(         0x4000, 0x2000 )
-	ROM_RELOAD(         0x0000, 0x2000 )
-	ROM_LOAD("u55.bin", 0xe000, 0x2000, CRC(1e455ed7) SHA1(786d18ce0ab1af45fc538a2300853e497488f0d4) )
-	ROM_RELOAD(         0xa000, 0x2000 )
-	ROM_RELOAD(         0x6000, 0x2000 )
-	ROM_RELOAD(         0x2000, 0x2000 )
+	ROM_LOAD( "u49.bin", 0xc000, 0x2000, CRC(1be6948a) SHA1(9c433f63d347c211ee4663f133e8417221bc4bf0) )
+	ROM_RELOAD(          0x8000, 0x2000 )
+	ROM_RELOAD(          0x4000, 0x2000 )
+	ROM_RELOAD(          0x0000, 0x2000 )
+	ROM_LOAD( "u55.bin", 0xe000, 0x2000, CRC(1e455ed7) SHA1(786d18ce0ab1af45fc538a2300853e497488f0d4) )
+	ROM_RELOAD(          0xa000, 0x2000 )
+	ROM_RELOAD(          0x6000, 0x2000 )
+	ROM_RELOAD(          0x2000, 0x2000 )
 
 	ROM_REGION( 0x40000, "game_prg", 0 ) // program data
 	ROM_LOAD( "m0.u1", 0x00000, 0x10000, CRC(2408289d) SHA1(eafc144a557a79b58bcb48545cb9c9778e61fcd3) )
@@ -413,8 +415,13 @@ ROM_START( filetto )
 	ROM_LOAD( "m3.u4", 0x30000, 0x10000, CRC(0c1e8a67) SHA1(f1b9280c65fcfcb5ec481cae48eb6f52d6cdbc9d) )
 
 	ROM_REGION( 0x40000, "samples", 0 ) // UM5100 sample roms
-	ROM_LOAD("v1.u15",  0x00000, 0x20000, CRC(613ddd07) SHA1(ebda3d559315879819cb7034b5696f8e7861fe42) )
-	ROM_LOAD("v2.u14",  0x20000, 0x20000, CRC(427e012e) SHA1(50514a6307e63078fe7444a96e39d834684db7df) )
+	ROM_LOAD( "v1.u15", 0x00000, 0x20000, CRC(613ddd07) SHA1(ebda3d559315879819cb7034b5696f8e7861fe42) )
+	ROM_LOAD( "v2.u14", 0x20000, 0x20000, CRC(427e012e) SHA1(50514a6307e63078fe7444a96e39d834684db7df) )
+
+	ROM_REGION( 0x500, "plds", ROMREGION_ERASE00 )
+	ROM_LOAD( "pal14l4cn.u15",   0x000, 0x03c, CRC(fb0e96d0) SHA1(428ba6fe7cb7c7f7e6833667c69a0810f9db29d8) ) // on main board
+	ROM_LOAD( "pal16l8acn.u10",  0x100, 0x117, CRC(5d9a1ec4) SHA1(b126c6cb5fc9a21c46a00c9a284241bfec6e8807) ) // on sound board, extracted so file is for GAL16V8
+	ROM_LOAD( "ampal16r8apc.u7", 0x300, 0x117, NO_DUMP ) // on sound board, registered
 ROM_END
 
 

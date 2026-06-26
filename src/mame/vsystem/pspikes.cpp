@@ -2301,7 +2301,7 @@ void pspikes_banked_sound_state::pspikes(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_pspikes);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 2048);
 
-	VSYSTEM_SPR2(config, m_spr[0], 0, m_palette, gfx_pspikes_spr);
+	VSYSTEM_SPR2(config, m_spr[0], m_palette, gfx_pspikes_spr);
 	m_spr[0]->set_tile_indirect_cb(FUNC(pspikes_banked_sound_state::pspikes_tile_callback));
 
 	VSYSTEM_GGA(config, "gga", XTAL(14'318'181) / 2); // divider not verified
@@ -2348,7 +2348,7 @@ void spikes91_state::spikes91(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_spikes91);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 2048);
 
-	//VSYSTEM_GGA(config, "gga", 0);
+	//VSYSTEM_GGA(config, "gga");
 
 	SPEAKER(config, "mono").front_center();
 
@@ -2377,7 +2377,7 @@ void pspikes_base_state::pspikesb(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_pspikesb);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 2048);
 
-	//VSYSTEM_GGA(config, "gga", 0);
+	//VSYSTEM_GGA(config, "gga");
 
 	MCFG_VIDEO_START_OVERRIDE(pspikes_base_state,pspikes)
 
@@ -2419,10 +2419,10 @@ void pspikes_sound_cpu_state::kickball(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_pspikes);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 2048);
 
-	VSYSTEM_SPR2(config, m_spr[0], 0, m_palette, gfx_kickball_spr);
+	VSYSTEM_SPR2(config, m_spr[0], m_palette, gfx_kickball_spr);
 	m_spr[0]->set_tile_indirect_cb(FUNC(pspikes_sound_cpu_state::pspikes_tile_callback));
 
-	//VSYSTEM_GGA(config, "gga", 0); // still accessed as if it exists, in clone hardware?
+	//VSYSTEM_GGA(config, "gga"); // still accessed as if it exists, in clone hardware?
 
 	MCFG_VIDEO_START_OVERRIDE(pspikes_sound_cpu_state,pspikes)
 
@@ -2460,9 +2460,9 @@ void pspikes_base_state::pspikesc(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_pspikes);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 2048);
 
-	//VSYSTEM_GGA(config, "gga", 0);
+	//VSYSTEM_GGA(config, "gga");
 
-	VSYSTEM_SPR2(config, m_spr[0], 0, m_palette, gfx_pspikes_spr);
+	VSYSTEM_SPR2(config, m_spr[0], m_palette, gfx_pspikes_spr);
 	m_spr[0]->set_tile_indirect_cb(FUNC(pspikes_base_state::pspikes_tile_callback));
 
 	MCFG_VIDEO_START_OVERRIDE(pspikes_base_state,pspikes)
@@ -2500,10 +2500,10 @@ void pspikes_banked_sound_state::karatblz(machine_config &config)
 
 	VSYSTEM_GGA(config, "gga", XTAL(14'318'181) / 2); // divider not verified
 
-	VSYSTEM_SPR2(config, m_spr[0], 0, m_palette, gfx_turbofrc_spr1);
+	VSYSTEM_SPR2(config, m_spr[0], m_palette, gfx_turbofrc_spr1);
 	m_spr[0]->set_tile_indirect_cb(FUNC(pspikes_banked_sound_state::pspikes_tile_callback));
 
-	VSYSTEM_SPR2(config, m_spr[1], 0, m_palette, gfx_turbofrc_spr2);
+	VSYSTEM_SPR2(config, m_spr[1], m_palette, gfx_turbofrc_spr2);
 	m_spr[1]->set_tile_indirect_cb(FUNC(pspikes_banked_sound_state::pspikes_tile2_callback));
 
 	MCFG_VIDEO_START_OVERRIDE(pspikes_banked_sound_state,karatblz)
@@ -2546,13 +2546,13 @@ void karatblzbl_state::karatblzbl(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_turbofrc);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 1024);
 
-	VSYSTEM_SPR2(config, m_spr[0], 0, m_palette, gfx_turbofrc_spr1);
+	VSYSTEM_SPR2(config, m_spr[0], m_palette, gfx_turbofrc_spr1);
 	m_spr[0]->set_tile_indirect_cb(FUNC(karatblzbl_state::pspikes_tile_callback));
 
-	VSYSTEM_SPR2(config, m_spr[1], 0, m_palette, gfx_turbofrc_spr2);
+	VSYSTEM_SPR2(config, m_spr[1], m_palette, gfx_turbofrc_spr2);
 	m_spr[1]->set_tile_indirect_cb(FUNC(karatblzbl_state::pspikes_tile2_callback));
 
-	//VSYSTEM_GGA(config, "gga", 0);
+	//VSYSTEM_GGA(config, "gga");
 
 	MCFG_VIDEO_START_OVERRIDE(karatblzbl_state,karatblz)
 
@@ -2596,10 +2596,10 @@ void pspikes_banked_sound_state::spinlbrk(machine_config &config)
 
 	VSYSTEM_GGA(config, "gga", XTAL(14'318'181) / 2); // divider not verified
 
-	VSYSTEM_SPR2(config, m_spr[0], 0, m_palette, gfx_turbofrc_spr1);
+	VSYSTEM_SPR2(config, m_spr[0], m_palette, gfx_turbofrc_spr1);
 	m_spr[0]->set_pritype(1);
 
-	VSYSTEM_SPR2(config, m_spr[1], 0, m_palette, gfx_turbofrc_spr2);
+	VSYSTEM_SPR2(config, m_spr[1], m_palette, gfx_turbofrc_spr2);
 	m_spr[1]->set_tile_indirect_cb(FUNC(pspikes_banked_sound_state::spinbrk_tile_callback)); // rom lookup
 	m_spr[1]->set_pritype(1);
 
@@ -2645,10 +2645,10 @@ void pspikes_banked_sound_state::turbofrc(machine_config &config)
 
 	VSYSTEM_GGA(config, "gga", XTAL(14'318'181) / 2); // divider not verified
 
-	VSYSTEM_SPR2(config, m_spr[0], 0, m_palette, gfx_turbofrc_spr1);
+	VSYSTEM_SPR2(config, m_spr[0], m_palette, gfx_turbofrc_spr1);
 	m_spr[0]->set_tile_indirect_cb(FUNC(pspikes_banked_sound_state::pspikes_tile_callback));
 
-	VSYSTEM_SPR2(config, m_spr[1], 0, m_palette, gfx_turbofrc_spr2);
+	VSYSTEM_SPR2(config, m_spr[1], m_palette, gfx_turbofrc_spr2);
 	m_spr[1]->set_tile_indirect_cb(FUNC(pspikes_banked_sound_state::pspikes_tile2_callback));
 
 	MCFG_VIDEO_START_OVERRIDE(pspikes_banked_sound_state,turbofrc)
@@ -2693,11 +2693,11 @@ void pspikes_banked_sound_state::aerofgtb(machine_config &config)
 
 	VSYSTEM_GGA(config, "gga", XTAL(14'318'181) / 2); // divider not verified
 
-	VSYSTEM_SPR2(config, m_spr[0], 0, m_palette, gfx_turbofrc_spr1);
+	VSYSTEM_SPR2(config, m_spr[0], m_palette, gfx_turbofrc_spr1);
 	m_spr[0]->set_tile_indirect_cb(FUNC(pspikes_banked_sound_state::pspikes_tile_callback));
 	m_spr[0]->set_offsets(3, -1);
 
-	VSYSTEM_SPR2(config, m_spr[1], 0, m_palette, gfx_turbofrc_spr2);
+	VSYSTEM_SPR2(config, m_spr[1], m_palette, gfx_turbofrc_spr2);
 	m_spr[1]->set_tile_indirect_cb(FUNC(pspikes_banked_sound_state::pspikes_tile2_callback));
 	m_spr[1]->set_offsets(3, -1);
 
@@ -2740,7 +2740,7 @@ void pspikes_sound_cpu_state::aerfboot(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_aerfboot);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 1024);
 
-	//VSYSTEM_GGA(config, "gga", 0);
+	//VSYSTEM_GGA(config, "gga");
 
 	MCFG_VIDEO_START_OVERRIDE(pspikes_sound_cpu_state,turbofrc)
 
@@ -2774,7 +2774,7 @@ void pspikes_base_state::aerfboo2(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_aerfboo2);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 1024);
 
-	//VSYSTEM_GGA(config, "gga", 0);
+	//VSYSTEM_GGA(config, "gga");
 
 	MCFG_VIDEO_START_OVERRIDE(pspikes_base_state,turbofrc)
 
@@ -2806,9 +2806,9 @@ void wbbc97_state::wbbc97(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_pspikes);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 2048);
 
-	//VSYSTEM_GGA(config, "gga", 0);
+	//VSYSTEM_GGA(config, "gga");
 
-	VSYSTEM_SPR2(config, m_spr[0], 0, m_palette, gfx_pspikes_spr);
+	VSYSTEM_SPR2(config, m_spr[0], m_palette, gfx_pspikes_spr);
 	m_spr[0]->set_tile_indirect_cb(FUNC(wbbc97_state::pspikes_tile_callback));
 
 	// sound hardware
@@ -3977,7 +3977,7 @@ GAME( 1991, spikes91,   pspikes,  spikes91,   pspikes,   spikes91_state,        
 GAME( 1991, spikes91b,  pspikes,  spikes91,   pspikes,   spikes91_state,             empty_init,      ROT0,   "bootleg",             "1991 Spikes (Italian bootleg, set 2)", MACHINE_SUPPORTS_SAVE | MACHINE_IMPERFECT_SOUND | MACHINE_NO_COCKTAIL ) // OKI M5205 not hooked up yet
 GAME( 1991, pspikesc,   pspikes,  pspikesc,   pspikesc,  pspikes_base_state,         init_pspikesb,   ROT0,   "bootleg",             "Power Spikes (China, bootleg)", MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL | MACHINE_IMPERFECT_SOUND )
 GAME( 1997, wbbc97,     0,        wbbc97,     wbbc97,    wbbc97_state,               empty_init,      ROT0,   "Comad",               "Beach Festival World Championship 1997", MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL ) // based on power spikes codebase
-GAME( 1998, kickball,   0,        kickball,   pspikes,   pspikes_sound_cpu_state,    init_kickball,   ROT0,   "Seoung Youn",    "Kick Ball", MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL | MACHINE_IMPERFECT_GRAPHICS ) // based on power spikes codebase, wrong priorities
+GAME( 1998, kickball,   0,        kickball,   pspikes,   pspikes_sound_cpu_state,    init_kickball,   ROT0,   "Seoung Youn",         "Kick Ball", MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL | MACHINE_IMPERFECT_GRAPHICS ) // based on power spikes codebase, wrong priorities
 
 GAME( 1991, karatblz,   0,        karatblz,   karatblz,  pspikes_banked_sound_state, empty_init,      ROT0,   "Video System Co.",                 "Karate Blazers (World, set 1)", MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL )
 GAME( 1991, karatblza,  karatblz, karatblz,   karatblz,  pspikes_banked_sound_state, empty_init,      ROT0,   "Video System Co.",                 "Karate Blazers (World, set 2)", MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL )
@@ -4000,5 +4000,5 @@ GAME( 1991, turbofrcua, turbofrc, turbofrc,   turbofrc,  pspikes_banked_sound_st
 GAME( 1992, aerofgtb,   aerofgt,  aerofgtb,   aerofgtb,  pspikes_banked_sound_state, empty_init,      ROT270, "Video System Co.",    "Aero Fighters (Taiwan / Japan, set 1)", MACHINE_SUPPORTS_SAVE ) // probably intended for Taiwan because the Japanese name is Sonic Wings (below)
 GAME( 1992, aerofgtc,   aerofgt,  aerofgtb,   aerofgtb,  pspikes_banked_sound_state, empty_init,      ROT270, "Video System Co.",    "Aero Fighters (Taiwan / Japan, set 2)", MACHINE_SUPPORTS_SAVE )
 GAME( 1992, sonicwi,    aerofgt,  aerofgtb,   aerofgtb,  pspikes_banked_sound_state, empty_init,      ROT270, "Video System Co.",    "Sonic Wings (Japan)",                   MACHINE_SUPPORTS_SAVE )
-GAME( 1992, aerfboot,   aerofgt,  aerfboot,   aerofgtb,  pspikes_sound_cpu_state,    init_banked_oki, ROT270, "bootleg",             "Aero Fighters (bootleg, set 1)",         MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL | MACHINE_IMPERFECT_SOUND )
-GAME( 1992, aerfboo2,   aerofgt,  aerfboo2,   aerofgtb,  pspikes_base_state,         empty_init,      ROT270, "bootleg",             "Aero Fighters (bootleg, set 2)",         MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL | MACHINE_IMPERFECT_SOUND )
+GAME( 1992, aerfboot,   aerofgt,  aerfboot,   aerofgtb,  pspikes_sound_cpu_state,    init_banked_oki, ROT270, "bootleg",             "Aero Fighters (bootleg, set 1)",        MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL | MACHINE_IMPERFECT_SOUND )
+GAME( 1992, aerfboo2,   aerofgt,  aerfboo2,   aerofgtb,  pspikes_base_state,         empty_init,      ROT270, "bootleg",             "Aero Fighters (bootleg, set 2)",        MACHINE_SUPPORTS_SAVE | MACHINE_NO_COCKTAIL | MACHINE_IMPERFECT_SOUND )

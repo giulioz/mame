@@ -217,7 +217,6 @@ void drw80pkr_state::machine_start()
 	subdevice<nvram_device>("nvram")->set_base(m_pkr_io_ram, sizeof(m_pkr_io_ram));
 
 	m_active_bank = 0;
-	m_lamps.resolve();
 	m_t1 = 1;  // battery level sensor (1 = battery ok)
 }
 
@@ -571,7 +570,7 @@ static INPUT_PORTS_START( drw80pkr )
 	PORT_DIPSETTING(    0x60, DEF_STR( 1C_1C ) )
 	PORT_DIPSETTING(    0x40, DEF_STR( 1C_3C ) )
 	PORT_DIPSETTING(    0x20, DEF_STR( 1C_5C ) )
-	PORT_DIPSETTING(    0x00, "1 Coin/10 Credits" )
+	PORT_DIPSETTING(    0x00, DEF_STR( 1C_10C ) )
 	PORT_DIPNAME( 0x80, 0x00, "Coin Acceptor Type" )  PORT_DIPLOCATION("SW1:1")
 	PORT_DIPSETTING(    0x80, "Type ABC" )
 	PORT_DIPSETTING(    0x00, "Single Pulse" )

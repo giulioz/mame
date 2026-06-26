@@ -19,6 +19,7 @@
 #include "gt155.h"
 
 #include <algorithm>
+#include <numbers>
 
 //**************************************************************************
 //  DEVICE DEFINITIONS
@@ -41,7 +42,7 @@ void gt155_device::device_start()
 	for (int i = 0; i < 0x800; i++)
 	{
 		const double frac = 1.0 - ((double)i / 0x7ff);
-		m_volume[i] = 0x800 * pow(10, -2.15 * frac) * cos(0.5 * M_PI * frac * frac * frac);
+		m_volume[i] = 0x800 * pow(10, -2.15 * frac) * cos(0.5 * std::numbers::pi * frac * frac * frac);
 	}
 
 	save_item(NAME(m_data));
@@ -108,7 +109,7 @@ void gt155_device::sound_stream_update(sound_stream& stream)
 			}
 		}
 
-		stream.put_int_clamp(0, i, left >> 11, 32678);
+		stream.put_int_clamp(0, i, left >> 11, 32768);
 		stream.put_int_clamp(1, i, right >> 11, 32768);
 	}
 }

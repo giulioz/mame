@@ -44,15 +44,17 @@
 ***************************************************************************/
 
 #include "emu.h"
+
+#include "bus/rs232/rs232.h"
 #include "cpu/mcs48/mcs48.h"
 #include "cpu/z80/z80.h"
-#include "machine/z80ctc.h"
-#include "machine/i8255.h"
-#include "machine/i8251.h"
-#include "machine/wd_fdc.h"
-#include "video/mc6845.h"
 #include "imagedev/floppy.h"
-#include "bus/rs232/rs232.h"
+#include "machine/i8251.h"
+#include "machine/i8255.h"
+#include "machine/wd_fdc.h"
+#include "machine/z80ctc.h"
+#include "video/mc6845.h"
+
 #include "emupal.h"
 #include "screen.h"
 #include "softlist_dev.h"
@@ -68,8 +70,8 @@ namespace {
 class m3_state : public driver_device
 {
 public:
-	m3_state(const machine_config &mconfig, device_type type, const char *tag)
-		: driver_device(mconfig, type, tag),
+	m3_state(const machine_config &mconfig, device_type type, const char *tag) :
+		driver_device(mconfig, type, tag),
 		m_maincpu(*this, "maincpu"),
 		m_ctc(*this, "ctc"),
 		m_ppi(*this, "ppi%u", 0U),
@@ -561,8 +563,7 @@ static const z80_daisy_config daisy_chain[] =
 	{ nullptr }
 };
 
-static DEVICE_INPUT_DEFAULTS_START( rs232_defaults )
-	DEVICE_INPUT_DEFAULTS( "RS232_TXBAUD", 0xff, RS232_BAUD_9600 )
+static DEVICE_INPUT_DEFAULTS_START( rs232_printer_defaults )
 	DEVICE_INPUT_DEFAULTS( "RS232_RXBAUD", 0xff, RS232_BAUD_9600 )
 	DEVICE_INPUT_DEFAULTS( "RS232_DATABITS", 0xff, RS232_DATABITS_7 )
 	DEVICE_INPUT_DEFAULTS( "RS232_PARITY", 0xff, RS232_PARITY_EVEN )
@@ -586,7 +587,7 @@ void m3_state::m3(machine_config &config)
 	m_maincpu->set_addrmap(AS_IO, &m3_state::io_map);
 	m_maincpu->set_daisy_config(daisy_chain);
 
-	Z80CTC(config, m_ctc, 0); // unknown clock
+	Z80CTC(config, m_ctc); // unknown clock
 	m_ctc->intr_callback().set_inputline(m_maincpu, INPUT_LINE_IRQ0);
 	m_ctc->set_clk<0>(4.9152_MHz_XTAL / 4);
 	m_ctc->zc_callback<0>().set("usart", FUNC(i8251_device::write_txc));
@@ -598,13 +599,13 @@ void m3_state::m3(machine_config &config)
 	m_ppi[1]->out_pa_callback().set(FUNC(m3_state::ppi2_pa_w));
 	m_ppi[1]->in_pb_callback().set(FUNC(m3_state::ppi2_pb_r));
 
-	i8251_device &usart(I8251(config, "usart", 0)); // unknown clock
+	i8251_device &usart(I8251(config, "usart")); // unknown clock
 	usart.txd_handler().set("rs232", FUNC(rs232_port_device::write_txd));
 	usart.rts_handler().set("rs232", FUNC(rs232_port_device::write_rts));
 	usart.dtr_handler().set("rs232", FUNC(rs232_port_device::write_dtr));
 
 	rs232_port_device &rs232(RS232_PORT(config, "rs232", default_rs232_devices, nullptr));
-	rs232.set_option_device_input_defaults("printer", DEVICE_INPUT_DEFAULTS_NAME(rs232_defaults));
+	rs232.set_option_device_input_defaults("printer", DEVICE_INPUT_DEFAULTS_NAME(rs232_printer_defaults));
 	rs232.rxd_handler().set("usart", FUNC(i8251_device::write_rxd));
 	rs232.dsr_handler().set("usart", FUNC(i8251_device::write_dsr));
 	rs232.cts_handler().set("usart", FUNC(i8251_device::write_cts));

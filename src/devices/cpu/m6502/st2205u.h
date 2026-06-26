@@ -221,9 +221,9 @@ private:
 		u8 breadc(u16 adr);
 		void bwrite(u16 adr, u8 val);
 
-		u16 brr;
+		u16 m_brr;
 
-		std::unique_ptr<u8[]> ram;
+		std::unique_ptr<u8[]> m_ram;
 	};
 
 	u8 brrl_r();
@@ -293,6 +293,8 @@ private:
 	};
 
 	void unk18_w(u8 data);
+	u8 unk3a_r();
+	void unk3a_w(u8 data);
 	void unk6d_w(u8 data);
 	void unk6e_w(u8 data);
 	u8 unk7b_r();

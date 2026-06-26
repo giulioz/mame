@@ -8,7 +8,7 @@ toys based around the TMS1000 MCU series. Anything more complex or clearly
 part of a series is (or will be) in its own driver, see:
 - atari/hitparade.cpp: Atari Europe Hit Parade jukebox(es)
 - entex/sag.cpp: Entex Select-A-Game Machine (actually most games are on HMCS40)
-- miltonbradley/microvsn.cpp: Milton Bradley Microvision
+- miltonbradley/microvision.cpp: Milton Bradley Microvision
 - misc/eva.cpp: Chrysler EVA-11 (and EVA-24)
 - ti/snspell.cpp: TI Speak & Spell series gen. 1
 - ti/snspellc.cpp: TI Speak & Spell Compact / Touch & Tell
@@ -116,7 +116,8 @@ on Joerg Woerner's datamath.org: http://www.datamath.org/IC_List.htm
  @MP1288   TMS1100   1981, Tiger Finger Bowl
  @MP1296   TMS1100   1982, Entex Black Knight Pinball (6081)
  @MP1311   TMS1100   1981, Bandai TC7: Air Traffic Control
- @MP1312   TMS1100   1981, Gakken FX-Micom R-165/Radio Shack Science Fair Microcomputer Trainer
+ @MP1312   TMS1100   1981, Gakken FX-Micom R-165
+ @MP1312A  TMS1100   1981, Gakken FX-Micom R-165/Radio Shack Science Fair Microcomputer Trainer
  *MP1342   TMS1100   1985, Tiger Micro-Bot
  @MP1343   TMS1100   1984, Tandy (Micronta) VoxClock 3
  *MP1359   TMS1100   1985, Play-Jour Capsela CRC2000
@@ -200,6 +201,7 @@ on Joerg Woerner's datamath.org: http://www.datamath.org/IC_List.htm
  @MP6358   TMS1475   1982, Bandai U-Boat
  *MP6361   TMS1475   1983, <unknown> Defender Strikes
  @MP7302   TMS1400   1980, Tiger Deluxe Football with Instant Replay
+ *MP7303   TMS1400   1980, Entex Football 3 (6018)
  @MP7304   TMS1400   1982, Tiger 7 in 1 Sports Stadium (model 7-555)
  @MP7313   TMS1400   1980, Parker Brothers Bank Shot
  @MP7314   TMS1400   1980, Parker Brothers Split Second
@@ -208,6 +210,7 @@ on Joerg Woerner's datamath.org: http://www.datamath.org/IC_List.htm
  @MP7334   TMS1400   1981, Coleco Total Control 4
  @MP7351   TMS1400   1982, Parker Brothers Master Merlin
  @MP7551   TMS1670   1980, Entex Color Football 4 (6009)
+ @MP7574   TMS1600   1981, Busch Microtronic 2090 (actually, label is TMS1600NLL7574, no MP label)
  @MPF553   TMS1670   1980, Gakken/Entex Jackpot: Gin Rummy & Black Jack (6008) (note: assume F to be a misprint)
   MP7573   TMS1670   1981, Entex Select-A-Game cartridge: Football 4 -> entex/sag.cpp
  *M30026   TMS2370   1983, Yaesu FT-757 Display Unit part
@@ -223,6 +226,9 @@ on Joerg Woerner's datamath.org: http://www.datamath.org/IC_List.htm
 *******************************************************************************/
 
 #include "emu.h"
+
+// netlist
+#include "nl_bship.h"
 
 #include "bus/generic/carts.h"
 #include "bus/generic/slot.h"
@@ -254,8 +260,7 @@ on Joerg Woerner's datamath.org: http://www.datamath.org/IC_List.htm
 #include "screen.h"
 #include "speaker.h"
 
-// netlist
-#include "nl_bship.h"
+#include <bit>
 
 // internal artwork
 #include "t7in1ss.lh"
@@ -306,6 +311,7 @@ on Joerg Woerner's datamath.org: http://www.datamath.org/IC_List.htm
 #include "h2hfootb.lh"
 #include "h2hhockey.lh"
 #include "lilprof.lh"
+#include "lilprofo.lh"
 #include "litelrn.lh"
 #include "liveafb.lh"
 #include "lostreas.lh"
@@ -319,7 +325,7 @@ on Joerg Woerner's datamath.org: http://www.datamath.org/IC_List.htm
 #include "mmarvin.lh"
 #include "mmerlin.lh"
 #include "monkeysee.lh"
-#include "mrmusical.lh"
+#include "mt2090.lh"
 #include "palmf31.lh"
 #include "palmmd8.lh"
 #include "pbmastm.lh"
@@ -418,9 +424,6 @@ protected:
 
 void hh_tms1k_state::machine_start()
 {
-	// resolve outputs
-	m_out_power.resolve();
-
 	// register for savestates
 	save_item(NAME(m_o));
 	save_item(NAME(m_r));
@@ -985,9 +988,6 @@ public:
 
 	void bcheetah(machine_config &config);
 
-protected:
-	virtual void machine_start() override ATTR_COLD;
-
 private:
 	output_finder<> m_motor1;
 	output_finder<> m_motor2_left;
@@ -997,16 +997,6 @@ private:
 	void write_o(u16 data);
 	u8 read_k();
 };
-
-void bcheetah_state::machine_start()
-{
-	hh_tms1k_state::machine_start();
-
-	// resolve outputs
-	m_motor1.resolve();
-	m_motor2_left.resolve();
-	m_motor2_right.resolve();
-}
 
 // handlers
 
@@ -1491,6 +1481,343 @@ ROM_START( uboat )
 
 	ROM_REGION( 310743, "screen2", 0) // submarine side
 	ROM_LOAD( "uboat2.svg", 0, 310743, CRC(72c44272) SHA1(a43a57b8038b00f9d63c6e5d1a43c4a45a6c6075) )
+ROM_END
+
+
+
+
+
+/*******************************************************************************
+
+  Busch Microtronic 2090
+  * PCB label: BUSCH 2090, F0601/4
+  * TMS1600 MP7574 (no decap)
+  * 1Kx4 SRAM (uPD2114LC), 6-digit 7seg display, 2+5 other LEDs
+  * 4-bit I/O port, for connecting wires to additional components, such as a
+    piezo, button, or a 1Hz timer
+
+  It's a German programmable educational computer, up to 256 program steps.
+
+  The I/O port connections to on-board components are crudely emulated via config
+  switches. If more custom I/O is needed, eg. via LUA script, set the input port
+  to Custom, it'll then read from IN.9. Outputs are sent to output tag "7.x" where
+  x = 0-3, no matter how the output port is configured.
+
+*******************************************************************************/
+
+class mt2090_state : public hh_tms1k_state
+{
+public:
+	mt2090_state(const machine_config &mconfig, device_type type, const char *tag) :
+		hh_tms1k_state(mconfig, type, tag),
+		m_1hz(*this, "1hz"),
+		m_beeper(*this, "beeper")
+	{ }
+
+	void mt2090(machine_config &config);
+
+protected:
+	virtual void machine_start() override ATTR_COLD;
+
+private:
+	required_device<clock_device> m_1hz;
+	required_device<beep_device> m_beeper;
+
+	u8 m_output = 0;
+	u8 m_ram[0x400] = { };
+	u16 m_ram_address = 0;
+
+	void update_display();
+	void write_r(u32 data);
+	void write_o(u16 data);
+	u8 input_port();
+	u8 read_k();
+};
+
+void mt2090_state::machine_start()
+{
+	hh_tms1k_state::machine_start();
+
+	// register for savestates
+	save_item(NAME(m_output));
+	save_item(NAME(m_ram));
+	save_item(NAME(m_ram_address));
+}
+
+// handlers
+
+void mt2090_state::update_display()
+{
+	// standard 7segs
+	const u8 select = BIT(m_r, 12) ? (m_r & 0x3f) : 0;
+	m_display->matrix_partial(0, 6, select, m_o);
+
+	// direct leds
+	m_display->write_row(6, m_r >> 14 & 3);
+	m_display->write_row(7, m_output | (m_1hz->signal_r() ? 0x10 : 0));
+}
+
+void mt2090_state::write_r(u32 data)
+{
+	// R0-R5: input mux
+	// R6: enable input port
+	// R11: enable RAM inputs (TMS1600 K/L pin)
+	m_inp_mux = data;
+
+	// R7-R10: output port (only piezo is supported)
+	m_output = ~m_r >> 7 & 0xf;
+	m_beeper->set_state((m_output & m_inputs[7]->read()) ? 1 : 0);
+
+	// R0-R5: RAM address high
+	m_ram_address = (m_ram_address & 0xf) | (data << 4 & 0x3f0);
+
+	// R7-R10: RAM data (inverted)
+	// R13: RAM /W
+	if (BIT(data & ~m_r, 13))
+		m_ram[m_ram_address] = m_output;
+
+	// R0-R5: digit select
+	// R12: enable 7seg panel
+	// R14,R15: direct leds
+	m_r = data;
+	update_display();
+}
+
+void mt2090_state::write_o(u16 data)
+{
+	// O0-O3: RAM address low
+	m_ram_address = (m_ram_address & 0x3f0) | (data & 0xf);
+
+	// O0-O7: digit segments
+	m_o = data;
+	update_display();
+}
+
+u8 mt2090_state::input_port()
+{
+	u8 data = 0;
+
+	for (int i = 3; i >= 0; i--)
+	{
+		data <<= 1;
+		const u8 conf = m_inputs[8]->read() >> (i * 4) & 0xf;
+
+		switch (conf)
+		{
+			// GND
+			case 0:
+			default:
+				break;
+
+			// VCC
+			case 1:
+				data |= 1;
+				break;
+
+			// buttons
+			case 2: case 3:
+				data |= BIT(m_inputs[6]->read(), conf & 1);
+				break;
+
+			// output port
+			case 4: case 5: case 6: case 7:
+				data |= BIT(m_output, conf & 3);
+				break;
+
+			// 1Hz clock
+			case 8:
+				data |= m_1hz->signal_r();
+				break;
+
+			// custom
+			case 9:
+				data |= BIT(m_inputs[9]->read(), i);
+				break;
+		}
+	}
+
+	return data;
+}
+
+u8 mt2090_state::read_k()
+{
+	// read from RAM
+	if (BIT(m_inp_mux, 11))
+		return m_ram[m_ram_address];
+
+	// read input port
+	else if (BIT(m_inp_mux, 6))
+		return input_port();
+
+	// read buttons
+	else
+		return read_inputs(6);
+}
+
+// inputs
+
+static INPUT_PORTS_START( mt2090 )
+	PORT_START("IN.0") // R0
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_0) PORT_CODE(KEYCODE_0_PAD) PORT_NAME("0")
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_4) PORT_CODE(KEYCODE_4_PAD) PORT_NAME("4")
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_8) PORT_CODE(KEYCODE_8_PAD) PORT_NAME("8")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_C) PORT_NAME("C")
+
+	PORT_START("IN.1") // R1
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_1) PORT_CODE(KEYCODE_1_PAD) PORT_NAME("1")
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_5) PORT_CODE(KEYCODE_5_PAD) PORT_NAME("5")
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_9) PORT_CODE(KEYCODE_9_PAD) PORT_NAME("9")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_D) PORT_NAME("D")
+
+	PORT_START("IN.2") // R2
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_2) PORT_CODE(KEYCODE_2_PAD) PORT_NAME("2")
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_6) PORT_CODE(KEYCODE_6_PAD) PORT_NAME("6")
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_A) PORT_NAME("A")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_E) PORT_NAME("E")
+
+	PORT_START("IN.3") // R3
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_3) PORT_CODE(KEYCODE_3_PAD) PORT_NAME("3")
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_7) PORT_CODE(KEYCODE_7_PAD) PORT_NAME("7")
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_B) PORT_NAME("B")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_F) PORT_NAME("F")
+
+	PORT_START("IN.4") // R4
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_DEL) PORT_CODE(KEYCODE_BACKSPACE) PORT_NAME("C/CE")
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_R) PORT_NAME("RUN")
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_K) PORT_NAME("BKP")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_N) PORT_NAME("NEXT")
+
+	PORT_START("IN.5") // R5
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_P) PORT_NAME("PGM")
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_H) PORT_NAME("HALT")
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_S) PORT_NAME("STEP")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_G) PORT_NAME("REG")
+
+	PORT_START("IN.6") // misc buttons
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("Button G")
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("Button H")
+
+	PORT_START("IN.7") // output port...
+	PORT_CONFNAME( 0x01, 0x00, "Output 1" )
+	PORT_CONFSETTING(    0x00, DEF_STR( None ) )
+	PORT_CONFSETTING(    0x01, "Piezo" )
+
+	PORT_CONFNAME( 0x02, 0x00, "Output 2" )
+	PORT_CONFSETTING(    0x00, DEF_STR( None ) )
+	PORT_CONFSETTING(    0x02, "Piezo" )
+
+	PORT_CONFNAME( 0x04, 0x00, "Output 3" )
+	PORT_CONFSETTING(    0x00, DEF_STR( None ) )
+	PORT_CONFSETTING(    0x04, "Piezo" )
+
+	PORT_CONFNAME( 0x08, 0x00, "Output 4" )
+	PORT_CONFSETTING(    0x00, DEF_STR( None ) )
+	PORT_CONFSETTING(    0x08, "Piezo" )
+
+	PORT_START("IN.8") // input port...
+	PORT_CONFNAME( 0x000f, 0x0000, "Input 1" )
+	PORT_CONFSETTING(      0x0000, "GND" )
+	PORT_CONFSETTING(      0x0001, "VCC" )
+	PORT_CONFSETTING(      0x0002, "Button G" )
+	PORT_CONFSETTING(      0x0003, "Button H" )
+	PORT_CONFSETTING(      0x0004, "Output 1" )
+	PORT_CONFSETTING(      0x0005, "Output 2" )
+	PORT_CONFSETTING(      0x0006, "Output 3" )
+	PORT_CONFSETTING(      0x0007, "Output 4" )
+	PORT_CONFSETTING(      0x0008, "1Hz Clock" )
+	PORT_CONFSETTING(      0x0009, "Custom" )
+
+	PORT_CONFNAME( 0x00f0, 0x0000, "Input 2" )
+	PORT_CONFSETTING(      0x0000, "GND" )
+	PORT_CONFSETTING(      0x0010, "VCC" )
+	PORT_CONFSETTING(      0x0020, "Button G" )
+	PORT_CONFSETTING(      0x0030, "Button H" )
+	PORT_CONFSETTING(      0x0040, "Output 1" )
+	PORT_CONFSETTING(      0x0050, "Output 2" )
+	PORT_CONFSETTING(      0x0060, "Output 3" )
+	PORT_CONFSETTING(      0x0070, "Output 4" )
+	PORT_CONFSETTING(      0x0080, "1Hz Clock" )
+	PORT_CONFSETTING(      0x0090, "Custom" )
+
+	PORT_CONFNAME( 0x0f00, 0x0000, "Input 3" )
+	PORT_CONFSETTING(      0x0000, "GND" )
+	PORT_CONFSETTING(      0x0100, "VCC" )
+	PORT_CONFSETTING(      0x0200, "Button G" )
+	PORT_CONFSETTING(      0x0300, "Button H" )
+	PORT_CONFSETTING(      0x0400, "Output 1" )
+	PORT_CONFSETTING(      0x0500, "Output 2" )
+	PORT_CONFSETTING(      0x0600, "Output 3" )
+	PORT_CONFSETTING(      0x0700, "Output 4" )
+	PORT_CONFSETTING(      0x0800, "1Hz Clock" )
+	PORT_CONFSETTING(      0x0900, "Custom" )
+
+	PORT_CONFNAME( 0xf000, 0x0000, "Input 4" )
+	PORT_CONFSETTING(      0x0000, "GND" )
+	PORT_CONFSETTING(      0x1000, "VCC" )
+	PORT_CONFSETTING(      0x2000, "Button G" )
+	PORT_CONFSETTING(      0x3000, "Button H" )
+	PORT_CONFSETTING(      0x4000, "Output 1" )
+	PORT_CONFSETTING(      0x5000, "Output 2" )
+	PORT_CONFSETTING(      0x6000, "Output 3" )
+	PORT_CONFSETTING(      0x7000, "Output 4" )
+	PORT_CONFSETTING(      0x8000, "1Hz Clock" )
+	PORT_CONFSETTING(      0x9000, "Custom" )
+
+	PORT_START("IN.9") // custom input pins
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_OTHER ) PORT_NAME("Custom Input 1")
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_OTHER ) PORT_NAME("Custom Input 2")
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_OTHER ) PORT_NAME("Custom Input 3")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_OTHER ) PORT_NAME("Custom Input 4")
+
+	PORT_START("RESET")
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_F1) PORT_NAME("Reset") PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(hh_tms1k_state::reset_button), 0)
+INPUT_PORTS_END
+
+// config
+
+// output PLA is not decapped, this was made by hand
+static const u16 mt2090_output_pla[0x20] =
+{
+	// literal 0-f for RAM address
+	0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf,
+
+	// 7segs (digit b has DP segment)
+	0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x67, 0x77, 0xfc, 0x39, 0x5e, 0x79, 0x71
+};
+
+void mt2090_state::mt2090(machine_config &config)
+{
+	// basic machine hardware
+	TMS1600(config, m_maincpu, 600000); // approximation - RC osc. R=22K, C=56pF
+	m_maincpu->set_output_pla(mt2090_output_pla);
+	m_maincpu->read_k().set(FUNC(mt2090_state::read_k));
+	m_maincpu->write_r().set(FUNC(mt2090_state::write_r));
+	m_maincpu->write_o().set(FUNC(mt2090_state::write_o));
+
+	CLOCK(config, m_1hz, 32.768_kHz_XTAL / 0x8000);
+	m_1hz->signal_handler().set([this] (int state) { update_display(); });
+
+	// video hardware
+	PWM_DISPLAY(config, m_display).set_size(8, 8);
+	m_display->set_segmask(0x3f, 0xff);
+	config.set_default_layout(layout_mt2090);
+
+	// sound hardware
+	SPEAKER(config, "mono").front_center();
+	BEEP(config, m_beeper, 2000); // guessed frequency
+	m_beeper->add_route(ALL_OUTPUTS, "mono", 0.25);
+}
+
+// roms
+
+ROM_START( mt2090 )
+	ROM_REGION( 0x1000, "maincpu", 0 )
+	ROM_LOAD( "tms1600nll7574", 0x0000, 0x1000, CRC(dcd56aa0) SHA1(57602b3ef1251b636036762c858a5724c8ab785c) )
+
+	ROM_REGION( 867, "maincpu:mpla", 0 )
+	ROM_LOAD( "tms1100_common2_micro.pla", 0, 867, BAD_DUMP CRC(7cc90264) SHA1(c6e1cf1ffb178061da9e31858514f7cd94e86990) ) // not verified
+	ROM_REGION( 557, "maincpu:opla", ROMREGION_ERASE00 )
+	ROM_LOAD( "tms1400_mt2090_output.pla", 0, 557, NO_DUMP )
 ROM_END
 
 
@@ -3699,7 +4026,7 @@ void mrmusical_state::mrmusical(machine_config &config)
 	PWM_DISPLAY(config, m_display).set_size(9, 8);
 	m_display->set_segmask(0x1ff, 0xff);
 	m_display->set_segmask(0x180, 0x7f); // no DP for leftmost 2 digits
-	config.set_default_layout(layout_mrmusical);
+	config.set_default_layout(layout_lilprofo);
 
 	// sound hardware
 	SPEAKER(config, "mono").front_center();
@@ -4420,9 +4747,9 @@ ROM_END
   * 2 7seg LEDs, 5 lamps, 1-bit sound
   * 3 lightsensors, lightgun
 
-  To play it in MAME, either use the clickable artwork with -mouse, or set
-  button 1 to "Z or X or C" and each lightsensor to one of those keys.
-  Although the game seems mostly playable without having to use the gun trigger
+  To play it in MAME, either use the clickable artwork, or set button 1 to
+  "Z or X or C" and each lightsensor to one of those keys. Although the game
+  seems mostly playable without having to use the gun trigger
 
 *******************************************************************************/
 
@@ -4671,7 +4998,7 @@ ROM_END
   are denoted by words ("left", "center", "short", etc), and an alternate one
   with little guys drawn next to the LEDs.
 
-  led translation table: led LDzz from game PCB = MAME y.x:
+  LED translation table: LED LDzz from game PCB = MAME y.x:
 
     0 = -     10 = 1.2   20 = 4.2   30 = 6.0
     1 = 2.3   11 = 0.4   21 = 4.1   31 = 6.1
@@ -5622,7 +5949,7 @@ ROM_END
 
 /*******************************************************************************
 
-  Entex (Electronic) Basketball 2
+  Entex Basketball 2
   * TMS1100 6010 MP1218 (die label: 1100B, MP1218)
   * 4 7seg LEDs, and other LEDs behind bezel, 1-bit sound
 
@@ -7091,6 +7418,9 @@ ROM_END
   - USA: Science Fair Microcomputer Trainer, published by Tandy. Of note is
     the complete redesign of the case, adding more adjustable wiring
 
+  ROM Revision A was used in Science Fair Microcomputer Trainer, and probably
+  also in newer batches of FX-Micom R-165. It improves RNG and key debouncing.
+
 *******************************************************************************/
 
 class fxmcr165_state : public hh_tms1k_state
@@ -7216,7 +7546,17 @@ void fxmcr165_state::fxmcr165(machine_config &config)
 
 ROM_START( fxmcr165 )
 	ROM_REGION( 0x0800, "maincpu", 0 )
-	ROM_LOAD( "mp1312", 0x0000, 0x0800, CRC(6efc8bcc) SHA1(ced8a02b472a3178073691d3dccc0f19f57428fd) )
+	ROM_LOAD( "mp1312a", 0x0000, 0x0800, CRC(6efc8bcc) SHA1(ced8a02b472a3178073691d3dccc0f19f57428fd) )
+
+	ROM_REGION( 867, "maincpu:mpla", 0 )
+	ROM_LOAD( "tms1100_common1_micro.pla", 0, 867, CRC(62445fc9) SHA1(d6297f2a4bc7a870b76cc498d19dbb0ce7d69fec) )
+	ROM_REGION( 365, "maincpu:opla", 0 )
+	ROM_LOAD( "tms1100_fxmcr165_output.pla", 0, 365, CRC(ce656866) SHA1(40e1614f5afcc7572fda596e1be453d54e95af0c) )
+ROM_END
+
+ROM_START( fxmcr165a )
+	ROM_REGION( 0x0800, "maincpu", 0 )
+	ROM_LOAD( "mp1312", 0x0000, 0x0800, CRC(a76e1644) SHA1(981b6723ac899a2cf325041c4a96cb4304ee1c1d) )
 
 	ROM_REGION( 867, "maincpu:mpla", 0 )
 	ROM_LOAD( "tms1100_common1_micro.pla", 0, 867, CRC(62445fc9) SHA1(d6297f2a4bc7a870b76cc498d19dbb0ce7d69fec) )
@@ -7263,7 +7603,7 @@ private:
 void elecdet_state::write_r(u32 data)
 {
 	// R7,R8(tied together): speaker out
-	m_speaker->level_w((m_o & 0x80) ? population_count_32(data >> 7 & 3) : 0);
+	m_speaker->level_w((m_o & 0x80) ? std::popcount(data >> 7 & 3U) : 0);
 
 	// R0-R6: select digit
 	m_display->matrix(data, bitswap<8>(m_o,7,5,2,1,4,0,6,3));
@@ -7668,7 +8008,7 @@ void starwlb_state::write_o(u16 data)
 	m_inp_mux = data & 3;
 
 	// O3-O6(tied together): speaker out (actually only writes 0x0 or 0xf)
-	m_speaker->level_w(population_count_32(data >> 3 & 0xf));
+	m_speaker->level_w(std::popcount(data >> 3 & 0xfU));
 
 	// O2: lamp
 	// O7: one more led
@@ -8813,7 +9153,9 @@ class mdndclab_state : public hh_tms1k_state
 {
 public:
 	mdndclab_state(const machine_config &mconfig, device_type type, const char *tag) :
-		hh_tms1k_state(mconfig, type, tag)
+		hh_tms1k_state(mconfig, type, tag),
+		m_colwall(*this, "colwall%u%u", 1U, 1U),
+		m_rowwall(*this, "rowwall%u%u", 1U, 1U)
 	{ }
 
 	void mdndclab(machine_config &config);
@@ -8822,6 +9164,9 @@ private:
 	void write_r(u32 data);
 	void write_o(u16 data);
 	u8 read_k();
+
+	// these are used by the layout to store the presence of walls
+	output_finder<7, 8> m_colwall, m_rowwall;
 };
 
 // handlers
@@ -9770,13 +10115,6 @@ void bigtrak_state::machine_start()
 {
 	hh_tms1k_state::machine_start();
 
-	// resolve outputs
-	m_left_motor_forward.resolve();
-	m_left_motor_reverse.resolve();
-	m_right_motor_forward.resolve();
-	m_right_motor_reverse.resolve();
-	m_ext_out.resolve();
-
 	// register for savestates
 	save_item(NAME(m_gearbox_pos));
 }
@@ -9797,8 +10135,8 @@ TIMER_DEVICE_CALLBACK_MEMBER(bigtrak_state::gearbox_sim_tick)
 
 void bigtrak_state::update_speaker()
 {
-	int data = (m_o & 1) | (m_o >> 6 & 2) | (m_r >> 8 & 4);
-	m_speaker->level_w(population_count_32(data));
+	unsigned data = (m_o & 1) | (m_o >> 6 & 2) | (m_r >> 8 & 4);
+	m_speaker->level_w(std::popcount(data));
 }
 
 void bigtrak_state::write_r(u32 data)
@@ -9997,11 +10335,6 @@ private:
 void mbdtower_state::machine_start()
 {
 	hh_tms1k_state::machine_start();
-
-	// resolve outputs
-	m_motor_pos_out.resolve();
-	m_card_pos_out.resolve();
-	m_motor_on_out.resolve();
 
 	// register for savestates
 	save_item(NAME(m_motor_pos));
@@ -10225,7 +10558,7 @@ void arcmania_state::write_r(u32 data)
 void arcmania_state::write_o(u16 data)
 {
 	// O0-O2(tied together): speaker out
-	m_speaker->level_w(population_count_32(data & 7));
+	m_speaker->level_w(std::popcount(data & 7U));
 
 	// O3,O4,O6: input mux
 	m_inp_mux = (data >> 3 & 3) | (data >> 4 & 4);
@@ -10506,7 +10839,7 @@ void merlin_state::write_r(u32 data)
 void merlin_state::write_o(u16 data)
 {
 	// O4-O6(tied together): speaker out
-	m_speaker->level_w(population_count_32(data >> 4 & 7));
+	m_speaker->level_w(std::popcount(data >> 4 & 7U));
 
 	// O0-O3: input mux
 	// O7: N/C
@@ -10815,7 +11148,7 @@ void stopthief_state::write_r(u32 data)
 	m_display->matrix(data & 7, bitswap<8>(m_o,3,5,2,1,4,0,6,7) & 0x7f);
 
 	// R3-R8(tied together): speaker out
-	m_speaker->level_w((m_o & 8) ? population_count_32(data >> 3 & 0x3f) : 0);
+	m_speaker->level_w((m_o & 8) ? std::popcount(data >> 3 & 0x3fU) : 0);
 }
 
 void stopthief_state::write_o(u16 data)
@@ -11249,7 +11582,7 @@ u8 lostreas_state::read_k()
 // inputs
 
 /* physical button layout and labels are like this:
-  (note: Canadian version differs slightly to accomodoate dual-language)
+  (note: Canadian version differs slightly to accommodate dual-language)
 
     [N-S(gold)]    [1] [2] [3]    [AIR]
     [E-W(gold)]    [4] [5] [6]    [UP]
@@ -14351,7 +14684,7 @@ void lilprofo_state::lilprofo(machine_config &config)
 	PWM_DISPLAY(config, m_display).set_size(9, 7);
 	m_display->set_segmask(0x1f7, 0x7f);
 	m_display->set_segmask(8, 0x41); // equals sign
-	config.set_default_layout(layout_lilprof);
+	config.set_default_layout(layout_lilprofo);
 
 	// no sound!
 }
@@ -14421,7 +14754,17 @@ ROM_END
 
 *******************************************************************************/
 
-// class/handlers: uses the ones in lilprofo_state
+class wizatron_state : public lilprofo_state
+{
+public:
+	wizatron_state(const machine_config &mconfig, device_type type, const char *tag) :
+		lilprofo_state(mconfig, type, tag)
+	{ }
+
+	void wizatron(machine_config &config);
+};
+
+// handlers: uses the ones in lilprofo_state
 
 // inputs
 
@@ -14435,6 +14778,14 @@ static INPUT_PORTS_START( wizatron )
 	PORT_MODIFY("IN.4")
 	PORT_BIT( 0x0f, IP_ACTIVE_HIGH, IPT_UNUSED )
 INPUT_PORTS_END
+
+// config
+
+void wizatron_state::wizatron(machine_config &config)
+{
+	lilprofo(config);
+	config.set_default_layout(layout_lilprof);
+}
 
 // roms
 
@@ -17431,6 +17782,8 @@ SYST( 1980, racetime,   0,         0,      racetime,  racetime,  racetime_state,
 SYST( 1981, tc7atc,     0,         0,      tc7atc,    tc7atc,    tc7atc_state,    empty_init, "Bandai", "TC7: Air Traffic Control", MACHINE_SUPPORTS_SAVE )
 SYST( 1982, uboat,      0,         0,      uboat,     uboat,     uboat_state,     empty_init, "Bandai", "U-Boat", MACHINE_SUPPORTS_SAVE )
 
+SYST( 1981, mt2090,     0,         0,      mt2090,    mt2090,    mt2090_state,    empty_init, "Busch", "Microtronic 2090", MACHINE_SUPPORTS_SAVE | MACHINE_IMPERFECT_CONTROLS )
+
 SYST( 1977, palmf31,    0,         0,      palmf31,   palmf31,   palmf31_state,   empty_init, "Canon", "Palmtronic F-31", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
 SYST( 1977, palmmd8,    0,         0,      palmmd8,   palmmd8,   palmmd8_state,   empty_init, "Canon", "Palmtronic MD-8 (Multi 8)", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
 
@@ -17466,7 +17819,7 @@ SYST( 1979, esbattle,   0,         0,      esbattle,  esbattle,  esbattle_state,
 SYST( 1980, blastit,    0,         0,      blastit,   blastit,   blastit_state,   empty_init, "Entex", "Blast It", MACHINE_SUPPORTS_SAVE )
 SYST( 1980, einvader,   0,         0,      einvader,  einvader,  einvader_state,  empty_init, "Entex", "Space Invader (Entex, TMS1100 version)", MACHINE_SUPPORTS_SAVE )
 SYST( 1980, efootb4 ,   0,         0,      efootb4,   efootb4,   efootb4_state,   empty_init, "Entex", "Color Football 4 (Entex)", MACHINE_SUPPORTS_SAVE )
-SYST( 1980, ebaskb2 ,   0,         0,      ebaskb2,   ebaskb2,   ebaskb2_state,   empty_init, "Entex", "Electronic Basketball 2 (Entex)", MACHINE_SUPPORTS_SAVE )
+SYST( 1980, ebaskb2 ,   0,         0,      ebaskb2,   ebaskb2,   ebaskb2_state,   empty_init, "Entex", "Basketball 2 (Entex)", MACHINE_SUPPORTS_SAVE )
 SYST( 1980, raisedvl,   0,         0,      raisedvl,  raisedvl,  raisedvl_state,  empty_init, "Entex", "Raise The Devil Pinball", MACHINE_SUPPORTS_SAVE | MACHINE_REQUIRES_ARTWORK )
 SYST( 1982, ebknight,   0,         0,      ebknight,  raisedvl,  raisedvl_state,  empty_init, "Entex", "Black Knight Pinball (Entex)", MACHINE_SUPPORTS_SAVE | MACHINE_REQUIRES_ARTWORK )
 SYST( 1980, mmarvin,    0,         0,      mmarvin,   mmarvin,   mmarvin_state,   empty_init, "Entex", "Musical Marvin", MACHINE_SUPPORTS_SAVE | MACHINE_IMPERFECT_SOUND )
@@ -17479,7 +17832,8 @@ SYST( 1980, gjackpot,   0,         0,      gjackpot,  gjackpot,  gjackpot_state,
 SYST( 1980, ginv,       0,         0,      ginv,      ginv,      ginv_state,      empty_init, "Gakken", "Invader (Gakken, cyan version)", MACHINE_SUPPORTS_SAVE )
 SYST( 1981, ginv1000,   0,         0,      ginv1000,  ginv1000,  ginv1000_state,  empty_init, "Gakken", "Galaxy Invader 1000", MACHINE_SUPPORTS_SAVE )
 SYST( 1982, ginv2000,   0,         0,      ginv2000,  ginv2000,  ginv2000_state,  empty_init, "Gakken", "Invader 2000", MACHINE_SUPPORTS_SAVE )
-SYST( 1981, fxmcr165,   0,         0,      fxmcr165,  fxmcr165,  fxmcr165_state,  empty_init, "Gakken", "FX-Micom R-165", MACHINE_SUPPORTS_SAVE )
+SYST( 1981, fxmcr165,   0,         0,      fxmcr165,  fxmcr165,  fxmcr165_state,  empty_init, "Gakken", "FX-Micom R-165 (rev. A)", MACHINE_SUPPORTS_SAVE )
+SYST( 1981, fxmcr165a,  fxmcr165,  0,      fxmcr165,  fxmcr165,  fxmcr165_state,  empty_init, "Gakken", "FX-Micom R-165 (older)", MACHINE_SUPPORTS_SAVE )
 
 SYST( 1979, elecdet,    0,         0,      elecdet,   elecdet,   elecdet_state,   empty_init, "Ideal Toy Corporation", "Electronic Detective", MACHINE_SUPPORTS_SAVE ) // ***
 SYST( 1981, skywriter,  0,         0,      skywriter, skywriter, skywriter_state, empty_init, "Ideal Toy Corporation", "Sky-Writer: The Electronic Message Sender", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW | MACHINE_IMPERFECT_GRAPHICS | MACHINE_IMPERFECT_CONTROLS )
@@ -17491,7 +17845,7 @@ SYST( 1980, liveafb,    0,         0,      liveafb,   liveafb,   liveafb_state, 
 
 SYST( 1980, mega10k,    0,         0,      mega10k,   mega10k,   mega10k_state,   empty_init, "Jeux Nathan", u8"Mega 10.000: L'Encyclopédie Électronique", MACHINE_SUPPORTS_SAVE ) // ***
 
-SYST( 1979, astro,      0,         0,      astro,     astro,     astro_state,     empty_init, "Kosmos", "Astro", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
+SYST( 1979, astro,      0,         0,      astro,     astro,     astro_state,     empty_init, "Kosmos", "Astro (Kosmos)", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
 
 SYST( 1980, strobe,     0,         0,      strobe,    strobe,    strobe_state,    empty_init, "Lakeside", "Strobe", MACHINE_SUPPORTS_SAVE )
 
@@ -17550,7 +17904,7 @@ SYST( 1978, lilprof,    0,         0,      lilprof,   lilprof,   lilprof_state, 
 SYST( 1976, lilprofoa,  lilprof,   0,      lilprofo,  lilprofo,  lilprofo_state,  empty_init, "Texas Instruments", "Little Professor (1976 version, rev. A)", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
 SYST( 1976, lilprofob,  lilprof,   0,      lilprofo,  lilprofo,  lilprofo_state,  empty_init, "Texas Instruments", "Little Professor (1976 version, rev. B)", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
 SYST( 1976, lilprofo,   lilprof,   0,      lilprofoc, lilprofo,  lilprofo_state,  empty_init, "Texas Instruments", "Little Professor (1976 version, rev. C)", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
-SYST( 1977, wizatron,   0,         0,      lilprofo,  wizatron,  lilprofo_state,  empty_init, "Texas Instruments", "Wiz-A-Tron", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
+SYST( 1977, wizatron,   0,         0,      wizatron,  wizatron,  wizatron_state,  empty_init, "Texas Instruments", "Wiz-A-Tron", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
 SYST( 1977, ti1680,     0,         0,      ti1680,    ti1680,    ti1680_state,    empty_init, "Texas Instruments", "TI-1680", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
 SYST( 1977, dataman,    0,         0,      dataman,   dataman,   dataman_state,   empty_init, "Texas Instruments", "DataMan", MACHINE_SUPPORTS_SAVE | MACHINE_NO_SOUND_HW )
 SYST( 1980, mathmarv,   0,         0,      mathmarv,  mathmarv,  mathmarv_state,  empty_init, "Texas Instruments", "Math Marvel", MACHINE_SUPPORTS_SAVE )

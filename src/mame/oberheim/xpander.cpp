@@ -288,7 +288,7 @@ TIMER_DEVICE_CALLBACK_MEMBER(xpander_state::firq_timer_elapsed)
 		// board). This also clears the grid mask as a side effect. See
 		// display_w() for more info.
 		for (int i = 0; i < m_vfd_devices.size(); ++i)
-			m_vfd_devices[i]->matrix(0, m_vfd_anode_masks[i]);
+			m_vfd_devices[i]->write_my(0);
 	}
 }
 
@@ -490,6 +490,7 @@ void xpander_state::display_w(offs_t offset, u8 data)
 			m_vfd_anode_masks[display] = (u16(data) << 8) | (m_vfd_anode_masks[display] & 0x00ff);
 		else
 			m_vfd_anode_masks[display] = (m_vfd_anode_masks[display] & 0xff00) | data;
+		m_vfd_devices[display]->write_mx(m_vfd_anode_masks[display]);
 	}
 
 	// An 74LS42 (U9), combined with 5 x 4028 (U2, U6, U8, U14, U18) form a
@@ -501,14 +502,9 @@ void xpander_state::display_w(offs_t offset, u8 data)
 	if (grid_enabled && grid_offset < 40)  // There are 40 grid signals.
 		grid_mask = u64(1) << grid_offset;
 
-	// Refresh VFD devices with the latest state.
+	// Refresh VFD devices with the latest grid mask.
 	for (int i = 0; i < m_vfd_devices.size(); ++i)
-		m_vfd_devices[i]->matrix(grid_mask, m_vfd_anode_masks[i]);
-
-	// Note that the output of U12 (anode select decoder), the grid mask, and
-	// the address driving it (A3-A8, U11, 74LS174) are latched until the next
-	// write, or until FIRQ is invoked. But there is no need to store state
-	// for these, the "matrix()" call above achieves the same, implicitly.
+		m_vfd_devices[i]->write_my(grid_mask);
 }
 
 void xpander_state::display_output_w(int display, offs_t offset, u32 data)
@@ -828,19 +824,6 @@ void xpander_state::machine_start()
 {
 	firq_timer_elapsed(*m_firq_timer, m_firq_timer_preset);  // Reset the timer.
 
-	m_cassmute.resolve();
-	m_vfd_outputs.resolve();
-	m_fm_mdac.resolve();
-	m_filter_mode.resolve();
-	m_noise.resolve();
-	m_pan.resolve();
-	m_saw1.resolve();
-	m_saw2.resolve();
-	m_tri1.resolve();
-	m_tri2.resolve();
-	m_vcofm.resolve();
-	m_sync.resolve();
-
 	save_item(NAME(m_firq_timer_preset));
 	save_item(NAME(m_selected_cv_in));
 	save_item(NAME(m_inhibit_cv_in));
@@ -869,7 +852,7 @@ void xpander_state::xpander(machine_config &config)
 	NVRAM(config, NVRAM_A_TAG, nvram_device::DEFAULT_ALL_0);
 	NVRAM(config, NVRAM_B_TAG, nvram_device::DEFAULT_ALL_0);
 
-	ACIA6850(config, m_midiacia, 0);
+	ACIA6850(config, m_midiacia);
 	m_midiacia->txd_handler().set("mdout", FUNC(midi_port_device::write_txd));
 	m_midiacia->irq_handler().set_inputline(m_maincpu, M6809_IRQ_LINE);
 

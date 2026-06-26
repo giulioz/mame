@@ -38,6 +38,10 @@ public:
 		, m_bankdev(*this, "bankdev")
 		, m_mainirq(*this, "mainirq")
 		, m_io_key{ { *this, "KEY%u", 0U }, { *this, "KEY%u", 5U } }
+		, m_dsw(*this, "DSW%u", 0U)
+		, m_io_fake(*this, "FAKE")
+		, m_bet(*this, "BET")
+		, m_coins(*this, "COINS")
 	{
 	}
 
@@ -47,11 +51,13 @@ public:
 	void tenkai(machine_config &config) ATTR_COLD;
 	void ougonhai(machine_config &config) ATTR_COLD;
 	void ougonhaib1(machine_config &config) ATTR_COLD;
+	void mjtkp2(machine_config &config) ATTR_COLD;
 	void mjreach(machine_config &config) ATTR_COLD;
 	void mjreachp2(machine_config &config) ATTR_COLD;
 	void mjdialq2(machine_config &config) ATTR_COLD;
 	void sprtmtch(machine_config &config) ATTR_COLD;
 	void qyjdzjp(machine_config &config) ATTR_COLD;
+	void baoqingt(machine_config &config) ATTR_COLD;
 
 	void blitter_ack_w(int state);
 	void sprtmtch_blitter_irq_w(int state);
@@ -68,12 +74,16 @@ protected:
 	required_device<cpu_device> m_maincpu;
 	optional_device<screen_device> m_screen;
 	required_device<palette_device> m_palette;
-	optional_device<ls259_device> m_mainlatch;
-	optional_device<dynax_blitter_rev2_device> m_blitter;
+	required_device<ls259_device> m_mainlatch;
+	required_device<dynax_blitter_rev2_device> m_blitter;
 	optional_device<hopper_device> m_hopper;
 	optional_device<address_map_bank_device> m_bankdev;
 	optional_device<rst_pos_buffer_device> m_mainirq;
 	optional_ioport_array<5> m_io_key[2];
+	optional_ioport_array<5> m_dsw;
+	optional_ioport m_io_fake;
+	optional_ioport m_bet;
+	optional_ioport m_coins;
 
 	/* input / output */
 	uint8_t m_input_sel = 0U;
@@ -94,8 +104,6 @@ protected:
 	virtual void machine_start() override ATTR_COLD;
 	virtual void machine_reset() override ATTR_COLD;
 
-	// Nothing below here is used by ddenlovr.cpp
-	// TODO: further decouple dynax.cpp and ddenlovr.cpp
 	void coincounter_0_w(int state);
 	void coincounter_1_w(int state);
 	uint8_t ret_ff();
@@ -198,6 +206,7 @@ private:
 	void tenkai_blit_scrollx_w(uint8_t data);
 	void tenkai_blit_scrolly_w(uint8_t data);
 	void tenkai_priority_w(uint8_t data);
+	uint8_t mjtkp2_dsw_r();
 
 	uint32_t screen_update_sprtmtch(screen_device &screen, bitmap_ind16 &bitmap, const rectangle &cliprect);
 	uint32_t screen_update_mjdialq2(screen_device &screen, bitmap_ind16 &bitmap, const rectangle &cliprect);
@@ -235,6 +244,11 @@ private:
 	void mjreachp2_map(address_map &map) ATTR_COLD;
 
 	void qyjdzjp_io_map(address_map &map) ATTR_COLD;
+
+	void baoqingt_io_map(address_map &map) ATTR_COLD;
+
+	void mjtkp2_map(address_map &map) ATTR_COLD;
+	void mjtkp2_banked_map(address_map &map) ATTR_COLD;
 
 	// misc
 	int m_rombank = 0;
@@ -461,6 +475,5 @@ private:
 
 
 INPUT_PORTS_EXTERN(dynax_mahjong_keys);
-INPUT_PORTS_EXTERN(dynax_hanafuda_keys_bet);
 
 #endif // MAME_DYNAX_DYNAX_H

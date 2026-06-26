@@ -35,12 +35,7 @@ class deco_rmc3_device : public device_t, public device_palette_interface
 {
 public:
 	// construction/destruction
-	deco_rmc3_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock, u32 entries)
-		: deco_rmc3_device(mconfig, tag, owner, clock)
-	{
-		set_entries(entries);
-	}
-
+	deco_rmc3_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock, u32 entries);
 	deco_rmc3_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
 
 	// configuration
@@ -97,7 +92,7 @@ private:
 	u32                 m_entries;              // number of entries in the palette
 	u32                 m_indirect_entries;     // number of indirect colors in the palette
 //  bool                m_enable_shadows;       // are shadows enabled?
-//  bool                m_enable_hilights;      // are hilights enabled?
+//  bool                m_enable_highlights;    // are highlights enabled?
 //  int                 m_membits;              // width of palette RAM, if different from native
 //  bool                m_membits_supplied;     // true if membits forced in static config
 //  endianness_t        m_endianness;           // endianness of palette RAM, if different from native

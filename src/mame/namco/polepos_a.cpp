@@ -12,6 +12,8 @@
 
 #include "machine/rescap.h"
 
+#include <numbers>
+
 
 #define OUTPUT_RATE         24000
 
@@ -86,8 +88,8 @@ void polepos_sound_device::filter2_context::setup(device_t *device, int type, do
 
 	/* calculate digital filter coefficents */
 	/* cutoff freq, in radians/sec */
-	/*w = 2.0*M_PI*fc; no pre-warping */
-	double const w = sample_rate*2.0*tan(M_PI*fc/sample_rate); /* pre-warping */
+	/*w = 2.0*PI*fc; no pre-warping */
+	double const w = sample_rate * 2.0 * tan(std::numbers::pi * fc / sample_rate); /* pre-warping */
 	double const w_squared = w*w;
 
 	/* temp variable */
@@ -187,7 +189,7 @@ void polepos_sound_device::filter2_context::opamp_m_bandpass_setup(device_t *dev
 		r_in = 1.0 / (1.0/r1 + 1.0/r2);
 	}
 
-	double const fc = 1.0 / (2 * M_PI * sqrt(r_in * r3 * c1 * c2));
+	double const fc = 1.0 / (2 * std::numbers::pi * sqrt(r_in * r3 * c1 * c2));
 	double const d = (c1 + c2) / sqrt(r3 / r_in * c1 * c2);
 	gain *= -r3 / r_in * c2 / (c1 + c2);
 
@@ -208,14 +210,14 @@ DEFINE_DEVICE_TYPE(POLEPOS_SOUND, polepos_sound_device, "polepos_sound", "Pole P
 //-------------------------------------------------
 
 polepos_sound_device::polepos_sound_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
-	: device_t(mconfig, POLEPOS_SOUND, tag, owner, clock),
-		device_sound_interface(mconfig, *this),
-		m_data(*this, DEVICE_SELF),
-		m_current_position(0),
-		m_sample_msb(0),
-		m_sample_lsb(0),
-		m_sample_enable(false),
-		m_stream(nullptr)
+	: device_t(mconfig, POLEPOS_SOUND, tag, owner, clock)
+	, device_sound_interface(mconfig, *this)
+	, m_data(*this, DEVICE_SELF)
+	, m_current_position(0)
+	, m_sample_msb(0)
+	, m_sample_lsb(0)
+	, m_sample_enable(false)
+	, m_stream(nullptr)
 {
 }
 
@@ -277,13 +279,13 @@ void polepos_sound_device::sound_stream_update(sound_stream &stream)
 		return;
 
 	/* determine the effective clock rate */
-	uint32_t clock = (unscaled_clock() / 16) * ((m_sample_msb + 1) * 64 + m_sample_lsb + 1) / (64*64);
-	uint32_t step = (clock << 12) / OUTPUT_RATE;
+	uint32_t const clock = (unscaled_clock() / 16) * ((m_sample_msb + 1) * 64 + m_sample_lsb + 1) / (64*64);
+	uint32_t const step = (clock << 12) / OUTPUT_RATE;
 
 	/* determine the volume */
-	unsigned slot = (m_sample_msb >> 3) & 7;
-	double volume = volume_table[slot];
-	const uint8_t *base = &m_data[slot * 0x800];
+	unsigned const slot = (m_sample_msb >> 3) & 7;
+	double const volume = volume_table[slot];
+	uint8_t const *const base = &m_data[slot * 0x800];
 
 	/* fill in the sample */
 	for (int sampindex = 0; sampindex < stream.samples(); sampindex++)

@@ -39,7 +39,6 @@
 
 **********************************************************************/
 
-
 #include "emu.h"
 #include "sdcard.h"
 
@@ -47,10 +46,6 @@
 
 
 namespace {
-
-//**************************************************************************
-//  TYPE DEFINITIONS
-//**************************************************************************
 
 // ======================> bbc_sdcard_device
 
@@ -63,11 +58,11 @@ public:
 protected:
 	bbc_sdcard_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock);
 
-	// device_t implementation
+	// device_t overrides
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
 
-	// device_bbc_userport_interface implementation
+	// device_bbc_userport_interface overrides
 	virtual void pb_w(uint8_t data) override;
 	virtual void write_cb1(int state) override;
 
@@ -84,11 +79,11 @@ public:
 	bbc_sdcardt_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
 
 protected:
-	// device_t implementation
+	// device_t overrides
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
 
-	// device_bbc_userport_interface implementation
+	// device_bbc_userport_interface overrides
 	virtual void pb_w(uint8_t data) override;
 	virtual void write_cb1(int state) override;
 	virtual void write_cb2(int state) override;
@@ -104,14 +99,14 @@ private:
 
 void bbc_sdcard_device::device_add_mconfig(machine_config &config)
 {
-	SPI_SDCARD(config, m_sdcard, 0);
+	SPI_SDCARD(config, m_sdcard);
 	m_sdcard->set_prefer_sdhc();
 	m_sdcard->spi_miso_callback().set([this](int state) { m_slot->cb2_w(state); });
 }
 
 void bbc_sdcardt_device::device_add_mconfig(machine_config &config)
 {
-	SPI_SDCARD(config, m_sdcard, 0);
+	SPI_SDCARD(config, m_sdcard);
 	m_sdcard->set_prefer_sdhc();
 	m_sdcard->spi_miso_callback().set([this](int state) { if (!m_turbo) m_slot->cb2_w(state); });
 }
@@ -206,10 +201,6 @@ void bbc_sdcardt_device::pb_w(uint8_t data)
 
 } // anonymous namespace
 
-
-//**************************************************************************
-//  DEVICE DEFINITIONS
-//**************************************************************************
 
 DEFINE_DEVICE_TYPE_PRIVATE(BBC_SDCARD, device_bbc_userport_interface, bbc_sdcard_device, "bbc_sdcard", "BBC Micro SD Card")
 DEFINE_DEVICE_TYPE_PRIVATE(BBC_SDCARDT, device_bbc_userport_interface, bbc_sdcardt_device, "bbc_sdcardt", "BBC Micro Turbo SD Card")

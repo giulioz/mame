@@ -602,7 +602,6 @@ Notes:
 #include "machine/nvram.h"
 #include "speaker.h"
 
-#include "vr.lh"
 #include "model1io2.lh"
 
 // On the real system, another 315-5338A is acting as slave
@@ -1078,7 +1077,7 @@ static INPUT_PORTS_START( swa )
 	PORT_BIT( 0xff, 0x7f, IPT_AD_STICK_X ) PORT_MINMAX(27,227) PORT_SENSITIVITY(100) PORT_KEYDELTA(4)  PORT_REVERSE
 
 	PORT_START("STICK1Y")
-	PORT_BIT( 0xff, 0x7f, IPT_AD_STICK_Y ) PORT_MINMAX(27,227) PORT_SENSITIVITY(100) PORT_KEYDELTA(4)  PORT_REVERSE
+	PORT_BIT( 0xff, 0x7f, IPT_AD_STICK_Y ) PORT_MINMAX(27,227) PORT_SENSITIVITY(100) PORT_KEYDELTA(4)
 
 	PORT_START("THROTTLE")
 	PORT_BIT( 0xff, 0x7f, IPT_PEDAL )      PORT_MINMAX(28,200) PORT_SENSITIVITY(100) PORT_KEYDELTA(16) PORT_REVERSE
@@ -1716,10 +1715,11 @@ void model1_state::model1(machine_config &config)
 	m_maincpu->set_addrmap(AS_IO, &model1_state::model1_io);
 	m_maincpu->set_irq_acknowledge_callback(FUNC(model1_state::irq_callback));
 
-	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0); // 2x MB84256A-70LL + battery
+	// vf (at least) depends on default being 1-filled for ranking to initialize properly
+	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_1); // 2x MB84256A-70LL + battery
 
-	GENERIC_FIFO_U32(config, "copro_fifo_in", 0);
-	GENERIC_FIFO_U32(config, "copro_fifo_out", 0);
+	GENERIC_FIFO_U32(config, "copro_fifo_in");
+	GENERIC_FIFO_U32(config, "copro_fifo_out");
 
 	TIMER(config, "scantimer").configure_scanline(FUNC(model1_state::model1_interrupt), "screen", 0, 1);
 
@@ -1740,15 +1740,15 @@ void model1_state::model1(machine_config &config)
 	PALETTE(config, m_palette).set_format(palette_device::xBGR_555, 8192);
 
 	// create SEGA_MODEL1IO device *after* SCREEN device
-	model1io_device &ioboard(SEGA_MODEL1IO(config, "ioboard", 0));
+	model1io_device &ioboard(SEGA_MODEL1IO(config, "ioboard"));
 	ioboard.read_callback().set(m_dpram, FUNC(mb8421_device::left_r));
 	ioboard.write_callback().set(m_dpram, FUNC(mb8421_device::left_w));
 	ioboard.in_callback<0>().set_ioport("IN.0");
 	ioboard.in_callback<1>().set_ioport("IN.1");
 
-	MB8421(config, m_dpram, 0);
+	MB8421(config, m_dpram);
 
-	SEGAM1AUDIO(config, m_m1audio, 0);
+	SEGAM1AUDIO(config, m_m1audio);
 	m_m1audio->rxd_handler().set(m_m1uart, FUNC(i8251_device::write_rxd));
 
 	I8251(config, m_m1uart, 8000000); // uPD71051C, clock unknown
@@ -1784,7 +1784,7 @@ void model1_state::vr(machine_config &config)
 	ioboard.output_callback().set(FUNC(model1_state::vr_outputs_w));
 	ioboard.output_callback().append(FUNC(model1_state::gen_outputs_w));
 
-	M1COMM(config, "m1comm", 0).set_default_bios_tag("epr15112");
+	M1COMM(config, "m1comm").set_default_bios_tag("epr15112");
 }
 
 void model1_state::vformula(machine_config &config)
@@ -1801,7 +1801,7 @@ void model1_state::vformula(machine_config &config)
 	ioboard.output_callback().set(FUNC(model1_state::vr_outputs_w));
 	ioboard.output_callback().append(FUNC(model1_state::gen_outputs_w));
 
-	M1COMM(config, "m1comm", 0).set_default_bios_tag("epr15624");
+	M1COMM(config, "m1comm").set_default_bios_tag("epr15624");
 }
 
 void model1_state::swa(machine_config &config)
@@ -1818,11 +1818,10 @@ void model1_state::swa(machine_config &config)
 	ioboard.output_callback().set(FUNC(model1_state::swa_outputs_w));
 	ioboard.output_callback().append(FUNC(model1_state::gen_outputs_w));
 
-	SPEAKER(config, "dleft").front_left();
-	SPEAKER(config, "dright").front_right();
-	DSBZ80(config, m_dsbz80, 0);
-	m_dsbz80->add_route(0, "dleft", 1.0);
-	m_dsbz80->add_route(1, "dright", 1.0);
+	SPEAKER(config, "mpeg", 2).front();
+	DSBZ80(config, m_dsbz80);
+	m_dsbz80->add_route(0, "mpeg", 1.0, 0);
+	m_dsbz80->add_route(1, "mpeg", 1.0, 1);
 
 	// Apparently m1audio has to filter out commands the DSB shouldn't see
 	m_m1audio->rxd_handler().append(m_dsbz80, FUNC(dsbz80_device::write_txd));
@@ -1848,7 +1847,7 @@ void model1_state::wingwar(machine_config &config)
 
 	config.set_default_layout(layout_model1io2);
 
-	M1COMM(config, "m1comm", 0).set_default_bios_tag("epr15112");
+	M1COMM(config, "m1comm").set_default_bios_tag("epr15112");
 }
 
 void model1_state::wingwar360(machine_config &config)

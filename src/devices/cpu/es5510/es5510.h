@@ -17,7 +17,6 @@ public:
 	// TODO : Not verified, Most of games are using 128KB DRAM.
 	static constexpr uint32_t DRAM_SIZE = (1<<20);
 	static constexpr uint32_t DRAM_MASK = (DRAM_SIZE-1);
-	static constexpr feature_type imperfect_features() { return feature::SOUND; }
 
 	es5510_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
 
@@ -156,7 +155,7 @@ private:
 	int16_t ser3l;
 	int64_t machl;        // 48 bits, right justified and sign extended
 	bool mac_overflow;  // whether reading the MAC register should return a saturated replacement value
-	int32_t dil;
+	int16_t dil;
 	int32_t memsiz;
 	int32_t memmask;
 	int32_t memincrement;
@@ -169,7 +168,7 @@ private:
 	int mulshift;
 	int8_t ccr;           // really, 5 bits, left justified
 	int8_t cmr;           // really, 6 bits, left justified
-	int32_t dol[2];
+	int16_t dol[2];
 	int dol_count;
 
 	std::unique_ptr<uint64_t[]> instr;

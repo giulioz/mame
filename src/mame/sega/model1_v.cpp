@@ -7,6 +7,8 @@
 #include "cpu/mb86233/mb86233.h"
 #include "model1.h"
 
+#include "corefloat.h"
+
 #define LOG_TGP (1U << 1)
 
 #define VERBOSE (0)
@@ -1649,8 +1651,9 @@ uint32_t model1_state::screen_update_model1(screen_device &screen, bitmap_rgb32 
 	screen.priority().fill(0);
 	bitmap.fill(m_palette->pen(0x400), cliprect);
 
-	m_tiles->draw(screen, bitmap, cliprect, 6, 0, 0);
-	m_tiles->draw(screen, bitmap, cliprect, 4, 0, 0);
+	// draw tilemap B as opaque
+	m_tiles->draw(screen, bitmap, cliprect, 6, 0, TILEMAP_DRAW_OPAQUE);
+	m_tiles->draw(screen, bitmap, cliprect, 4, 0, TILEMAP_DRAW_OPAQUE);
 	m_tiles->draw(screen, bitmap, cliprect, 2, 0, 0);
 	m_tiles->draw(screen, bitmap, cliprect, 0, 0, 0);
 

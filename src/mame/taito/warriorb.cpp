@@ -228,6 +228,7 @@ private:
 
 	void draw_sprites(screen_device &screen, bitmap_ind16 &bitmap, const rectangle &cliprect, int x_offs, int y_offs, int chip);
 	template <u8 Which> u32 screen_update(screen_device &screen, bitmap_ind16 &bitmap, const rectangle &cliprect);
+	rgb_t color_xbgr555(u16 data);
 
 	void darius2d_main_map(address_map &map) ATTR_COLD;
 	void warriorb_main_map(address_map &map) ATTR_COLD;
@@ -301,6 +302,11 @@ void warriorb_state::draw_sprites(screen_device &screen, bitmap_ind16 &bitmap, c
 /**************************************************************
                 SCREEN REFRESH
 **************************************************************/
+
+rgb_t warriorb_state::color_xbgr555(u16 data)
+{
+	return rgb_t(pal5bit(data >> 0), pal5bit(data >> 5), pal5bit(data >> 10));
+}
 
 template <u8 Which>
 u32 warriorb_state::screen_update(screen_device &screen, bitmap_ind16 &bitmap, const rectangle &cliprect)
@@ -394,8 +400,8 @@ void warriorb_state::darius2d_main_map(address_map &map)
 	map(0x220000, 0x22000f).rw(m_tc0100scn[0], FUNC(tc0100scn_device::ctrl_r), FUNC(tc0100scn_device::ctrl_w));
 	map(0x240000, 0x253fff).rw(m_tc0100scn[1], FUNC(tc0100scn_device::ram_r), FUNC(tc0100scn_device::ram_w));      // tilemaps (2nd screen)
 	map(0x260000, 0x26000f).rw(m_tc0100scn[1], FUNC(tc0100scn_device::ctrl_r), FUNC(tc0100scn_device::ctrl_w));
-	map(0x400000, 0x400007).rw(m_tc0110pcr[0], FUNC(tc0110pcr_device::word_r), FUNC(tc0110pcr_device::step1_word_w));    // palette (1st screen)
-	map(0x420000, 0x420007).rw(m_tc0110pcr[1], FUNC(tc0110pcr_device::word_r), FUNC(tc0110pcr_device::step1_word_w));    // palette (2nd screen)
+	map(0x400000, 0x400007).rw(m_tc0110pcr[0], FUNC(tc0110pcr_device::word_r), FUNC(tc0110pcr_device::word_w));    // palette (1st screen)
+	map(0x420000, 0x420007).rw(m_tc0110pcr[1], FUNC(tc0110pcr_device::word_r), FUNC(tc0110pcr_device::word_w));    // palette (2nd screen)
 	map(0x600000, 0x6013ff).ram().share(m_spriteram);
 	map(0x800000, 0x80000f).rw("tc0220ioc", FUNC(tc0220ioc_device::read), FUNC(tc0220ioc_device::write)).umask16(0x00ff);
 //  map(0x820000, 0x820001).nopw();    // ???
@@ -411,8 +417,8 @@ void warriorb_state::warriorb_main_map(address_map &map)
 	map(0x320000, 0x32000f).rw(m_tc0100scn[0], FUNC(tc0100scn_device::ctrl_r), FUNC(tc0100scn_device::ctrl_w));
 	map(0x340000, 0x353fff).rw(m_tc0100scn[1], FUNC(tc0100scn_device::ram_r), FUNC(tc0100scn_device::ram_w));      // tilemaps (2nd screen)
 	map(0x360000, 0x36000f).rw(m_tc0100scn[1], FUNC(tc0100scn_device::ctrl_r), FUNC(tc0100scn_device::ctrl_w));
-	map(0x400000, 0x400007).rw(m_tc0110pcr[0], FUNC(tc0110pcr_device::word_r), FUNC(tc0110pcr_device::step1_word_w));    // palette (1st screen)
-	map(0x420000, 0x420007).rw(m_tc0110pcr[1], FUNC(tc0110pcr_device::word_r), FUNC(tc0110pcr_device::step1_word_w));    // palette (2nd screen)
+	map(0x400000, 0x400007).rw(m_tc0110pcr[0], FUNC(tc0110pcr_device::word_r), FUNC(tc0110pcr_device::word_w));    // palette (1st screen)
+	map(0x420000, 0x420007).rw(m_tc0110pcr[1], FUNC(tc0110pcr_device::word_r), FUNC(tc0110pcr_device::word_w));    // palette (2nd screen)
 	map(0x600000, 0x6013ff).ram().share(m_spriteram);
 	map(0x800000, 0x80000f).rw("tc0510nio", FUNC(tc0510nio_device::read), FUNC(tc0510nio_device::write)).umask16(0x00ff);
 //  map(0x820000, 0x820001).nopw();    // ? uses bits 0,2,3
@@ -585,7 +591,7 @@ void warriorb_state::darius2d(machine_config &config)
 	z80_device &audiocpu(Z80(config, "audiocpu", 16_MHz_XTAL / 4));  // 4 MHz (16 MHz XTAL / 4)
 	audiocpu.set_addrmap(AS_PROGRAM, &warriorb_state::z80_sound_map);
 
-	tc0220ioc_device & tc0220ioc(TC0220IOC(config, "tc0220ioc", 0));
+	tc0220ioc_device & tc0220ioc(TC0220IOC(config, "tc0220ioc"));
 	tc0220ioc.read_0_callback().set_ioport("DSWA");
 	tc0220ioc.read_1_callback().set_ioport("DSWB");
 	tc0220ioc.read_2_callback().set_ioport("IN0");
@@ -607,11 +613,13 @@ void warriorb_state::darius2d(machine_config &config)
 	lscreen.set_screen_update(FUNC(warriorb_state::screen_update<0>));
 	lscreen.set_palette(m_tc0110pcr[0]);
 
-	TC0100SCN(config, m_tc0100scn[0], 0);
+	TC0100SCN(config, m_tc0100scn[0]);
 	m_tc0100scn[0]->set_offsets(4, 0);
 	m_tc0100scn[0]->set_palette(m_tc0110pcr[0]);
 
-	TC0110PCR(config, m_tc0110pcr[0], 0);
+	TC0110PCR(config, m_tc0110pcr[0]);
+	m_tc0110pcr[0]->set_shift(0);
+	m_tc0110pcr[0]->set_color_callback(FUNC(warriorb_state::color_xbgr555));
 
 	screen_device &rscreen(SCREEN(config, "rscreen", SCREEN_TYPE_RASTER));
 	rscreen.set_refresh_hz(60);
@@ -621,16 +629,18 @@ void warriorb_state::darius2d(machine_config &config)
 	rscreen.set_screen_update(FUNC(warriorb_state::screen_update<1>));
 	rscreen.set_palette(m_tc0110pcr[1]);
 
-	TC0100SCN(config, m_tc0100scn[1], 0);
+	TC0100SCN(config, m_tc0100scn[1]);
 	m_tc0100scn[1]->set_offsets(4, 0);
 	m_tc0100scn[1]->set_multiscr_hack(1);
 	m_tc0100scn[1]->set_palette(m_tc0110pcr[1]);
 
-	TC0110PCR(config, m_tc0110pcr[1], 0);
+	TC0110PCR(config, m_tc0110pcr[1]);
+	m_tc0110pcr[1]->set_shift(0);
+	m_tc0110pcr[1]->set_color_callback(FUNC(warriorb_state::color_xbgr555));
 
 	// sound hardware
 	SPEAKER(config, "speaker", 2).front();
-	SPEAKER(config, "subwoofer").seat();
+	SPEAKER(config, "subwoofer").lfe();
 
 	ym2610_device &ymsnd(YM2610(config, "ymsnd", 16_MHz_XTAL / 2));
 	ymsnd.irq_handler().set_inputline("audiocpu", 0);
@@ -645,7 +655,7 @@ void warriorb_state::darius2d(machine_config &config)
 	FILTER_VOLUME(config, "2610.2.l").add_route(ALL_OUTPUTS, "speaker", 1.0, 0);
 	FILTER_VOLUME(config, "2610.2.r").add_route(ALL_OUTPUTS, "speaker", 1.0, 1);
 
-	TC0140SYT(config, m_tc0140syt, 0);
+	TC0140SYT(config, m_tc0140syt);
 	m_tc0140syt->nmi_callback().set_inputline("audiocpu", INPUT_LINE_NMI);
 	m_tc0140syt->reset_callback().set_inputline("audiocpu", INPUT_LINE_RESET);
 }
@@ -660,7 +670,7 @@ void warriorb_state::warriorb(machine_config &config)
 	z80_device &audiocpu(Z80(config, "audiocpu", 16_MHz_XTAL / 4));  // 4 MHz (16 MHz XTAL / 4)
 	audiocpu.set_addrmap(AS_PROGRAM, &warriorb_state::z80_sound_map);
 
-	tc0510nio_device &tc0510nio(TC0510NIO(config, "tc0510nio", 0));
+	tc0510nio_device &tc0510nio(TC0510NIO(config, "tc0510nio"));
 	tc0510nio.read_0_callback().set_ioport("DSWA");
 	tc0510nio.read_1_callback().set_ioport("DSWB");
 	tc0510nio.read_2_callback().set_ioport("IN0");
@@ -682,11 +692,13 @@ void warriorb_state::warriorb(machine_config &config)
 	lscreen.set_screen_update(FUNC(warriorb_state::screen_update<0>));
 	lscreen.set_palette(m_tc0110pcr[0]);
 
-	TC0100SCN(config, m_tc0100scn[0], 0);
+	TC0100SCN(config, m_tc0100scn[0]);
 	m_tc0100scn[0]->set_offsets(4, 0);
 	m_tc0100scn[0]->set_palette(m_tc0110pcr[0]);
 
-	TC0110PCR(config, m_tc0110pcr[0], 0);
+	TC0110PCR(config, m_tc0110pcr[0]);
+	m_tc0110pcr[0]->set_shift(0);
+	m_tc0110pcr[0]->set_color_callback(FUNC(warriorb_state::color_xbgr555));
 
 	screen_device &rscreen(SCREEN(config, "rscreen", SCREEN_TYPE_RASTER));
 	rscreen.set_refresh_hz(60);
@@ -696,13 +708,15 @@ void warriorb_state::warriorb(machine_config &config)
 	rscreen.set_screen_update(FUNC(warriorb_state::screen_update<1>));
 	rscreen.set_palette(m_tc0110pcr[1]);
 
-	TC0100SCN(config, m_tc0100scn[1], 0);
+	TC0100SCN(config, m_tc0100scn[1]);
 	m_tc0100scn[1]->set_offsets(4, 0);
 	m_tc0100scn[1]->set_multiscr_xoffs(1);
 	m_tc0100scn[1]->set_multiscr_hack(1);
 	m_tc0100scn[1]->set_palette(m_tc0110pcr[1]);
 
-	TC0110PCR(config, m_tc0110pcr[1], 0);
+	TC0110PCR(config, m_tc0110pcr[1]);
+	m_tc0110pcr[1]->set_shift(0);
+	m_tc0110pcr[1]->set_color_callback(FUNC(warriorb_state::color_xbgr555));
 
 	// sound hardware
 	SPEAKER(config, "speaker", 2).front();
@@ -722,7 +736,7 @@ void warriorb_state::warriorb(machine_config &config)
 	FILTER_VOLUME(config, "2610.2.l").add_route(ALL_OUTPUTS, "speaker", 1.0, 0);
 	FILTER_VOLUME(config, "2610.2.r").add_route(ALL_OUTPUTS, "speaker", 1.0, 1);
 
-	TC0140SYT(config, m_tc0140syt, 0);
+	TC0140SYT(config, m_tc0140syt);
 	m_tc0140syt->nmi_callback().set_inputline("audiocpu", INPUT_LINE_NMI);
 	m_tc0140syt->reset_callback().set_inputline("audiocpu", INPUT_LINE_RESET);
 }

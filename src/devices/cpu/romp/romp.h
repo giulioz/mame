@@ -25,19 +25,16 @@ protected:
 		ROMP_GPR = 16,
 	};
 
-	enum scr : unsigned
-	{
-		COUS =  6, // counter source
-		COU  =  7, // counter
-		TS   =  8, // timer status
-		ECR  =  9, // exception control (advanced/enhanced only)
-		MQ   = 10, // multiplier quotient
-		MPCS = 11, // machine/program check status
-		IRB  = 12, // interrupt request buffer
-		IAR  = 13, // instruction address register
-		ICS  = 14, // interrupt control status
-		CS   = 15, // condition status
-	};
+	static constexpr unsigned COUS =  6; // counter source
+	static constexpr unsigned COU  =  7; // counter
+	static constexpr unsigned TS   =  8; // timer status
+	static constexpr unsigned ECR  =  9; // exception control (advanced/enhanced only)
+	static constexpr unsigned MQ   = 10; // multiplier quotient
+	static constexpr unsigned MPCS = 11; // machine/program check status
+	static constexpr unsigned IRB  = 12; // interrupt request buffer
+	static constexpr unsigned IAR  = 13; // instruction address register
+	static constexpr unsigned ICS  = 14; // interrupt control status
+	static constexpr unsigned CS   = 15; // condition status
 
 	enum ts_mask : u32
 	{
@@ -162,7 +159,7 @@ private:
 
 		T data = 0;
 
-		switch (address >> 28)
+		switch (address >> 24)
 		{
 		default:
 			if (m_mmu->mem_load(address, data, mode))
@@ -171,30 +168,38 @@ private:
 				program_check(PCS_PCK | PCS_DAE);
 			break;
 
-		case 15:
-			switch (address >> 24)
-			{
-			case 0xf0:
-				if (m_iou->pio_load(address, data, mode))
-					f(data);
-				else
-					program_check(PCS_PCK | PCS_DAE);
-				break;
-			case 0xf4:
-				if (m_iou->mem_load(address, data, mode))
-					f(data);
-				else
-					program_check(PCS_PCK | PCS_DAE);
-				break;
-
-			case 0xfc: // mc68881 assist mode
-			case 0xfd: // mc68881 non-assist mode
-			case 0xfe: // afpa dma
-			case 0xff: // fpa
-			default: // reserved
+		case 0xf0:
+			if (m_iou->pio_load(address, data, mode))
+				f(data);
+			else
 				program_check(PCS_PCK | PCS_DAE);
-				break;
-			}
+			break;
+		case 0xf4:
+			if (m_iou->mem_load(address, data, mode))
+				f(data);
+			else
+				program_check(PCS_PCK | PCS_DAE);
+			break;
+
+		case 0xfc: // mc68881 assist mode
+		case 0xfd: // mc68881 non-assist mode
+		case 0xfe: // afpa dma
+		case 0xff: // fpa
+			program_check(PCS_PCK | PCS_DAE);
+			break;
+
+		case 0xf1:
+		case 0xf2:
+		case 0xf3:
+		case 0xf5:
+		case 0xf6:
+		case 0xf7:
+		case 0xf8:
+		case 0xf9:
+		case 0xfa:
+		case 0xfb:
+			//reserved
+			program_check(PCS_PCK | PCS_DAE);
 			break;
 		}
 	}
@@ -203,33 +208,41 @@ private:
 	{
 		rsc_mode const mode = mask ? rsc_mode((m_scr[ICS] >> 9) & 7) : rsc_mode::RSC_N;
 
-		switch (address >> 28)
+		switch (address >> 24)
 		{
 		default:
 			if (!m_mmu->mem_store(address, data, mode))
 				program_check(PCS_PCK | PCS_DAE);
 			break;
 
-		case 15:
-			switch (address >> 24)
-			{
-			case 0xf0:
-				if (!m_iou->pio_store(address, data, mode))
-					program_check(PCS_PCK | PCS_DAE);
-				break;
-			case 0xf4:
-				if (!m_iou->mem_store(address, data, mode))
-					program_check(PCS_PCK | PCS_DAE);
-				break;
-
-			case 0xfc: // mc68881 assist mode
-			case 0xfd: // mc68881 non-assist mode
-			case 0xfe: // afpa dma
-			case 0xff: // fpa
-			default: // reserved
+		case 0xf0:
+			if (!m_iou->pio_store(address, data, mode))
 				program_check(PCS_PCK | PCS_DAE);
-				break;
-			}
+			break;
+		case 0xf4:
+			if (!m_iou->mem_store(address, data, mode))
+				program_check(PCS_PCK | PCS_DAE);
+			break;
+
+		case 0xfc: // mc68881 assist mode
+		case 0xfd: // mc68881 non-assist mode
+		case 0xfe: // afpa dma
+		case 0xff: // fpa
+			program_check(PCS_PCK | PCS_DAE);
+			break;
+
+		case 0xf1:
+		case 0xf2:
+		case 0xf3:
+		case 0xf5:
+		case 0xf6:
+		case 0xf7:
+		case 0xf8:
+		case 0xf9:
+		case 0xfa:
+		case 0xfb:
+			//reserved
+			program_check(PCS_PCK | PCS_DAE);
 			break;
 		}
 	}
@@ -238,33 +251,41 @@ private:
 	{
 		rsc_mode const mode = mask ? rsc_mode((m_scr[ICS] >> 9) & 7) : rsc_mode::RSC_N;
 
-		switch (address >> 28)
+		switch (address >> 24)
 		{
 		default:
 			if (!m_mmu->mem_modify(address, f, mode))
 				program_check(PCS_PCK | PCS_DAE);
 			break;
 
-		case 15:
-			switch (address >> 24)
-			{
-			case 0xf0:
-				if (!m_iou->pio_modify(address, f, mode))
-					program_check(PCS_PCK | PCS_DAE);
-				break;
-			case 0xf4:
-				if (!m_iou->mem_modify(address, f, mode))
-					program_check(PCS_PCK | PCS_DAE);
-				break;
-
-			case 0xfc: // mc68881 assist mode
-			case 0xfd: // mc68881 non-assist mode
-			case 0xfe: // afpa dma
-			case 0xff: // fpa
-			default: // reserved
+		case 0xf0:
+			if (!m_iou->pio_modify(address, f, mode))
 				program_check(PCS_PCK | PCS_DAE);
-				break;
-			}
+			break;
+		case 0xf4:
+			if (!m_iou->mem_modify(address, f, mode))
+				program_check(PCS_PCK | PCS_DAE);
+			break;
+
+		case 0xfc: // mc68881 assist mode
+		case 0xfd: // mc68881 non-assist mode
+		case 0xfe: // afpa dma
+		case 0xff: // fpa
+			program_check(PCS_PCK | PCS_DAE);
+			break;
+
+		case 0xf1:
+		case 0xf2:
+		case 0xf3:
+		case 0xf5:
+		case 0xf6:
+		case 0xf7:
+		case 0xf8:
+		case 0xf9:
+		case 0xfa:
+		case 0xfb:
+			//reserved
+			program_check(PCS_PCK | PCS_DAE);
 			break;
 		}
 	}

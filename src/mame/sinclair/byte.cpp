@@ -85,8 +85,7 @@ void byte_state::map_io(address_map &map)
 
 u8 byte_state::kbd_fe_r(offs_t offset)
 {
-	if (is_contended(offset)) content_early();
-	content_early(1);
+	m_ula->ula_r(offset);
 
 	u8 lines = offset >> 8;
 	u8 data = 0xff;
@@ -245,7 +244,7 @@ void byte_state::byte(machine_config &config)
 {
 	spectrum_state::spectrum_clone(config);
 
-	PIT8253(config, m_pit, 0); // КР580ВИ53
+	PIT8253(config, m_pit); // КР580ВИ53
 	m_pit->set_clk<0>(20_MHz_XTAL / 10);
 	m_pit->out_handler<0>().set([this](int state) { m_speaker->level_w(state); });
 	m_pit->set_clk<1>(20_MHz_XTAL / 10);

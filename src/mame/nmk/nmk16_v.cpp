@@ -118,7 +118,7 @@ VIDEO_START_MEMBER(nmk16_state, bioship)
 	m_tx_tilemap->set_scrolldx(92, 92);
 }
 
-VIDEO_START_MEMBER(nmk16_state,macross)
+VIDEO_START_MEMBER(nmk16_state,manybloc)
 {
 	m_bg_tilemap[0] = &machine().tilemap().create(*m_gfxdecode, tilemap_get_info_delegate(*this, NAME((&nmk16_state::common_get_bg_tile_info<0, 1>))), tilemap_mapper_delegate(*this, FUNC(nmk16_state::tilemap_scan_pages)), 16, 16, 256, 32);
 	m_bg_tilemap[1] = nullptr;
@@ -127,6 +127,12 @@ VIDEO_START_MEMBER(nmk16_state,macross)
 	m_tx_tilemap->set_transparent_pen(15);
 
 	video_init();
+	// no tilemap offset in this hardware? need to verification
+}
+
+VIDEO_START_MEMBER(nmk16_state,macross)
+{
+	VIDEO_START_CALL_MEMBER(manybloc);
 	m_bg_tilemap[0]->set_scrolldx(92, 92);
 	m_tx_tilemap->set_scrolldx(92, 92);
 }
@@ -369,6 +375,8 @@ void nmk16_state::bg_update(screen_device &screen, bitmap_ind16 &bitmap, const r
 {
 	if (m_gunnail_scrollram && m_gunnail_scrollramy)
 	{
+		m_bg_tilemap[layer]->set_scroll_rows(512);
+
 		// the hardware supports per-scanline X *and* Y scroll which isn't
 		// supported by tilemaps so we have to draw the tilemap one line at a time
 		int i = 16;
@@ -380,8 +388,6 @@ void nmk16_state::bg_update(screen_device &screen, bitmap_ind16 &bitmap, const r
 
 			bgclip.min_y = y1;
 			bgclip.max_y = y1;
-
-			m_bg_tilemap[layer]->set_scroll_rows(512);
 
 			m_bg_tilemap[layer]->set_scrolly(0, yscroll);
 			m_bg_tilemap[layer]->set_scrollx((i + yscroll) & 0x1ff, m_gunnail_scrollram[0] + m_gunnail_scrollram[i]);

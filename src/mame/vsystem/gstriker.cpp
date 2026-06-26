@@ -181,6 +181,8 @@ Frequencies: 68k is XTAL_32MHZ/2
 #include "vs920a.h"
 #include "vsystem_spr.h"
 
+#include "bus/rs232/rs232.h"
+
 #include "cpu/m68000/m68000.h"
 #include "cpu/z80/z80.h"
 #include "machine/6850acia.h"
@@ -223,6 +225,7 @@ public:
 		m_palette(*this, "palette"),
 		m_watchdog(*this, "watchdog"),
 		m_acia(*this, "acia"),
+		m_rs232(*this, "rs232"),
 		m_cg10103_vram(*this, "cg10103_vram"),
 		m_buffered_spriteram(*this, "buffere_spriteram%u", 0U, 0x2000U, ENDIANNESS_BIG),
 		m_work_ram(*this, "work_ram"),
@@ -255,6 +258,7 @@ private:
 	required_device<palette_device> m_palette;
 	required_device<mb3773_device> m_watchdog;
 	optional_device<acia6850_device> m_acia;
+	optional_device<rs232_port_device> m_rs232;
 
 	required_shared_ptr<uint16_t> m_cg10103_vram;
 	memory_share_array_creator<uint16_t, 2> m_buffered_spriteram;
@@ -622,6 +626,14 @@ static INPUT_PORTS_START( vgoalsoc )
 	PORT_DIPSETTING(    0x00, "2" )
 INPUT_PORTS_END
 
+static DEVICE_INPUT_DEFAULTS_START( linkplay )
+	DEVICE_INPUT_DEFAULTS( "RS232_RXBAUD", 0xff, RS232_BAUD_78125 )
+	DEVICE_INPUT_DEFAULTS( "RS232_TXBAUD", 0xff, RS232_BAUD_78125 )
+	DEVICE_INPUT_DEFAULTS( "RS232_DATABITS", 0xff, RS232_DATABITS_8 )
+	DEVICE_INPUT_DEFAULTS( "RS232_PARITY", 0xff, RS232_PARITY_NONE )
+	DEVICE_INPUT_DEFAULTS( "RS232_STOPBITS", 0xff, RS232_STOPBITS_2 )
+DEVICE_INPUT_DEFAULTS_END
+
 /*** MACHINE DRIVER **********************************************************/
 
 void gstriker_state::base(machine_config &config)
@@ -630,7 +642,7 @@ void gstriker_state::base(machine_config &config)
 	m_audiocpu->set_addrmap(AS_PROGRAM, &gstriker_state::sound_map);
 	m_audiocpu->set_addrmap(AS_IO, &gstriker_state::sound_io_map);
 
-	vs9209_device &io(VS9209(config, "io", 0));
+	vs9209_device &io(VS9209(config, "io"));
 	io.porta_input_cb().set_ioport("P1");
 	io.portb_input_cb().set_ioport("P2");
 	io.portc_input_cb().set_ioport("SYSTEM");
@@ -639,7 +651,7 @@ void gstriker_state::base(machine_config &config)
 	io.porth_input_cb().set("soundlatch", FUNC(generic_latch_8_device::pending_r)).lshift(0);
 	io.porth_output_cb().set("watchdog", FUNC(mb3773_device::write_line_ck)).bit(3);
 
-	MB3773(config, m_watchdog, 0);
+	MB3773(config, m_watchdog);
 
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
 //  m_screen->set_video_attributes(VIDEO_UPDATE_AFTER_VBLANK);
@@ -654,15 +666,15 @@ void gstriker_state::base(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_gstriker);
 	PALETTE(config, m_palette).set_format(palette_device::xRGB_555, 0x800);
 
-	MB60553(config, m_bg, 0);
+	MB60553(config, m_bg);
 	m_bg->set_gfxdecode_tag(m_gfxdecode);
 	m_bg->set_gfx_region(1);
 
-	VS920A(config, m_tx, 0);
+	VS920A(config, m_tx);
 	m_tx->set_gfxdecode_tag(m_gfxdecode);
 	m_tx->set_gfx_region(0);
 
-	VSYSTEM_SPR(config, m_spr, 0, m_palette, gfx_gstriker_spr);
+	VSYSTEM_SPR(config, m_spr, m_palette, gfx_gstriker_spr);
 	m_spr->set_pri_cb(FUNC(gstriker_state::pri_callback));
 	m_spr->set_pal_mask(0x1f);
 	m_spr->set_transpen(0);
@@ -689,14 +701,16 @@ void gstriker_state::gstriker(machine_config &config)
 
 	base(config);
 
-	ACIA6850(config, m_acia, 0);
+	ACIA6850(config, m_acia);
 	m_acia->irq_handler().set_inputline(m_maincpu, M68K_IRQ_2);
-	m_acia->txd_handler().set(m_acia, FUNC(acia6850_device::write_rxd)); // loopback for now
+	m_acia->txd_handler().set("rs232", FUNC(rs232_port_device::write_txd));
 
 	// DE-9 port
-	// slave sends 0xca, master receives it and sends a 0x0d ACK back.
-	// writing latter to $200063 while in slave mode will pass the serial check
-	clock_device &acia_clock(CLOCK(config, "acia_clock", 20_MHz_XTAL / 64)); // assume ~19200 baud
+	rs232_port_device &rs232(RS232_PORT(config, "rs232", default_rs232_devices, nullptr));
+	rs232.rxd_handler().set("acia", FUNC(acia6850_device::write_rxd));
+	rs232.set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(linkplay));
+
+	clock_device &acia_clock(CLOCK(config, "acia_clock", 20_MHz_XTAL / 16)); // 78125 baud
 	acia_clock.signal_handler().set(m_acia, FUNC(acia6850_device::write_txc));
 	acia_clock.signal_handler().append(m_acia, FUNC(acia6850_device::write_rxc));
 }
@@ -1278,9 +1292,9 @@ void gstriker_state::init_vgoalsoc()
 
 /*** GAME DRIVERS ************************************************************/
 
-GAME( 1993, gstriker,  0,        gstriker, gstriker, gstriker_state, empty_init, ROT0, "Human", "Grand Striker (Europe, Oceania)", MACHINE_NOT_WORKING | MACHINE_NODEVICE_LAN | MACHINE_IMPERFECT_GRAPHICS | MACHINE_SUPPORTS_SAVE )
-GAME( 1993, gstrikera, gstriker, gstriker, gstriker, gstriker_state, empty_init, ROT0, "Human", "Grand Striker (Americas)",        MACHINE_NOT_WORKING | MACHINE_NODEVICE_LAN | MACHINE_IMPERFECT_GRAPHICS | MACHINE_SUPPORTS_SAVE )
-GAME( 1993, gstrikerj, gstriker, gstriker, gstriker, gstriker_state, empty_init, ROT0, "Human", "Grand Striker (Japan)",           MACHINE_NOT_WORKING | MACHINE_NODEVICE_LAN | MACHINE_IMPERFECT_GRAPHICS | MACHINE_SUPPORTS_SAVE )
+GAME( 1993, gstriker,  0,        gstriker, gstriker, gstriker_state, empty_init, ROT0, "Human", "Grand Striker (Europe, Oceania)", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_GRAPHICS | MACHINE_SUPPORTS_SAVE )
+GAME( 1993, gstrikera, gstriker, gstriker, gstriker, gstriker_state, empty_init, ROT0, "Human", "Grand Striker (Americas)",        MACHINE_NOT_WORKING | MACHINE_IMPERFECT_GRAPHICS | MACHINE_SUPPORTS_SAVE )
+GAME( 1993, gstrikerj, gstriker, gstriker, gstriker, gstriker_state, empty_init, ROT0, "Human", "Grand Striker (Japan)",           MACHINE_NOT_WORKING | MACHINE_IMPERFECT_GRAPHICS | MACHINE_SUPPORTS_SAVE )
 
 // Similar, but not identical hardware, appear to be protected by an MCU
 GAME( 1994, vgoalsoc,  0,        vgoal, vgoalsoc, gstriker_state, init_vgoalsoc, ROT0, "Tecmo", "V Goal Soccer (Europe)",         MACHINE_NOT_WORKING | MACHINE_SUPPORTS_SAVE ) // has ger/hol/arg/bra/ita/eng/spa/fra

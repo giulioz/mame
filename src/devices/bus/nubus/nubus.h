@@ -4,7 +4,7 @@
 
   nubus.h - NuBus bus and card emulation
 
-  by R. Belmont, based heavily on Miodrag Milanovic's ISA8/16 implementation
+  by R. Belmont, based on Miodrag Milanovic's ISA8/16 implementation
 
 ***************************************************************************/
 
@@ -46,10 +46,10 @@ public:
 
 	void raise_slot_irq();
 	void lower_slot_irq();
+	void slot_irq_w(int state);
 
 	void set_pds_slot(int slot) { m_slot = slot; }
 
-	// inline configuration
 	void set_nubus_tag(nubus_device *nubus, const char *slottag) { m_nubus = nubus; m_nubus_slottag = slottag; }
 
 protected:
@@ -73,21 +73,22 @@ public:
 	nubus_slot_device(const machine_config &mconfig, T &&tag, device_t *owner, const char *nbtag, U &&opts, const char *dflt)
 		: nubus_slot_device(mconfig, tag, owner, (u32)0)
 	{
-		option_reset();
-		opts(*this);
-		set_default_option(dflt);
+		set_options(std::forward<U>(opts), dflt, false);
 		set_nubus_slot(std::forward<T>(nbtag), tag);
 	}
 
-	nubus_slot_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	nubus_slot_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
 	// inline configuration
 	template <typename T>
 	void set_nubus_slot(T &&tag, const char *slottag)
 	{
 		m_nubus.set_tag(std::forward<T>(tag));
+		m_nubus_tag = tag;
 		m_nubus_slottag = slottag;
 	}
+
+	const char *get_nubus_bustag() { return m_nubus_tag; }
 
 protected:
 	nubus_slot_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock);
@@ -98,6 +99,7 @@ protected:
 
 	// configuration
 	required_device<nubus_device> m_nubus;
+	const char *m_nubus_tag;
 	const char *m_nubus_slottag;
 };
 
@@ -111,7 +113,7 @@ class nubus_device : public device_t, public device_memory_interface
 {
 public:
 	// construction/destruction
-	nubus_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	nubus_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 	~nubus_device();
 
 	// inline configuration
@@ -126,8 +128,9 @@ public:
 	typedef enum NUBUS_MODE_T
 	{
 		NORMAL = 0,
-		QUADRA_DAFB,        // omits slot 9 space
+		QUADRA_DAFB,        // omits slot $9 space for DAFB
 		LC_PDS,             // takes slot $E space only, with A31 in both states, for V8 based systems
+		LC32_PDS,           // takes slots $C, $D, and $E for Sonora-based systems
 		SE30                // omits slot $E space for SE/30 internal video
 	} nubus_mode_t;
 	void set_bus_mode(nubus_mode_t newMode) { m_bus_mode = newMode; }
@@ -159,6 +162,13 @@ public:
 		space(AS_DATA).install_device(start, end, device, map);
 	}
 
+	/// \brief Installs a "free-form" map for LC PDS cards, which need to get outside of the box
+	template <typename T>
+	void install_lcpds_map(T &device, void (T::*map)(address_map &map))
+	{
+		space(AS_DATA).install_device(0x0000'0000, 0xffff'ffff, device, map);
+	}
+
 	void set_irq_line(int slot, int state);
 	void set_address_mask(u32 mask) { m_addr_mask = mask; }
 
@@ -179,6 +189,8 @@ protected:
 
 	template <u32 Base> u32 bus_memory_r(offs_t offset, u32 mem_mask);
 	template <u32 Base> void bus_memory_w(offs_t offset, u32 data, u32 mem_mask);
+	template <u32 Base> u32 host_memory_r(offs_t offset, u32 mem_mask);
+	template <u32 Base> void host_memory_w(offs_t offset, u32 data, u32 mem_mask);
 
 	// internal state
 	required_address_space m_space;
@@ -208,6 +220,18 @@ inline void device_nubus_card_interface::lower_slot_irq()
 	nubus().set_irq_line(m_slot, CLEAR_LINE);
 }
 
+inline void device_nubus_card_interface::slot_irq_w(int state)
+{
+	if (state)
+	{
+		nubus().set_irq_line(m_slot, ASSERT_LINE);
+	}
+	else
+	{
+		nubus().set_irq_line(m_slot, CLEAR_LINE);
+	}
+}
+
 // device type definition
 DECLARE_DEVICE_TYPE(NUBUS, nubus_device)
 
@@ -215,7 +239,7 @@ DECLARE_DEVICE_TYPE(MACSE30_PDS_BUS, se30_pds_bus_device);
 class se30_pds_bus_device: public nubus_device
 {
 public:
-	se30_pds_bus_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
+	se30_pds_bus_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0)
 		: nubus_device(mconfig, MACSE30_PDS_BUS, tag, owner, clock),
 		m_internal_screen(*this, finder_base::DUMMY_TAG)
 	{

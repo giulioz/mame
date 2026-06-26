@@ -26,7 +26,7 @@ class konami573_cassette_slot_device : public device_t, public device_single_car
 	friend class konami573_cassette_interface;
 
 public:
-	konami573_cassette_slot_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
+	konami573_cassette_slot_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock = 0);
 
 	auto dsr_handler() { return m_dsr_handler.bind(); }
 
@@ -121,8 +121,6 @@ public:
 	virtual int read_line_adc083x_do() override;
 	virtual int read_line_adc083x_sars() override;
 	virtual void write_line_d5(int state) override;
-
-	double punchmania_inputs_callback(uint8_t input);
 
 protected:
 	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;

@@ -149,6 +149,7 @@ Stephh's notes (based on the games M68000 code and some tests) :
 #include "video/tmap038.h"
 
 #include "emupal.h"
+#include "input.h" // for video debug keys
 #include "screen.h"
 #include "speaker.h"
 
@@ -390,23 +391,23 @@ u32 mcatadv_state::screen_update(screen_device &screen, bitmap_ind16 &bitmap, co
 
 
 	LOGROWSCROLL("%02x %02x %02x %02x",
-		m_tilemap[0]->rowscroll_en(),
-		m_tilemap[0]->rowselect_en(),
-		m_tilemap[1]->rowscroll_en(),
-		m_tilemap[1]->rowselect_en());
+			m_tilemap[0]->rowscroll_en(),
+			m_tilemap[0]->rowselect_en(),
+			m_tilemap[1]->rowscroll_en(),
+			m_tilemap[1]->rowselect_en());
 
 
 	for (int i = 0; i <= 3; i++)
 	{
 	#ifdef MAME_DEBUG
-			if (!machine().input().code_pressed(KEYCODE_Q))
+		if (!machine().input().code_pressed(KEYCODE_Q))
 	#endif
-				draw_tilemap_part(screen, 0, i | 0x8, bitmap, cliprect);
+			draw_tilemap_part(screen, 0, i | 0x8, bitmap, cliprect);
 
 	#ifdef MAME_DEBUG
-			if (!machine().input().code_pressed(KEYCODE_W))
+		if (!machine().input().code_pressed(KEYCODE_W))
 	#endif
-				draw_tilemap_part(screen, 1, i | 0x8, bitmap, cliprect);
+			draw_tilemap_part(screen, 1, i | 0x8, bitmap, cliprect);
 	}
 
 	auto profile = g_profiler.start(PROFILER_USER1);
@@ -910,6 +911,7 @@ ROM_START( nostj )
 	ROM_LOAD( "nossn-00.u53", 0x00000, 0x100000, CRC(3bd1bcbc) SHA1(1bcad43792e985402db4eca122676c2c555f3313) )
 ROM_END
 
+// 노스트라담스 예언 (Nostradamus Yeeon -> Nostradamus Prophecy)
 ROM_START( nostk )
 	ROM_REGION( 0x100000, "maincpu", 0 ) // M68000
 	ROM_LOAD16_BYTE( "nos-pe-t.u30", 0x00000, 0x80000, CRC(bee5fbc8) SHA1(a8361fa004bb31471f973ece51a9a87b9f3438ab) )
@@ -946,4 +948,4 @@ GAME( 1993, mcatadvj, mcatadv, mcatadv, mcatadv, mcatadv_state, empty_init, ROT0
 GAME( 1993, catt,     mcatadv, mcatadv, mcatadv, mcatadv_state, empty_init, ROT0,   "Wintechno", "Catt (Japan)",                  MACHINE_NO_COCKTAIL | MACHINE_SUPPORTS_SAVE )
 GAME( 1993, nost,     0,       nost,    nost,    mcatadv_state, empty_init, ROT270, "Face",      "Nostradamus",                   MACHINE_NO_COCKTAIL | MACHINE_SUPPORTS_SAVE )
 GAME( 1993, nostj,    nost,    nost,    nost,    mcatadv_state, empty_init, ROT270, "Face",      "Nostradamus (Japan)",           MACHINE_NO_COCKTAIL | MACHINE_SUPPORTS_SAVE )
-GAME( 1993, nostk,    nost,    nost,    nost,    mcatadv_state, empty_init, ROT270, "Face",      "Nostradamus (Korea)",           MACHINE_NO_COCKTAIL | MACHINE_SUPPORTS_SAVE )
+GAME( 1993, nostk,    nost,    nost,    nost,    mcatadv_state, empty_init, ROT270, "Face",      "Nostradamus Yeeon (Korea)",     MACHINE_NO_COCKTAIL | MACHINE_SUPPORTS_SAVE )

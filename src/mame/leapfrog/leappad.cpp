@@ -94,9 +94,9 @@
 
 #include "emu.h"
 
-#include "bus/generic/slot.h"
 #include "bus/generic/carts.h"
-#include "cpu/mcs51/mcs51.h"
+#include "bus/generic/slot.h"
+#include "cpu/mcs51/i8052.h"
 
 #include "screen.h"
 #include "softlist_dev.h"
@@ -115,9 +115,9 @@ public:
 		, m_cart_region(nullptr)
 	{ }
 
-	void leapfrog_leappad(machine_config &config);
-	void leapfrog_mfleappad(machine_config &config);
-	void leapfrog_ltleappad(machine_config &config);
+	void leapfrog_leappad(machine_config &config) ATTR_COLD;
+	void leapfrog_mfleappad(machine_config &config) ATTR_COLD;
+	void leapfrog_ltleappad(machine_config &config) ATTR_COLD;
 
 protected:
 	virtual void machine_start() override ATTR_COLD;
@@ -174,9 +174,9 @@ INPUT_PORTS_END
 
 void leapfrog_leappad_state::leapfrog_leappad(machine_config &config)
 {
-	I8032(config, m_maincpu, 96000000/10); //  LeapPad Leapfrog 05-9-01 FS80A363  (which exact type is it?)
+	I8032(config, m_maincpu, 96'000'000 / 10); //  LeapPad Leapfrog 05-9-01 FS80A363  (which exact type is it?)
 	m_maincpu->set_addrmap(AS_PROGRAM, &leapfrog_leappad_state::prog_map);
-	m_maincpu->set_addrmap(AS_IO, &leapfrog_leappad_state::ext_map);
+	m_maincpu->set_addrmap(AS_DATA, &leapfrog_leappad_state::ext_map);
 
 	// screenless
 
@@ -189,9 +189,9 @@ void leapfrog_leappad_state::leapfrog_leappad(machine_config &config)
 
 void leapfrog_leappad_state::leapfrog_mfleappad(machine_config &config)
 {
-	I8032(config, m_maincpu, 96000000/10); //  LeapPad Leapfrog 05-9-01 FS80A363  (which exact type is it?)
+	I8032(config, m_maincpu, 96'000'000 / 10); //  LeapPad Leapfrog 05-9-01 FS80A363  (which exact type is it?)
 	m_maincpu->set_addrmap(AS_PROGRAM, &leapfrog_leappad_state::prog_map);
-	m_maincpu->set_addrmap(AS_IO, &leapfrog_leappad_state::ext_map);
+	m_maincpu->set_addrmap(AS_DATA, &leapfrog_leappad_state::ext_map);
 
 	// screenless
 
@@ -204,9 +204,9 @@ void leapfrog_leappad_state::leapfrog_mfleappad(machine_config &config)
 
 void leapfrog_leappad_state::leapfrog_ltleappad(machine_config &config)
 {
-	I8032(config, m_maincpu, 96000000/10); // (which exact type is it?)
+	I8032(config, m_maincpu, 96'000'000 / 10); // (which exact type is it?)
 	m_maincpu->set_addrmap(AS_PROGRAM, &leapfrog_leappad_state::prog_map);
-	m_maincpu->set_addrmap(AS_IO, &leapfrog_leappad_state::ext_map);
+	m_maincpu->set_addrmap(AS_DATA, &leapfrog_leappad_state::ext_map);
 
 	// screenless
 

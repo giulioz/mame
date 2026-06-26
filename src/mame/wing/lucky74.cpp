@@ -657,99 +657,6 @@
 *****************************************************************************************
 
 
-    DRIVER UPDATES:
-
-
-    [2013-01-15]
-
-    - Added another set of Lucky'74 (reclassified as bootleg set 2). This one has
-      a different payrate table that match 100% the one from the manual...
-
-
-    [2012-06-05]
-
-    - Added Exciting Black Jack. The first SEGA satellite system supported.
-      (the CPU box binary still need to be extracted)
-    - Added an anal ASCII PCB layout.
-    - Added more findings and technical notes.
-
-
-    [2008-10-07]
-
-    - Improved the button-lamps layout to be more realistic.
-
-
-    [2008-08-08]
-
-    - Reverse engineering of custom IC's 06B49P, 06B53P & 09R81P.
-    - Mapped the missing 3x SN76489.
-    - Measured and traced all clocks on the board.
-    - Measured and fixed the interrupt system.
-    - Implemented timings/clocks from custom 06B49P.
-    - Added sound support. All regular game sounds/musics are working.
-    - Implemented the ADPCM samples system through 09R81P + M5205 emulation.
-    - Added pinouts and technical notes about custom IC's 06B49P, 06B53P & 09R81P.
-    - Added flip screen mode.
-    - Inverted the order of double-up difficult DIP switches.
-      (Seems to be the opposite of the indicated in the instruction sheet).
-    - Changed 'Key In' to be active LOW instead of HIGH (checked in the PCB).
-    - Complete memory map and ports scheme.
-    - Created handlers for USART port and co-processor communication.
-    - Renamed the sets accordingly.
-    - Updated all notes.
-    - Cleaned-up the driver.
-
-
-    [2008-07-28]
-
-    - Pre-defined CPU and SND clocks.
-    - Switched the color system to RESNET calculations.
-    - Completed the remaining DIP switches.
-    - Added lamps support. Created a layout to show them.
-    - Changes on the interrupt system (need to be verified on the PCB).
-    - Renamed the graphics regions to more descriptive names.
-    - Corrected the manufacturer's name.
-    - Split the driver to driver + video.
-    - Updated technical notes.
-
-
-    [2008-07-03]
-
-    - Initial release.
-    - Set the proper screen size.
-    - Decoded graphics.
-    - Decoded the dual-state color circuitry.
-    - Mapped the NVRAM, VRAM1-1, VRAM1-2, VRAM2-1 and VRAM2-2 properly.
-    - Emulated 2x PPI 8255 devices.
-    - Mapped the 4x DIP switches banks.
-    - Added PORT_DIPLOCATION to all DIP switches.
-    - Added DIP switches for 'Bet Max' and 'Limit'.
-    - Added DIP switches for 'Jackpot' and 'Pay Table'.
-    - Added the Memory Reset Switch.
-    - Added the 2nd video & color RAM.
-    - Added a 2nd tilemap for background graphics.
-    - Simplified the graphics banks.
-    - Fixed colors for foreground graphics.
-    - Fixed visible area to show the top of background graphics.
-    - Finally fixed colors for background graphics.
-    - Added all coinage DIP switches.
-    - Mapped all remaining inputs (service and player buttons).
-    - Added pulse time limitation to coins A, B & C.
-    - Switched to use 4x 8255 in replace of 2x 82c255 for I/O.
-    - Created a handler to feed the z80 port0 requests.
-    - Promoted lucky74s to 'working' state.
-    - Added an alternate set, but the program ROM looks like incomplete,
-      protected or just a bad dump.
-    - Parent/clone relationship.
-    - Added technical notes.
-
-    From Dox:
-
-    - Hooked interrupts.
-    - Hooked the AY8910 and therefore the NMI trigger.
-    - Changed the input "Key In" to active high.
-
-
     TODO:
 
     - USART comm.
@@ -797,8 +704,6 @@
 
 void lucky74_state::machine_start()
 {
-	m_lamps.resolve();
-
 	save_item(NAME(m_ym2149_portb));
 	save_item(NAME(m_usart_8251));
 	save_item(NAME(m_copro_sm7831));
@@ -1065,7 +970,7 @@ static INPUT_PORTS_START( lucky74 )
 	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_GAMBLE_KEYIN )
 	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_COIN2 )    PORT_IMPULSE(2)   // Coin B
 	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_COIN3 )    PORT_IMPULSE(2)   // Coin C
-	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_GAMBLE_SERVICE )  PORT_NAME("Service")
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_SERVICE1 )  PORT_NAME("Service")
 	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_UNKNOWN )
 	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNKNOWN )
 	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN )
@@ -1132,22 +1037,22 @@ static INPUT_PORTS_START( lucky74 )
 	PORT_DIPSETTING(    0x0f, "A: 1 Coin/10 Credits; B: 1 Coin/50 Credits;  R: 1 Pulse/100 Credits" )
 	// DIPs 5-8 handle the Coin C coinage
 	PORT_DIPNAME( 0xf0, 0xf0, "Coinage C" )             PORT_DIPLOCATION("DSW2:5,6,7,8")
-	PORT_DIPSETTING(    0x00, "10 Coins/1 Credit" )
+	PORT_DIPSETTING(    0x00, DEF_STR( 10C_1C ) )
 	PORT_DIPSETTING(    0x10, DEF_STR( 5C_1C ) )
 	PORT_DIPSETTING(    0x30, DEF_STR( 4C_1C ) )
 	PORT_DIPSETTING(    0x40, DEF_STR( 3C_1C ) )
-	PORT_DIPSETTING(    0x20, "5 Coins/2 Credits" )     // 2.5 coins per credit
+	PORT_DIPSETTING(    0x20, DEF_STR( 5C_2C ) )
 	PORT_DIPSETTING(    0x50, DEF_STR( 2C_1C ) )
 	PORT_DIPSETTING(    0x70, DEF_STR( 1C_1C ) )
 	PORT_DIPSETTING(    0x60, DEF_STR( 2C_3C ) )
 	PORT_DIPSETTING(    0x80, DEF_STR( 1C_2C ) )
 	PORT_DIPSETTING(    0x90, DEF_STR( 1C_3C ) )
 	PORT_DIPSETTING(    0xa0, DEF_STR( 1C_5C ) )
-	PORT_DIPSETTING(    0xb0, "1 Coin/10 Credits" )
-	PORT_DIPSETTING(    0xc0, "1 Coin/20 Credits" )
-	PORT_DIPSETTING(    0xd0, "1 Coin/25 Credits" )
+	PORT_DIPSETTING(    0xb0, DEF_STR( 1C_10C ) )
+	PORT_DIPSETTING(    0xc0, DEF_STR( 1C_20C ) )
+	PORT_DIPSETTING(    0xd0, DEF_STR( 1C_25C ) )
 	PORT_DIPSETTING(    0xe0, "1 Coin/40 Credits" )
-	PORT_DIPSETTING(    0xf0, "1 Coin/50 Credits" )
+	PORT_DIPSETTING(    0xf0, DEF_STR( 1C_50C ) )
 
 	PORT_START("DSW3")
 	PORT_DIPNAME( 0x01, 0x00, "Bet Max" )                       PORT_DIPLOCATION("DSW3:1")

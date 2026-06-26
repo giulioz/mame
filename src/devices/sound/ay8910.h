@@ -5,8 +5,6 @@
 
 #pragma once
 
-#define ALL_8910_CHANNELS -1
-
 /* Internal resistance at Volume level 7. */
 
 #define AY8910_INTERNAL_RESISTANCE  (356)
@@ -72,7 +70,7 @@ public:
 	};
 
 	// construction/destruction
-	ay8910_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	ay8910_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
 	// configuration helpers
 	void set_flags(int flags) { m_flags = flags; }
@@ -108,7 +106,6 @@ public:
 	// bc1=a0, bc2=a1
 	void write_bc1_bc2(offs_t offset, u8 data);
 
-	void set_volume(int channel,int volume);
 	void ay_set_clock(int clock);
 
 	struct ay_ym_param
@@ -377,7 +374,7 @@ DECLARE_DEVICE_TYPE(AY8930, ay8930_device)
 class ym2149_device : public ay8910_device
 {
 public:
-	ym2149_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	ym2149_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 };
 
 DECLARE_DEVICE_TYPE(YM2149, ym2149_device)

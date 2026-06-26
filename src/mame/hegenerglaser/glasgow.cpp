@@ -41,8 +41,8 @@ press INFO, C, then Right 3 times.
 
 #include "emu.h"
 
-#include "mmboard.h"
-#include "mmdisplay1.h"
+#include "mboard.h"
+#include "mdisplay1.h"
 
 #include "cpu/m68000/m68000.h"
 #include "sound/dac.h"
@@ -180,8 +180,8 @@ void glasgow_state::control_w(u8 data)
 	// d0: speaker out
 	m_dac->write(BIT(data, 0));
 
-	// d7: lcd strobe
-	m_display->strobe_w(BIT(data, 7));
+	// d7: lcd common
+	m_display->common_w(BIT(data, 7));
 }
 
 u8 glasgow_state::keys_r()

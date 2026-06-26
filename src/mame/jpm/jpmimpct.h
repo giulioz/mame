@@ -15,16 +15,14 @@
 #include "machine/i8255.h"
 #include "machine/mc68681.h"
 #include "machine/meters.h"
-#include "machine/roc10937.h"
 #include "machine/steppers.h"
 #include "machine/timer.h"
 #include "sound/upd7759.h"
 #include "video/bt47x.h"
+#include "video/roc10937.h"
 
 #include "diserial.h"
 #include "emupal.h"
-
-
 
 
 class jpmtouch_device : public device_t,
@@ -74,15 +72,15 @@ public:
 		, m_duart(*this, "main_duart")
 		, m_vfd(*this, "vfd")
 		, m_upd7759(*this, "upd")
-		, m_reel(*this, "reel%u", 0U)
+		, m_reel(*this, "reel%u", 1U)
 		, m_lamp_output(*this, "lamp%u", 0U)
 		, m_pwrled(*this, "PWRLED")
 		, m_statled(*this, "STATLED")
 	{ }
 
-	void impact_nonvideo(machine_config &config);
-	void impact_nonvideo_altreels(machine_config &config);
-	void impact_nonvideo_disc(machine_config &config);
+	void impact_nonvideo(machine_config &config) ATTR_COLD;
+	void impact_nonvideo_altreels(machine_config &config) ATTR_COLD;
+	void impact_nonvideo_disc(machine_config &config) ATTR_COLD;
 
 
 	DECLARE_INPUT_CHANGED_MEMBER(coin_changed);
@@ -95,9 +93,9 @@ public:
 	int hopper_c_7_r();
 
 protected:
-	void impact_nonvideo_base(machine_config &config);
+	void impact_nonvideo_base(machine_config &config) ATTR_COLD;
 
-	void base(machine_config &config);
+	void base(machine_config &config) ATTR_COLD;
 
 	required_device<cpu_device> m_maincpu;
 	required_device<meters_device> m_meters;
@@ -121,6 +119,7 @@ protected:
 	TIMER_DEVICE_CALLBACK_MEMBER(duart_set_ip5);
 
 	virtual void update_irqs();
+
 protected:
 	virtual void machine_start() override ATTR_COLD;
 	virtual void machine_reset() override ATTR_COLD;
@@ -149,8 +148,6 @@ private:
 	void lamps_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
 	void digits_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
 	void lampstrobe_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
-
-
 
 	void duart_irq_handler(int state);
 	void impact_non_video_map(address_map &map) ATTR_COLD;
@@ -192,8 +189,8 @@ public:
 	{
 	}
 
-	void impact_video(machine_config &config);
-	void impact_video_touch(machine_config &config);
+	void impact_video(machine_config &config) ATTR_COLD;
+	void impact_video_touch(machine_config &config) ATTR_COLD;
 
 	DECLARE_INPUT_CHANGED_MEMBER(touch_port_changed);
 

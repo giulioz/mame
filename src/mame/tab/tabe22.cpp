@@ -242,7 +242,6 @@ void printer_devices(device_slot_interface &device)
 }
 
 static DEVICE_INPUT_DEFAULTS_START( printer_defaults )
-	DEVICE_INPUT_DEFAULTS( "RS232_TXBAUD", 0xff, RS232_BAUD_4800 )
 	DEVICE_INPUT_DEFAULTS( "RS232_RXBAUD", 0xff, RS232_BAUD_4800 )
 	DEVICE_INPUT_DEFAULTS( "RS232_DATABITS", 0xff, RS232_DATABITS_7 )
 	DEVICE_INPUT_DEFAULTS( "RS232_PARITY", 0xff, RS232_PARITY_ODD )
@@ -255,7 +254,7 @@ void tabe22_state::tabe22(machine_config &config)
 	m_maincpu->set_addrmap(AS_PROGRAM, &tabe22_state::mem_map);
 	m_maincpu->set_addrmap(AS_IO, &tabe22_state::io_map);
 
-	ADDRESS_MAP_BANK(config, m_vram_bank, 0);
+	ADDRESS_MAP_BANK(config, m_vram_bank);
 	m_vram_bank->set_map(&tabe22_state::vram_map);
 	m_vram_bank->set_addr_width(13);
 	m_vram_bank->set_data_width(8);

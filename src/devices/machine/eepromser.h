@@ -27,6 +27,7 @@ public:
 	// inline configuration helpers
 	void enable_streaming(bool enable) { m_streaming_enabled = enable; }
 	void enable_output_on_falling_clock(bool enable) { m_output_on_falling_clock_enabled = enable; }
+	void set_do_tristate(bool value) { m_do_tristate = value; }
 	auto do_callback() { return m_do_cb.bind(); }
 
 protected:
@@ -90,11 +91,11 @@ protected:
 	virtual void parse_command_and_address() = 0;
 	virtual void execute_command();
 
-
 	// configuration state
 	uint8_t         m_command_address_bits;     // number of address bits in a command
 	bool            m_streaming_enabled;        // true if streaming is enabled
 	bool            m_output_on_falling_clock_enabled;  // true if the output pin is updated on the falling edge of the clock
+	bool            m_do_tristate;              // tri-state value of DO line
 	devcb_write_line m_do_cb;                   // callback to push state of DO line
 
 	// runtime state
@@ -173,8 +174,8 @@ protected:
 
 class eeprom_serial_x24c44_device : public eeprom_serial_base_device
 {
-		//async recall not implemented
-		//async store not implemented
+	//async recall not implemented
+	//async store not implemented
 public:
 	// read handlers
 	int do_read();          // DO

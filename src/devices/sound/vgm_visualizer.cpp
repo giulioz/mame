@@ -16,9 +16,11 @@
 #include "wdlfft/fft.h"
 
 #include <cmath>
+#include <numbers>
 
 constexpr int vgmviz_device::SCREEN_HEIGHT;
 
+// TODO: determine whether C++20's std::lerp can be used in place of this function
 constexpr float lerp(float a, float b, float f)
 {
 	return (b - a) * f + a;
@@ -89,7 +91,7 @@ void vgmviz_device::device_start()
 
 void vgmviz_device::fill_window()
 {
-	float window_pos_delta = (M_PI * 2) / FFT_LENGTH;
+	float window_pos_delta = (std::numbers::pi_v<float> * 2) / FFT_LENGTH;
 	float power = 0;
 	for (int i = 0; i < (FFT_LENGTH / 2) + 1; i++)
 	{
@@ -739,7 +741,7 @@ void vgmviz_device::draw_waveform(bitmap_rgb32 &bitmap)
 		bitmap.pix(CHANNEL_HEIGHT + 1 + CHANNEL_CENTER, x) = MED_GRAY;
 
 		const float raw_l = m_audio_buf[1 - m_audio_fill_index][0][((int)m_history_length + 1 + x) % FFT_LENGTH];
-		const int sample_l = (int)((raw_l - 0.5f) * (CHANNEL_HEIGHT - 1));
+		const int sample_l = std::clamp((int)((raw_l - 0.5f) * (CHANNEL_HEIGHT - 1)), -CHANNEL_CENTER, CHANNEL_CENTER);
 		const int dy_l = (sample_l == 0) ? 0 : ((sample_l < 0) ? -1 : 1);
 		const int endy_l = CHANNEL_CENTER;
 		int y = endy_l - sample_l;
@@ -750,7 +752,7 @@ void vgmviz_device::draw_waveform(bitmap_rgb32 &bitmap)
 		} while(y != endy_l);
 
 		const float raw_r = m_audio_buf[1 - m_audio_fill_index][1][((int)m_history_length + 1 + x) % FFT_LENGTH];
-		const int sample_r = (int)((raw_r - 0.5f) * (CHANNEL_HEIGHT - 1));
+		const int sample_r = std::clamp((int)((raw_r - 0.5f) * (CHANNEL_HEIGHT - 1)), -CHANNEL_CENTER, CHANNEL_CENTER);
 		const int dy_r = (sample_r == 0) ? 0 : ((sample_r < 0) ? -1 : 1);
 		const int endy_r = CHANNEL_HEIGHT + 1 + CHANNEL_CENTER;
 		y = endy_r - sample_r;

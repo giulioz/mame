@@ -78,6 +78,9 @@
 
 #include "bus/nscsi/cd.h"
 #include "bus/nscsi/devices.h"
+#include "bus/nubus/nubus.h"
+#include "bus/nubus/pwrbkduo/pwrbkduo.h"
+#include "bus/nubus/pwrbkduo/cards.h"
 #include "cpu/m6805/m68hc05pge.h"
 #include "cpu/m68000/m68030.h"
 #include "cpu/m68000/m68040.h"
@@ -103,12 +106,13 @@ public:
 		m_pmu(*this, "pge"),
 		m_msc(*this, "msc"),
 		m_dfac(*this, "dfac"),
-		m_ncr5380(*this, "scsi:7:ncr5380"),
+		m_ncr5380(*this, "ncr5380"),
 		m_scsihelp(*this, "scsihelp"),
 		m_ram(*this, RAM_TAG),
 		m_gsc(*this, "gsc"),
 		m_csc(*this, "csc"),
 		m_scc(*this, "scc"),
+		m_dockslot(*this, "duobus"),
 		m_battserial(*this, "ds2400"),
 		m_mouse0(*this, "MOUSE0"),
 		m_mouse1(*this, "MOUSE1"),
@@ -154,6 +158,7 @@ private:
 	optional_device<gsc_device> m_gsc;
 	optional_device<csc_device> m_csc;
 	required_device<z80scc_device> m_scc;
+	required_device<pwrbkduo_device> m_dockslot;
 	required_device<ds2401_device> m_battserial;
 	required_ioport m_mouse0, m_mouse1, m_mouse2;
 	required_ioport_array<8> m_keys;
@@ -211,7 +216,7 @@ private:
 
 void macpbmsc_state::machine_start()
 {
-	m_msc->set_ram_info((u32 *)m_ram->pointer(), m_ram->size());
+	m_msc->set_ram_info(m_ram->pointer<u32>(), m_ram->size());
 
 	m_ca1_data = 0;
 
@@ -407,7 +412,7 @@ void macpbmsc_state::pmu_portc_w(u8 data)
 // bit 7 = 1 for second mouse button NOT pressed
 u8 macpbmsc_state::pmu_portd_r()
 {
-	return (1 << 7) | (1 << 6) | (1 << 4);   // no docking station, US keyboard
+	return (1 << 7) | (m_dockslot->is_slot_empty() ? (1 << 6) : 0) | (1 << 4);   // US keyboard, get dock presence from slot
 }
 
 // bit 1 = screen power on/off
@@ -453,13 +458,13 @@ void macpbmsc_state::pmu_porte_w(u8 data)
 	m_last_porte = data;
 }
 
-// bit 0 = Power (1 = off, 0 = on)
+// bit 1 = Power (1 = off, 0 = on)
 // bit 2 = 1 for +5V present when input, cause level 1 interrupt when output (VIA CB2?)
 // bit 3 = clamshell open (1) or closed (0)
 // bit 6 = /PMREQ
 u8 macpbmsc_state::pmu_portf_r()
 {
-	u8 retval = (1 << 2);       // indicate +5V present
+	u8 retval = (1 << 1) | (1 << 2);       // indicate +5V present and PFW rail powered up
 	retval |= (1 << 3);         // indicate clamshell open
 	retval |= (m_msc->get_pmu_req() << 6);
 	return retval;
@@ -494,11 +499,11 @@ void macpbmsc_state::pmu_portf_w(u8 data)
 {
 	if (!BIT(data, 2) && BIT(m_last_portf, 2))
 	{
-		m_msc->cb1_int_hack(ASSERT_LINE);
+		m_msc->pmu_int(ASSERT_LINE);
 	}
 	else if (BIT(data, 2) && !BIT(m_last_portf, 2))
 	{
-		m_msc->cb1_int_hack(CLEAR_LINE);
+		m_msc->pmu_int(CLEAR_LINE);
 	}
 
 	m_last_portf = data;
@@ -510,7 +515,7 @@ void macpbmsc_state::pmu_portf_w(u8 data)
 // bit 6 = charger present (1 = present)
 u8 macpbmsc_state::pmu_portg_r()
 {
-	return (1 << 6); // indicate we're on a charger
+	return (1 << 6) | (1 << 3); // indicate we're on a charger and dock is powered up
 }
 
 // bit 1 set turns on the main battery power
@@ -810,7 +815,7 @@ void macpbmsc_state::macpd210(machine_config &config)
 	GSC(config, m_gsc, 31.3344_MHz_XTAL);
 	m_gsc->set_panel_id(6);
 
-	NSCSI_BUS(config, "scsi");
+	auto &scsi(NSCSI_BUS(config, "scsi"));
 	NSCSI_CONNECTOR(config, "scsi:0", mac_scsi_devices, "harddisk");
 	NSCSI_CONNECTOR(config, "scsi:1", mac_scsi_devices, nullptr);
 	NSCSI_CONNECTOR(config, "scsi:2", mac_scsi_devices, nullptr);
@@ -823,11 +828,11 @@ void macpbmsc_state::macpd210(machine_config &config)
 	NSCSI_CONNECTOR(config, "scsi:4", mac_scsi_devices, nullptr);
 	NSCSI_CONNECTOR(config, "scsi:5", mac_scsi_devices, nullptr);
 	NSCSI_CONNECTOR(config, "scsi:6", mac_scsi_devices, nullptr);
-	NSCSI_CONNECTOR(config, "scsi:7").option_set("ncr5380", NCR53C80).machine_config([this](device_t *device) {
-		ncr53c80_device &adapter = downcast<ncr53c80_device &>(*device);
-		adapter.irq_handler().set(m_msc, FUNC(msc_device::scsi_irq_w));
-		adapter.drq_handler().set(m_scsihelp, FUNC(mac_scsi_helper_device::drq_w));
-	});
+
+	NCR53C80(config, m_ncr5380);
+	scsi.set_external_device(7, m_ncr5380);
+	m_ncr5380->irq_handler().set(m_msc, FUNC(msc_device::scsi_irq_w));
+	m_ncr5380->drq_handler().set(m_scsihelp, FUNC(mac_scsi_helper_device::drq_w));
 
 	MAC_SCSI_HELPER(config, m_scsihelp);
 	m_scsihelp->scsi_read_callback().set(m_ncr5380, FUNC(ncr53c80_device::read));
@@ -841,6 +846,13 @@ void macpbmsc_state::macpd210(machine_config &config)
 	m_scc->out_int_callback().set(m_msc, FUNC(msc_device::scc_irq_w));
 
 	DS2401(config, m_battserial, 0); // actually DS2400, but 2400/2401 are compatible
+
+	PWRBKDUO(config, m_dockslot);
+	m_dockslot->set_space(m_maincpu, AS_PROGRAM);
+	m_dockslot->set_maincpu_tag("maincpu");
+	m_dockslot->set_screen_tag(":gsc:screen");
+	m_dockslot->irq_callback().set(m_msc, FUNC(msc_device::slot2_irq_w));
+	PWRBKDUO_SLOT(config, "dock", "duobus", pwrbkduo_cards, nullptr);
 
 	SPEAKER(config, "speaker", 2).front();
 
@@ -876,6 +888,8 @@ void macpbmsc_state::macpd270c(machine_config &config)
 	m_csc->write_irq().set(m_msc, FUNC(msc_device::lcd_irq_w));
 	m_csc->set_panel_id(0);
 
+	m_dockslot->set_screen_tag(":csc:screen");
+
 	m_maincpu->set_fpu_enable(true);
 	m_maincpu->set_addrmap(AS_PROGRAM, &macpbmsc_state::macpd270c_map);
 }
@@ -886,7 +900,7 @@ void macpbmsc_state::macpd280(machine_config &config)
 
 	m_csc->set_panel_id(4);
 
-	M68040(config.replace(), m_maincpu, 33_MHz_XTAL/2);
+	M68LC040(config.replace(), m_maincpu, 33_MHz_XTAL/2);
 	m_maincpu->set_addrmap(AS_PROGRAM, &macpbmsc_state::macpd280_map);
 }
 

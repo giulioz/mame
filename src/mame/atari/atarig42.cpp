@@ -27,8 +27,10 @@
 
 #include "emu.h"
 #include "atarig42.h"
+
 #include "machine/eeprompar.h"
 #include "machine/watchdog.h"
+
 #include "emupal.h"
 #include "speaker.h"
 
@@ -587,7 +589,7 @@ void atarig42_state::atarig42(machine_config &config)
 	/* sound hardware */
 	SPEAKER(config, "mono").front_center();
 
-	ATARI_JSA_III(config, m_jsa, 0);
+	ATARI_JSA_III(config, m_jsa);
 	m_jsa->main_int_cb().set_inputline(m_maincpu, M68K_IRQ_5);
 	m_jsa->test_read_cb().set_ioport("IN2").bit(6);
 	m_jsa->add_route(ALL_OUTPUTS, "mono", 0.8);
@@ -596,23 +598,23 @@ void atarig42_state::atarig42(machine_config &config)
 void atarig42_0x200_state::atarig42_0x200(machine_config &config)
 {
 	atarig42(config);
-	ATARI_RLE_OBJECTS(config, m_rle, 0, modesc_0x200);
+	ATARI_RLE_OBJECTS(config, m_rle, modesc_0x200);
 
 	ADC0809(config, m_adc, 14.318181_MHz_XTAL / 16);
 	m_adc->in_callback<0>().set_ioport("A2D0");
 	m_adc->in_callback<1>().set_ioport("A2D1");
 
 	/* ASIC65 */
-	ASIC65(config, m_asic65, 0, ASIC65_ROMBASED);
+	ASIC65(config, m_asic65, ASIC65_ROMBASED);
 }
 
 void atarig42_0x400_state::atarig42_0x400(machine_config &config)
 {
 	atarig42(config);
-	ATARI_RLE_OBJECTS(config, m_rle, 0, modesc_0x400);
+	ATARI_RLE_OBJECTS(config, m_rle, modesc_0x400);
 
 	/* ASIC65 */
-	ASIC65(config, m_asic65, 0, ASIC65_GUARDIANS);
+	ASIC65(config, m_asic65, ASIC65_GUARDIANS);
 }
 
 
@@ -932,7 +934,7 @@ void atarig42_0x200_state::init_roadriot()
 
 	address_space &main = m_maincpu->space(AS_PROGRAM);
 	main.install_readwrite_handler(0x000000, 0x07ffff, read16sm_delegate(*this, FUNC(atarig42_0x200_state::roadriot_sloop_data_r)), write16sm_delegate(*this, FUNC(atarig42_0x200_state::roadriot_sloop_data_w)));
-	m_sloop_base = (uint16_t *)memregion("maincpu")->base();
+	m_sloop_base = &memregion("maincpu")->as_u16();
 
 	/*
 	Road Riot color MUX
@@ -967,13 +969,13 @@ void atarig42_0x400_state::init_guardian()
 {
 	m_playfield_base = 0x000;
 
-	/* it looks like they jsr to $80000 as some kind of protection */
-	/* put an RTS there so we don't die */
-	*(uint16_t *)&memregion("maincpu")->base()[0x80000] = 0x4E75;
+	// it looks like they jsr to $80000 as some kind of protection
+	// put an RTS there so we don't die
+	memregion("maincpu")->as_u16(0x80000 / 2) = 0x4e75;
 
 	address_space &main = m_maincpu->space(AS_PROGRAM);
 	main.install_readwrite_handler(0x000000, 0x07ffff, read16sm_delegate(*this, FUNC(atarig42_0x400_state::guardians_sloop_data_r)), write16sm_delegate(*this, FUNC(atarig42_0x400_state::guardians_sloop_data_w)));
-	m_sloop_base = (uint16_t *)memregion("maincpu")->base();
+	m_sloop_base = &memregion("maincpu")->as_u16();
 
 	/*
 	Guardians color MUX

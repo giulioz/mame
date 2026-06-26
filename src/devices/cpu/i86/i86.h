@@ -7,6 +7,8 @@
 
 #include <cpu/i386/i386dasm.h>
 
+#include "endianness.h"
+
 /////////////////////////////////////////////////////////////////
 
 DECLARE_DEVICE_TYPE(I8086, i8086_cpu_device)
@@ -213,10 +215,10 @@ protected:
 	inline void i_popf();
 
 	// sub implementations
-	inline uint32_t ADDB();
-	inline uint32_t ADDX();
-	inline uint32_t SUBB();
-	inline uint32_t SUBX();
+	inline uint32_t ADDB(uint8_t c = 0);
+	inline uint32_t ADDX(uint8_t c = 0);
+	inline uint32_t SUBB(uint8_t b = 0);
+	inline uint32_t SUBX(uint8_t b = 0);
 	inline void ORB();
 	inline void ORW();
 	inline void ANDB();
@@ -282,6 +284,7 @@ protected:
 
 	uint16_t  m_ip;
 	uint16_t  m_prev_ip;
+	bool      m_io_stall = false;   // I/O wait-state (IOCHRDY) restart pending
 
 	int32_t   m_SignVal;
 	uint32_t  m_AuxVal, m_OverVal, m_ZeroVal, m_CarryVal, m_ParityVal; /* 0 or non-0 valued flags */
@@ -330,6 +333,7 @@ protected:
 	} m_Mod_RM;
 
 	uint8_t m_timing[200];
+	uint8_t m_ea_timing[200];
 	bool m_halt;
 
 	bool m_lock;
@@ -372,6 +376,7 @@ protected:
 	address_space_config m_extra_config;
 	address_space_config m_io_config;
 	static const uint8_t m_i8086_timing[200];
+	static const uint8_t m_i8086_ea_timing[200];
 	devcb_write_line m_out_if_func;
 	devcb_write32 m_esc_opcode_handler;
 	devcb_write32 m_esc_data_handler;

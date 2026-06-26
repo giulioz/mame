@@ -47,8 +47,8 @@ public:
 		m_tilegen(*this, "tilegen%u", 1U),
 		m_spritegen(*this, "spritegen"),
 		m_spriteram(*this, "spriteram"),
-		m_spriteram16(*this, "spriteram16", 0x800, ENDIANNESS_BIG) { }
-
+		m_spriteram16(*this, "spriteram16", 0x800, ENDIANNESS_BIG)
+	{ }
 
 	void actfancr(machine_config &config);
 
@@ -81,8 +81,8 @@ public:
 		actfancr_state(mconfig, type, tag),
 		m_p(*this, "P%u", 1U),
 		m_dsw(*this, "DSW%u", 1U),
-		m_system(*this, "SYSTEM") { }
-
+		m_system(*this, "SYSTEM")
+	{ }
 
 	void triothep(machine_config &config);
 
@@ -134,7 +134,7 @@ uint8_t triothep_state::control_r()
 		case 1: return m_p[1]->read();
 		case 2: return m_dsw[0]->read();
 		case 3: return m_dsw[1]->read();
-		case 4: return m_system->read();    // VBL
+		case 4: return m_system->read(); // VBL
 	}
 
 	return 0xff;
@@ -382,15 +382,15 @@ void actfancr_state::actfancr(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, "palette", gfx_actfan);
 	PALETTE(config, "palette").set_format(palette_device::xBGR_444, 768);
 
-	DECO_BAC06(config, m_tilegen[0], 0);
+	DECO_BAC06(config, m_tilegen[0]);
 	m_tilegen[0]->set_gfx_region_wide(1, 1, 2);
 	m_tilegen[0]->set_gfxdecode_tag(m_gfxdecode);
 
-	DECO_BAC06(config, m_tilegen[1], 0);
+	DECO_BAC06(config, m_tilegen[1]);
 	m_tilegen[1]->set_gfx_region_wide(0, 0, 0);
 	m_tilegen[1]->set_gfxdecode_tag(m_gfxdecode);
 
-	DECO_MXC06(config, m_spritegen, 0, "palette", gfx_actfan_spr);
+	DECO_MXC06(config, m_spritegen, "palette", gfx_actfan_spr);
 
 	// sound hardware
 	SPEAKER(config, "mono").front_center();

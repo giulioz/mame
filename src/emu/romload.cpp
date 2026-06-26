@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cstdarg>
+#include <cstdio>
 #include <set>
 
 
@@ -598,6 +599,7 @@ void rom_load_manager::verify_length_and_hash(emu_file *file, std::string_view n
 	{
 		m_errorstring.append(string_format("%s WRONG LENGTH (expected: %08x found: %08x)\n", name, explength, actlength));
 		m_warnings++;
+		m_presentbad++;
 	}
 
 	if (hashes.flag(util::hash_collection::FLAG_NO_DUMP))
@@ -619,6 +621,7 @@ void rom_load_manager::verify_length_and_hash(emu_file *file, std::string_view n
 			m_errorstring.append(string_format("%s WRONG CHECKSUMS:\n", name));
 			dump_wrong_and_correct_checksums(hashes, all_acthashes);
 			m_warnings++;
+			m_presentbad++;
 		}
 		else if (hashes.flag(util::hash_collection::FLAG_BAD_DUMP))
 		{
@@ -946,7 +949,7 @@ void rom_load_manager::fill_rom_data(memory_region &region, const rom_entry *rom
 	u8 fill_byte = u8(strtol(romp->hashdata().c_str(), nullptr, 0));
 
 	// fill the data (filling value is stored in place of the hashdata)
-	if(skip != 0)
+	if (skip != 0)
 	{
 		for (int i = 0; i < numbytes; i+= skip + 1)
 			base[i] = fill_byte;
@@ -1210,6 +1213,7 @@ void rom_load_manager::process_disk_entries(
 				m_errorstring.append(string_format("%s WRONG CHECKSUMS:\n", filename));
 				dump_wrong_and_correct_checksums(hashes, acthashes);
 				m_warnings++;
+				m_presentbad++;
 			}
 			else if (hashes.flag(util::hash_collection::FLAG_BAD_DUMP))
 			{
@@ -1362,7 +1366,7 @@ void rom_load_manager::load_software_part_region(device_t &device, software_list
 
 	std::vector<const software_info *> parents;
 	std::vector<std::string> swsearch, disksearch;
-	const software_info *const swinfo = swlist.find(std::string(swname));
+	const software_info *const swinfo = swlist.find(swname);
 	if (swinfo)
 	{
 		// display a warning for unsupported software
@@ -1557,6 +1561,7 @@ void rom_load_manager::process_region_list()
 rom_load_manager::rom_load_manager(running_machine &machine)
 	: m_machine(machine)
 	, m_warnings(0)
+	, m_presentbad(0)
 	, m_knownbad(0)
 	, m_errors(0)
 	, m_romsloaded(0)

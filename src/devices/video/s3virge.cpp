@@ -435,7 +435,7 @@ void s3virge_vga_device::s3_define_video_mode()
 		svga.rgb24_en = 0;
 		svga.rgb32_en = 0;
 		// TODO: virgevx has upgraded RAMDAC
-		// (overhauls color modes for accomodating 1600x1200 resolutions)
+		// (overhauls color modes for accommodating 1600x1200 resolutions)
 		switch((s3.ext_misc_ctrl_2) >> 4)
 		{
 			case 0x01: svga.rgb8_en = 1; break;
@@ -789,6 +789,15 @@ uint32_t s3virge_vga_device::GetROP(uint8_t rop, uint32_t src, uint32_t dst, uin
 			break;
 		case 0x88:  // DSa
 			ret = dst & src;
+			break;
+		case 0xa0:  // DPa (win98se help tooltip borders)
+			ret = dst & pat;
+			break;
+		case 0xa5:  // PDxn (moving kana drawing window in jp win98se, keyboard 3rd option)
+			ret = ~(pat ^ dst);
+			break;
+		case 0xaa:  // D
+			ret = dst;
 			break;
 		case 0xb8:  // PSDPxax
 			ret = ((dst ^ pat) & src) ^ pat;

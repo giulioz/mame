@@ -43,6 +43,24 @@ TODO:
 - gondo 2nd coin doesn't work, probably due to hacked MCU ROM
 - ghostb coinage dipswitch
 - how does meikyuhbl circumvent the MCU? It won't boot in MAME if MCU is removed
+- weird NMI issue in ghostb: Before starting stage 2, it waits for vblank, then
+  enables NMI by writing to ghostb_bank_w, then stores the written value in RAM.
+  It fails to initialize stage 2 properly if NMI happens right after enabling
+  the NMI flip-flop (when it hasn't yet stored a copy the bank register value
+  in RAM), so it appears that it expects 1 more opcode, see:
+
+  88D5: LDA    $3803
+  88D8: ANDA   #$08  ; vblank flag
+  88DA: BNE    $88D5
+
+  88DC: LDA    #$B7
+  88DE: STA    $3840 ; ghostb_bank_w
+  88E1: STA    <$68  ; expects NMI after this opcode
+
+  Where does this delay come from? Is it a MAME 6809 timing bug with NMI edge
+  detection? Or a brief TTL delay and it works by luck? Either way, it looks
+  like a bug by Data East. Normally you'd store the local variable first,
+  then write to the register.
 
 ***************************************************************************/
 
@@ -71,12 +89,14 @@ void dec8_state_base::buffer_spriteram16_w(u8 data)
 		m_buffered_spriteram16[i] = spriteram[(i * 2) + 1] | (spriteram[(i * 2) + 0] << 8);
 }
 
-// Only used by ghostb, gondo, garyoret, other games can control buffering
-void ghostb_state::screen_vblank(int state)
+// Only used by gondo, garyoret, ghostb, meikyuh
+void ghostb_state::buffer_spriteram_w(int state)
 {
 	// rising edge
-	if (state)
+	if (!m_buffer_strobe && state)
 		buffer_spriteram16_w(0);
+
+	m_buffer_strobe = bool(state);
 }
 
 u8 dec8_mcu_state_base::i8751_hi_r()
@@ -168,8 +188,7 @@ void oscar_state::bank_w(u8 data)
 	m_mainbank->set_entry(data & m_bank_mask);
 }
 
-// Used by Ghostbusters, Meikyuu Hunter G & Gondomania
-void ghostb_state::ghostb_bank_w(u8 data)
+void ghostb_state::gondo_bank_w(u8 data)
 {
 	/* Bit 0: SECCLR - acknowledge interrupt from I8751
 	   Bit 1: NMI enable/disable
@@ -183,17 +202,20 @@ void ghostb_state::ghostb_bank_w(u8 data)
 	if (!m_secclr)
 		m_maincpu->set_input_line(M6809_IRQ_LINE, CLEAR_LINE);
 
-	if (m_nmigate.found())
-		m_nmigate->in_w<0>(BIT(data, 1));
-	else
-	{
-		// Ghostbusters needs to acknowledge/disable NMIs in a different way
-		m_nmi_enable = BIT(data, 1);
-		if (!m_nmi_enable)
-			m_maincpu->set_input_line(INPUT_LINE_NMI, CLEAR_LINE);
-	}
+	// it relies on 1 more opcode after enabling NMI (see TODO notes)
+	if (BIT(m_bank_data ^ data, 1))
+		m_nmi_timer->adjust(m_maincpu->minimum_quantum_time(), BIT(data, 1));
 
 	flip_screen_set(BIT(data, 3));
+	m_bank_data = data;
+}
+
+void ghostb_state::ghostb_bank_w(u8 data)
+{
+	gondo_bank_w(data);
+
+	// Bit 2: Sprite DMA (see gondo_scroll_w for gondo/garyoret)
+	buffer_spriteram_w(BIT(data, 2));
 }
 
 void csilver_state::control_w(u8 data)
@@ -203,7 +225,7 @@ void csilver_state::control_w(u8 data)
 	    Bit 0x10 - Always set(?)
 	    Bit 0x20 - Unused.
 	    Bit 0x40 - Unused.
-	    Bit 0x80 - Hold subcpu reset line high if clear, else low?  (Not needed anyway)
+	    Bit 0x80 - Hold subcpu reset line high if clear, else low? (Not needed anyway)
 	*/
 	m_mainbank->set_entry(data & m_bank_mask);
 }
@@ -418,7 +440,7 @@ void gondo_state::gondo_map(address_map &map)
 	map(0x380f, 0x380f).portr("IN2");
 	map(0x3810, 0x3810).w(FUNC(gondo_state::sound_w));
 	map(0x3818, 0x382f).w(FUNC(gondo_state::gondo_scroll_w));
-	map(0x3830, 0x3830).w(FUNC(gondo_state::ghostb_bank_w));
+	map(0x3830, 0x3830).w(FUNC(gondo_state::gondo_bank_w));
 	map(0x3838, 0x3838).r(FUNC(gondo_state::i8751_hi_r));
 	map(0x3839, 0x3839).r(FUNC(gondo_state::i8751_lo_r));
 	map(0x383a, 0x383a).w(FUNC(gondo_state::gondo_i8751_hi_w));
@@ -442,7 +464,7 @@ void ghostb_state::garyoret_map(address_map &map)
 	map(0x380b, 0x380b).portr("IN0");
 	map(0x3810, 0x3810).w(FUNC(ghostb_state::sound_w));
 	map(0x3818, 0x382f).w(FUNC(ghostb_state::gondo_scroll_w));
-	map(0x3830, 0x3830).w(FUNC(ghostb_state::ghostb_bank_w));
+	map(0x3830, 0x3830).w(FUNC(ghostb_state::gondo_bank_w));
 	map(0x3838, 0x3838).w(FUNC(ghostb_state::gondo_i8751_hi_w));
 	map(0x3839, 0x3839).w(FUNC(ghostb_state::i8751_lo_w));
 	map(0x383a, 0x383a).r(FUNC(ghostb_state::i8751_hi_r));
@@ -1032,11 +1054,11 @@ static INPUT_PORTS_START( gondo )
 	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_START1 )
 	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_START2 )
 	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_UNKNOWN )
-	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_CUSTOM ) PORT_READ_LINE_DEVICE_MEMBER("screen", FUNC(screen_device::vblank))
 	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNKNOWN )
 	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_UNKNOWN )
 	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNKNOWN )
-	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_CUSTOM ) PORT_READ_LINE_DEVICE_MEMBER("screen", FUNC(screen_device::vblank))
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN )
 
 	PORT_START("COIN") // hooked up on the i8751
 	// Low 4 bits not connected on schematics
@@ -1211,7 +1233,7 @@ static INPUT_PORTS_START( ghostb )
 //  PORT_DIPSETTING(    0x03, DEF_STR( 1C_1C ) )
 //  PORT_DIPSETTING(    0x02, DEF_STR( 1C_2C ) )
 //  PORT_DIPSETTING(    0x01, DEF_STR( 1C_3C ) )
-	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_CUSTOM ) PORT_READ_LINE_DEVICE_MEMBER("screen", FUNC(screen_device::vblank))
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_CUSTOM ) PORT_READ_LINE_DEVICE_MEMBER("screen", FUNC(screen_device::vblank))
 //  PORT_DIPLOCATION("SW1:3") // Manual says 'Must Be Off'. Note: Turning on 3+4+5+8 does nothing on real hardware.
 	PORT_DIPUNUSED( 0x04, IP_ACTIVE_LOW )                       PORT_DIPLOCATION("SW1:4") // Manual says 'Must Be Off'. See note
 	PORT_DIPUNUSED( 0x10, IP_ACTIVE_LOW )                       PORT_DIPLOCATION("SW1:5") // Manual says 'Must Be Off'. See note
@@ -1914,10 +1936,13 @@ void ghostb_state::machine_start()
 {
 	lastmisn_state::machine_start();
 
+	m_nmi_timer = timer_alloc(FUNC(ghostb_state::nmigate_set), this);
 	m_6502_timer = timer_alloc(FUNC(ghostb_state::audiocpu_nmi_clear), this);
 	m_i8751_timer = timer_alloc(FUNC(ghostb_state::mcu_irq_clear), this);
 
+	save_item(NAME(m_bank_data));
 	save_item(NAME(m_secclr));
+	save_item(NAME(m_buffer_strobe));
 }
 
 void ghostb_state::machine_reset()
@@ -1925,8 +1950,7 @@ void ghostb_state::machine_reset()
 	lastmisn_state::machine_reset();
 
 	// reset clears LS273 latch, which disables NMI
-	if (m_nmigate.found())
-		ghostb_bank_w(0);
+	ghostb_bank_w(0);
 }
 
 
@@ -1950,13 +1974,9 @@ void csilver_state::machine_reset()
 }
 
 
-// DECO video CRTC, unverified
 void dec8_state_base::set_screen_raw_params(machine_config &config)
 {
-//  m_screen->set_refresh_hz(58);
-//  m_screen->set_vblank_time(ATTOSECONDS_IN_USEC(529)); // 58Hz, 529us Vblank duration
-//  m_screen->set_size(32*8, 32*8);
-//  m_screen->set_visarea(0*8, 32*8-1, 1*8, 31*8-1);
+	// DECO video CRTC, matches PCB measurements
 	m_screen->set_raw(12_MHz_XTAL / 2, 384, 0, 256, 272, 8, 248);
 }
 
@@ -1987,7 +2007,7 @@ void lastmisn_state::lastmisn(machine_config &config)
 	// video hardware
 	BUFFERED_SPRITERAM8(config, m_spriteram);
 
-	DECO_KARNOVSPRITES(config, m_spritegen_krn, 0, m_palette, gfx_shackled_spr);
+	DECO_KARNOVSPRITES(config, m_spritegen_krn, m_palette, gfx_shackled_spr);
 
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
 	set_screen_raw_params(config);
@@ -2047,7 +2067,7 @@ void lastmisn_state::shackled(machine_config &config)
 	// video hardware
 	BUFFERED_SPRITERAM8(config, m_spriteram);
 
-	DECO_KARNOVSPRITES(config, m_spritegen_krn, 0, m_palette, gfx_shackled_spr);
+	DECO_KARNOVSPRITES(config, m_spritegen_krn, m_palette, gfx_shackled_spr);
 
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
 	set_screen_raw_params(config);
@@ -2102,14 +2122,13 @@ void gondo_state::gondo(machine_config &config)
 	// video hardware
 	BUFFERED_SPRITERAM8(config, m_spriteram);
 
-	DECO_KARNOVSPRITES(config, m_spritegen_krn, 0, m_palette, gfx_gondo_spr);
+	DECO_KARNOVSPRITES(config, m_spritegen_krn, m_palette, gfx_gondo_spr);
 	m_spritegen_krn->set_colpri_callback(FUNC(gondo_state::gondo_colpri_cb));
 
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
 	set_screen_raw_params(config);
 	m_screen->set_screen_update(FUNC(gondo_state::screen_update_gondo));
-	m_screen->screen_vblank().set(FUNC(gondo_state::screen_vblank));
-	m_screen->screen_vblank().append(m_nmigate, FUNC(input_merger_device::in_w<1>));
+	m_screen->screen_vblank().set(m_nmigate, FUNC(input_merger_device::in_w<1>));
 	m_screen->screen_vblank().append_inputline(m_mcu, MCS51_INT0_LINE);
 	m_screen->set_palette(m_palette);
 
@@ -2160,13 +2179,12 @@ void ghostb_state::garyoret(machine_config &config)
 	// video hardware
 	BUFFERED_SPRITERAM8(config, m_spriteram);
 
-	DECO_KARNOVSPRITES(config, m_spritegen_krn, 0, m_palette, gfx_gondo_spr);
+	DECO_KARNOVSPRITES(config, m_spritegen_krn, m_palette, gfx_gondo_spr);
 
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
 	set_screen_raw_params(config);
 	m_screen->set_screen_update(FUNC(ghostb_state::screen_update_garyoret));
-	m_screen->screen_vblank().set(FUNC(ghostb_state::screen_vblank));
-	m_screen->screen_vblank().append(m_nmigate, FUNC(input_merger_device::in_w<1>));
+	m_screen->screen_vblank().set(m_nmigate, FUNC(input_merger_device::in_w<1>));
 	m_screen->screen_vblank().append_inputline(m_mcu, MCS51_INT0_LINE);
 	m_screen->set_palette(m_palette);
 
@@ -2219,19 +2237,20 @@ void ghostb_state::ghostb(machine_config &config)
 	// video hardware
 	BUFFERED_SPRITERAM8(config, m_spriteram);
 
-	DECO_BAC06(config, m_tilegen[0], 0);
+	DECO_BAC06(config, m_tilegen[0]);
 	m_tilegen[0]->set_gfx_region_wide(1, 1, 0);
 	m_tilegen[0]->set_gfxdecode_tag(m_gfxdecode);
 
-	DECO_KARNOVSPRITES(config, m_spritegen_krn, 0, m_palette, gfx_shackled_spr);
+	DECO_KARNOVSPRITES(config, m_spritegen_krn, m_palette, gfx_shackled_spr);
 
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
 	set_screen_raw_params(config);
 	m_screen->set_screen_update(FUNC(ghostb_state::screen_update_ghostb));
-	m_screen->screen_vblank().set(FUNC(ghostb_state::screen_vblank));
-	m_screen->screen_vblank().append([this] (int state) { if (state && m_nmi_enable) m_maincpu->set_input_line(INPUT_LINE_NMI, ASSERT_LINE); });
+	m_screen->screen_vblank().set(m_nmigate, FUNC(input_merger_device::in_w<1>));
 	m_screen->screen_vblank().append_inputline(m_mcu, MCS51_INT0_LINE);
 	m_screen->set_palette(m_palette);
+
+	INPUT_MERGER_ALL_HIGH(config, m_nmigate).output_handler().set_inputline(m_maincpu, INPUT_LINE_NMI);
 
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_ghostb);
 	DECO_RMC3(config, m_palette, 0, 1024); // xxxxBBBBGGGGRRRR with custom weighting
@@ -2295,7 +2314,7 @@ void csilver_state::csilver(machine_config &config)
 	// video hardware
 	BUFFERED_SPRITERAM8(config, m_spriteram);
 
-	DECO_KARNOVSPRITES(config, m_spritegen_krn, 0, m_palette, gfx_shackled_spr);
+	DECO_KARNOVSPRITES(config, m_spritegen_krn, m_palette, gfx_shackled_spr);
 
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
 	set_screen_raw_params(config);
@@ -2348,12 +2367,12 @@ void oscar_state::oscar(machine_config &config)
 	// video hardware
 	BUFFERED_SPRITERAM8(config, m_spriteram);
 
-	DECO_BAC06(config, m_tilegen[0], 0);
+	DECO_BAC06(config, m_tilegen[0]);
 	m_tilegen[0]->set_gfx_region_wide(1, 1, 0);
 	m_tilegen[0]->set_gfxdecode_tag(m_gfxdecode);
 	m_tilegen[0]->set_tile_callback(FUNC(oscar_state::oscar_tile_cb));
 
-	DECO_MXC06(config, m_spritegen_mxc, 0, m_palette, gfx_oscar_spr);
+	DECO_MXC06(config, m_spritegen_mxc, m_palette, gfx_oscar_spr);
 
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
 	set_screen_raw_params(config);
@@ -2467,15 +2486,15 @@ void oscar_state::cobracom(machine_config &config)
 	// video hardware
 	BUFFERED_SPRITERAM8(config, m_spriteram);
 
-	DECO_BAC06(config, m_tilegen[0], 0);
+	DECO_BAC06(config, m_tilegen[0]);
 	m_tilegen[0]->set_gfx_region_wide(1, 1, 0);
 	m_tilegen[0]->set_gfxdecode_tag(m_gfxdecode);
 
-	DECO_BAC06(config, m_tilegen[1], 0);
+	DECO_BAC06(config, m_tilegen[1]);
 	m_tilegen[1]->set_gfx_region_wide(2, 2, 0);
 	m_tilegen[1]->set_gfxdecode_tag(m_gfxdecode);
 
-	DECO_MXC06(config, m_spritegen_mxc, 0, m_palette, gfx_cobracom_spr);
+	DECO_MXC06(config, m_spritegen_mxc, m_palette, gfx_cobracom_spr);
 	m_spritegen_mxc->set_colpri_callback(FUNC(oscar_state::cobracom_colpri_cb));
 
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);

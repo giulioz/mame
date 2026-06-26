@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include "cpu/mcs51/mcs51.h"
+#include "cpu/mcs51/i80c51.h"
 #include "machine/nvram.h"
 #include "sound/dac.h"
 #include "video/hd44780.h"
@@ -149,16 +149,16 @@ protected:
 	void sr16_lcd_w(uint8_t data);
 	HD44780_PIXEL_UPDATE(sr16_pixel_update);
 
-	void hr16_io(address_map &map) ATTR_COLD;
+	void hr16_data(address_map &map) ATTR_COLD;
 	void hr16_mem(address_map &map) ATTR_COLD;
-	void mmt8_io(address_map &map) ATTR_COLD;
-	void sr16_io(address_map &map) ATTR_COLD;
+	void mmt8_data(address_map &map) ATTR_COLD;
+	void sr16_data(address_map &map) ATTR_COLD;
 	void sr16_mem(address_map &map) ATTR_COLD;
 
 private:
-	uint8_t       m_kb_matrix = 0;
-	uint8_t       m_leds = 0;
-	uint8_t       m_lcd_digits[5]{};
+	uint8_t m_kb_matrix = 0;
+	uint8_t m_leds = 0;
+	uint8_t m_lcd_digits[5]{};
 
 	required_device<hd44780_device> m_lcdc;
 	optional_device<cassette_image_device> m_cassette;

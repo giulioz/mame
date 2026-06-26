@@ -251,7 +251,6 @@ FS 0 to F
 #include "machine/input_merger.h"
 #include "machine/mc14411.h"
 #include "machine/timer.h"
-#include "sound/wave.h"
 #include "video/pwm.h"
 
 // MEK68R2
@@ -960,7 +959,7 @@ void mekd4_state::mekd4(machine_config &config)
 	MC6809(config, m_maincpu, 3.579545_MHz_XTAL);
 	m_maincpu->set_addrmap(AS_PROGRAM, &mekd4_state::mekd4_stop_mem);
 
-	ADDRESS_MAP_BANK(config, m_bankdev, 0);
+	ADDRESS_MAP_BANK(config, m_bankdev);
 	m_bankdev->set_endianness(ENDIANNESS_BIG);
 	m_bankdev->set_data_width(8);
 	m_bankdev->set_addr_width(20);
@@ -982,7 +981,7 @@ void mekd4_state::mekd4(machine_config &config)
 	m_cass->add_route(ALL_OUTPUTS, "mono", 0.05);
 
 	// IRQ is not connected. RTS, CTS, and DCD are available.
-	ACIA6850(config, m_acia, 0);
+	ACIA6850(config, m_acia);
 	m_acia->txd_handler().set("rs232", FUNC(rs232_port_device::write_txd));
 	m_acia->rts_handler().set("rs232", FUNC(rs232_port_device::write_rts));
 
@@ -1052,7 +1051,7 @@ void mekd4_state::mekd4(machine_config &config)
 	m_r2_pia->irqa_handler().set("mainirq", FUNC(input_merger_device::in_w<2>));
 	m_r2_pia->irqb_handler().set("mainirq", FUNC(input_merger_device::in_w<3>));
 
-	generic_keyboard_device &keyboard(GENERIC_KEYBOARD(config, "keyboard", 0));
+	generic_keyboard_device &keyboard(GENERIC_KEYBOARD(config, "keyboard"));
 	keyboard.set_keyboard_callback(FUNC(mekd4_state::kbd_put));
 }
 

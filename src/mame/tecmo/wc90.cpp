@@ -391,7 +391,7 @@ static INPUT_PORTS_START( wc90 )
 
 	PORT_START("DSW1")
 	PORT_DIPNAME( 0x0f, 0x0f, DEF_STR( Coinage ) )      PORT_DIPLOCATION("SW1:8,7,6,5")
-	PORT_DIPSETTING(    0x00, "10 Coins/1 Credit" )
+	PORT_DIPSETTING(    0x00, DEF_STR( 10C_1C ) )
 	PORT_DIPSETTING(    0x08, DEF_STR( 9C_1C ) )
 	PORT_DIPSETTING(    0x04, DEF_STR( 8C_1C ) )
 	PORT_DIPSETTING(    0x0c, DEF_STR( 7C_1C ) )
@@ -577,7 +577,7 @@ void wc90_state::wc90(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_wc90);
 	PALETTE(config, m_palette).set_format(palette_device::xBRG_444, 1024).set_endianness(ENDIANNESS_BIG);
 
-	TECMO_SPRITE(config, m_sprgen, 0, m_palette, gfx_wc90_spr);
+	TECMO_SPRITE(config, m_sprgen, m_palette, gfx_wc90_spr);
 	m_sprgen->set_pri_callback(FUNC(wc90_state::pri_cb));
 
 	// sound hardware

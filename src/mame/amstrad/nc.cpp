@@ -1321,8 +1321,8 @@ void nc_state::nc_base(machine_config &config)
 
 	// sound hardware
 	SPEAKER(config, "mono").front_center();
-	BEEP(config, m_beeper1, 0).add_route(ALL_OUTPUTS, "mono", 0.50);
-	BEEP(config, m_beeper2, 0).add_route(ALL_OUTPUTS, "mono", 0.50);
+	BEEP(config, m_beeper1).add_route(ALL_OUTPUTS, "mono", 0.50);
+	BEEP(config, m_beeper2).add_route(ALL_OUTPUTS, "mono", 0.50);
 
 	// centronics
 	CENTRONICS(config, m_centronics, centronics_devices, "printer");
@@ -1332,7 +1332,7 @@ void nc_state::nc_base(machine_config &config)
 	m_centronics->set_output_latch(cent_data_out);
 
 	// uart
-	I8251(config, m_uart, 0);
+	I8251(config, m_uart);
 	m_uart->txd_handler().set("serial", FUNC(rs232_port_device::write_txd));
 	m_uart->rts_handler().set("serial", FUNC(rs232_port_device::write_rts));
 	m_uart->dtr_handler().set("serial", FUNC(rs232_port_device::write_dtr));
@@ -1457,7 +1457,11 @@ ROM_END
 
 ROM_START( nc200 )
 	ROM_REGION(0x80000, "maincpu", 0)
-	ROM_LOAD("nc200.rom", 0x00000, 0x80000, CRC(bb8180e7) SHA1(fb5c93b0a3e199202c6a12548d2617f7a09bae47))
+	ROM_DEFAULT_BIOS("v202")
+	ROM_SYSTEM_BIOS(0, "v201", "v2.01") // 16 Aug 1993
+	ROMX_LOAD("amstrad_42112_v201.rom", 0x00000, 0x80000, CRC(bb8180e7) SHA1(fb5c93b0a3e199202c6a12548d2617f7a09bae47), ROM_BIOS(0))
+	ROM_SYSTEM_BIOS(1, "v202", "v2.02") // 10 Dec 1993
+	ROMX_LOAD("amstrad_nc200_v202.rom", 0x00000, 0x80000, CRC(0919efba) SHA1(d849fb808a84b6f73a7d5d2676d35c3629809764), ROM_BIOS(1))
 ROM_END
 
 

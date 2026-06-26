@@ -20,7 +20,8 @@ Year + Game                                    PCB        CPU    Sound          
 97  Manguan Daheng (V123T1)                    NO-0252    68000  M6295           IGS031 IGS025 IGS???* Battery
 98  Genius 6 (V110F)                           NO-0131-4  Z180   K668    U3567   IGS017 IGS003c        Battery
 98  Long Hu Zhengba 2 (set 1)                  NO-0206    68000  K668            IGS031 IGS025 IGS022* Battery
-98  Long Hu Zhengba 2 (VS105M)                 NO-0182-2  68000  M6295           IGS031 IGS025 IGS022  Battery
+98  Long Hu Zhengba 2 (VS210M)                 NO-0218-2  68000  K668            IGS031 IGS025 IGS029  Battery
+98  Long Hu Zhengba (VS105M)                   NO-0182-2  68000  M6295           IGS031 IGS025 IGS022  Battery
 98  Shuang Long Qiang Zhu 2 VS (VS203J)        NO-0207    68000  K668            IGS031 IGS025 IGS022  Battery
 98  Manguan Caishen (V103CS)                   NO-0192-1  68000  K668            IGS017 IGS025 IGS029  Battery
 98  Manguan Caishen (V106CS)                   NO-0208    68000  M6295           IGS031 IGS025 IGS029  Battery
@@ -29,34 +30,44 @@ Year + Game                                    PCB        CPU    Sound          
 99  Tarzan (V109C)                             NO-0248-1  Z180   U6295           IGS031 IGS025         Battery
 00  Chaoji Da Manguan 2 - Jiaqiang Ban (V100C) NO-0271    68000  K668            IGS031 IGS025         Battery
 00? Jungle King (V103A)                        NO-0230-1  Z180   U6295           IGS031 IGS025 (N9)    Battery
+00? Jungle King (V105US)                       NO-0230-1  Z180   U6295           IGS031 IGS025 (Z9)    Battery
 00? Super Tarzan (V100I)                       NO-0230-1  Z180   K668            IGS031 IGS025         Battery
+00? Tarzan (V106FA)                            NO-0230-1  Z180   K668            IGS031 IGS025 (Z9)    Battery
 00? Happy Skill (V611IT)                       NO-0281    Z180   K668            IGS031 IGS025         Battery
 00? Champion Poker 2 (V100A)                   unreadable Z180   M6295           IGS031 IGS025         Battery
 00? Super Poker (V100xD03) / Formosa           NO-0187    Z180   K668    U3567   IGS017 IGS025         Battery
 00? Jungle King (V302US)                       NO-0214-7  68000  K668            IGS031 IGS025 IGS029  Battery
 --------------------------------------------------------------------------------------------------------------
                                                                          not present in another set *
-To Do:
+TODO:
 
 - Protection emulation in some games, instead of patching the ROMs.
 - Do iqblocka and clones, genius6 and clones, tjsb support NVRAM?
-- mgcs: Finish IGS029 protection simulation.
-- jking302us: IGS025 and IGS029 protection simulation.
-- sdmg2: different protection that kicks in after several dozens of hands
+- All the Tarzan/Jungle King games will eventually fail a protection
+  check on a win, draw sprites of the matching symbol over the game
+  screen and lock up
 
 Notes:
 
-- Test mode is usually accessed by keeping test (F2) pressed during boot.
-- The sound test is often accessed by holding test (F2) and bookkeeping (0) at the I/O test screen.
+- Test mode is usually accessed by keeping test (F2) pressed during
+  boot.
+- The sound test is often accessed by pressing test (F2) and
+  bookkeeping (0) simultaneously at the I/O test screen.
 - The default bookkeeping password is often Start eight times.
-- Some games (e.g. Tarzan Chuan Tian Guan) refer to the double-up game as 续玩 (literally "Continue Play"),
-  so settings like 续玩有无 refer to the double-up game, not a conventional "continue" feature.
-- iqblocka: keep start (1) pressed during boot for DSWs & input test. Keep test (F2) pressed for bookkeeping / setup [pass: press deal (2)].
-- iqblockf/genius6: press service1 (9) then press deal (2) eight times to switch to gambling. Then test (F2) enters book-keeping / setup.
-- lhzb2, mgcs, slqz2, tjsb: press test (F2) + book (0) during inputs test for sound test.
-- mgdh, sdmg2: press keys A + B during test mode for sound test (B1 + B2 + B3 when using a joystick in mgdh).
-- spkrform: to switch from poker to Formosa press service1 (9). To switch back, press in sequence:
-            service3 (right of 0) then Bet (M) then press "Hold 1".."Hold 5" (Z, X, C, V, B)
+- Some games (e.g. Tarzan Chuan Tian Guan) refer to the double-up game
+  as 续玩 (literally "Continue Play"), so settings like 续玩有无 refer
+  to the double-up game, not a conventional "continue" feature.
+- iqblocka: keep start (1) pressed during boot for DSWs & input test.
+  Keep test (F2) pressed for bookkeeping / setup [pass: press deal (2)].
+- iqblockf/genius6: press service1 (9) then press deal (2) eight times
+  to switch to gambling.  Then test (F2) enters bookkeeping/setup.
+- lhzb2, mgcs, slqz2, tjsb: press test (F2) + book (0) during inputs
+  test for sound test.
+- mgdh, sdmg2: press keys A + B during test mode for sound test
+  (B1 + B2 + B3 when using a joystick in mgdh).
+- spkrform: to switch from poker to Formosa press service1 (9). To
+  switch back, press in sequence: service3 (right of 0) then Bet (M)
+  then press "Hold 1".."Hold 5" (Z, X, C, V, B)
 - Tarzan Chuang Tian Guan mahjong controls:
   Mahjong keyboard:
     Start         Start       Stop All    Take Score
@@ -99,10 +110,12 @@ Notes:
 #include "screen.h"
 #include "speaker.h"
 
+#include "endianness.h"
 #include "multibyte.h"
 
 #include "igspoker.lh"
-#include "igsslot.lh"
+#include "starzan.lh"
+#include "tarzan103m.lh"
 
 #define LOG_PROT_STRING     (1U << 1)
 #define LOG_PROT_BITSWAP    (1U << 2)
@@ -112,8 +125,9 @@ Notes:
 #define LOG_PROT_REMAP      (1U << 6)
 #define LOG_PROT_IGS022     (1U << 7)
 #define LOG_PROT_IGS029     (1U << 8)
+#define LOG_PROT_INCALT     (1U << 9)
 
-//#define VERBOSE (LOG_GENERAL | LOG_PROT_STRING | LOG_PROT_BITSWAP | LOG_PROT_INCDEC | LOG_PROT_INC | LOG_PROT_SCRAMBLE | LOG_PROT_REMAP | LOG_PROT_IGS022 | LOG_PROT_IGS029)
+//#define VERBOSE (LOG_GENERAL | LOG_PROT_STRING | LOG_PROT_BITSWAP | LOG_PROT_INCDEC | LOG_PROT_INC | LOG_PROT_SCRAMBLE | LOG_PROT_REMAP | LOG_PROT_IGS022 | LOG_PROT_IGS029 | LOG_PROT_INCALT)
 #define VERBOSE (0)
 #include "logmacro.h"
 
@@ -128,7 +142,7 @@ class igs_mux_device :
 	public device_memory_interface
 {
 public:
-	igs_mux_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	igs_mux_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
 	void address_w(u8 data);
 	void data_w(u8 data);
@@ -193,7 +207,7 @@ u8 igs_mux_device::data_r()
 class igs_string_device : public device_t
 {
 public:
-	igs_string_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	igs_string_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
 	u8 result_r();                                  // 0x05:        result_r
 	void do_bitswap_w(offs_t offset, u8 data);      // 0x20-0x27:   do_bitswap_w
@@ -232,8 +246,8 @@ void igs_string_device::dump(const char *filename, u32 string_addr, u32 xor_addr
 
 	printf("igs_string addr = %x, %x (%d bits)\n", string_addr, xor_addr, is_16bits ? 16 : 8);
 
-	const u8 * const string_base    =   (const u8 *)memregion(":maincpu")->base() + string_addr;
-	const u8 * const xor_base       =   (const u8 *)memregion(":maincpu")->base() + xor_addr;
+	const u8 *const string_base    =   (const u8 *)memregion(":maincpu")->base() + string_addr;
+	const u8 *const xor_base       =   (const u8 *)memregion(":maincpu")->base() + xor_addr;
 	for (u32 i = 0; i < 0xec; ++i)
 	{
 		const u32 addr = is_16bits ? BYTE_XOR_BE(i) : i;
@@ -338,7 +352,7 @@ u8 igs_string_device::advance_string_offs_r(address_space &space)
 class igs_bitswap_device : public device_t
 {
 public:
-	igs_bitswap_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	igs_bitswap_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
 	u8 result_r();                              // 0x03:        result_r
 	void word_w(u8 data);                       // 0x40-0x47:   word_w
@@ -509,7 +523,7 @@ void igs_bitswap_device::reset_w(u8 data)
 class igs_incdec_device : public device_t
 {
 public:
-	igs_incdec_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	igs_incdec_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
 	u8 result_r();
 	void reset_w(u8 data);
@@ -578,7 +592,7 @@ void igs_incdec_device::device_reset()
 class igs_inc_device : public device_t
 {
 public:
-	igs_inc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+	igs_inc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
 	u8 result_r();
 	void reset_w(u8 data);
@@ -628,6 +642,97 @@ void igs_inc_device::device_reset()
 	m_val = 0;
 }
 
+/***************************************************************************
+
+    ---- IGS Inc Alt Protection ----
+
+***************************************************************************/
+
+class igs_incalt_device : public device_t
+{
+public:
+	igs_incalt_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
+
+	u8 result_r();
+	void byte_w(u8 data);
+
+protected:
+	virtual void device_start() override ATTR_COLD;
+	virtual void device_reset() override ATTR_COLD;
+
+private:
+	u8 m_val = 0;
+
+	void reset_w();
+	void inc_w();
+	void bitswap_w();
+};
+
+u8 igs_incalt_device::result_r()
+{
+	u8 res;
+
+	if ((!BIT(m_val, 0) && !BIT(m_val, 2)) || BIT(m_val, 1))
+		res = 2;
+	else
+		res = 0;
+
+	LOGMASKED(LOG_PROT_INCALT, "%s: value read, %02x -> %02x\n", machine().describe_context(), m_val, res);
+	return res;
+}
+
+void igs_incalt_device::byte_w(u8 data)
+{
+	switch (data)
+	{
+		case 0x21:
+			bitswap_w();
+			break;
+		case 0x55:
+			inc_w();
+			break;
+		case 0xff:
+			reset_w();
+			break;
+
+		default:
+			LOGMASKED(LOG_PROT_INCALT, "%s: byte_write %02x\n", machine().describe_context(), data);
+	}
+}
+
+void igs_incalt_device::reset_w()
+{
+	m_val = 0;
+	LOGMASKED(LOG_PROT_INCALT, "%s: reset -> %02x\n", machine().describe_context(), m_val);
+}
+
+void igs_incalt_device::inc_w()
+{
+	m_val++;
+	LOGMASKED(LOG_PROT_INCALT, "%s: inc -> %02x\n", machine().describe_context(), m_val);
+}
+
+void igs_incalt_device::bitswap_w()
+{
+	m_val = (BIT(m_val, 1) & BIT(m_val, 0)) | (BIT(m_val, 2) << 1) | ((BIT(~m_val, 0) | BIT(m_val, 1)) << 2);
+	LOGMASKED(LOG_PROT_INCALT, "%s: bitswap -> %02x\n", machine().describe_context(), m_val);
+}
+
+DEFINE_DEVICE_TYPE(IGS_INCALT, igs_incalt_device, "igs_incalt", "IGS Inc Alt Protection")
+
+igs_incalt_device::igs_incalt_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
+	: device_t(mconfig, IGS_INCALT, tag, owner, clock)
+{ }
+
+void igs_incalt_device::device_start()
+{
+	save_item(NAME(m_val));
+}
+
+void igs_incalt_device::device_reset()
+{
+	m_val = 0;
+}
 
 namespace {
 
@@ -653,6 +758,7 @@ public:
 		, m_igs_string(*this, "igs_string")
 		, m_igs_incdec(*this, "igs_incdec")
 		, m_igs_inc(*this, "igs_inc")
+		, m_igs_incalt(*this, "igs_incalt")
 		, m_igs022(*this,"igs022")
 		// Optional I/O
 		, m_io_coins(*this, "COINS")
@@ -676,6 +782,8 @@ public:
 	void jking302us(machine_config &config) ATTR_COLD;
 	void lhzb2(machine_config &config) ATTR_COLD;
 	void lhzb2a(machine_config &config) ATTR_COLD;
+	void lhzb2b(machine_config &config) ATTR_COLD;
+	void lhzb2c(machine_config &config) ATTR_COLD;
 	void mgcs(machine_config &config) ATTR_COLD;
 	void mgcsa(machine_config &config) ATTR_COLD;
 	void mgcsb(machine_config &config) ATTR_COLD;
@@ -694,16 +802,18 @@ public:
 	void init_jking302us() ATTR_COLD;
 	void init_lhzb2() ATTR_COLD;
 	void init_lhzb2a() ATTR_COLD;
+	void init_lhzb2b() ATTR_COLD;
+	void init_lhzb2c() ATTR_COLD;
 	void init_mgcs() ATTR_COLD;
 	void init_mgcsa() ATTR_COLD;
 	void init_mgcsb() ATTR_COLD;
-	void init_mgdh() ATTR_COLD;
 	void init_mgdha() ATTR_COLD;
 	void init_sdmg2() ATTR_COLD;
 	void init_sdmg2754ca() ATTR_COLD;
 	void init_sdmg2754cb() ATTR_COLD;
 	void init_sdmg2p() ATTR_COLD;
 	void init_slqz2() ATTR_COLD;
+	void init_slqz2b() ATTR_COLD;
 	void init_spkrform() ATTR_COLD;
 	void init_starzan() ATTR_COLD;
 	void init_tarzan() ATTR_COLD;
@@ -737,6 +847,7 @@ private:
 	optional_device<igs_string_device> m_igs_string;
 	optional_device<igs_incdec_device> m_igs_incdec;
 	optional_device<igs_inc_device> m_igs_inc;
+	optional_device<igs_incalt_device> m_igs_incalt;
 	optional_device<igs022_device> m_igs022;
 
 	// Optional I/O
@@ -751,13 +862,17 @@ private:
 	u8 m_dsw_select;
 	u8 m_scramble_data;
 	u8 m_igs022_latch;
+	u8 m_mgdh_boot_ptr = 0;
 
 	// IGS029 protection (communication)
 	u8 m_igs029_send_data, m_igs029_recv_data;
 	u8 m_igs029_send_buf[256], m_igs029_recv_buf[256];
 	int m_igs029_send_len, m_igs029_recv_len;
-	// IGS029 protection (mgcs)
-	u32 m_igs029_mgcs_long;
+	u32 m_igs029_reg[0x60];
+	void igs029_get_reg(u8 reg_offset);
+	void igs029_get_ret(u32 ret);
+	void igs029_set_reg(u8 reg_offset, u8 data_offset);
+	void common_igs029_run();
 
 	void dsw_select_w(u8 data);
 	u8 dsw_r();
@@ -838,6 +953,11 @@ private:
 	void lhzb2a_keys_hopper_w(offs_t offset, u16 data, u16 mem_mask = ~0);
 	u16 lhzb2a_input_r(offs_t offset);
 	void lhzb2a_remap_addr_w(address_space &space, u16 data);
+	void lhzb2a_igs026_remap_set();
+
+	u8 lhzb2b_scramble_data_r();
+	void lhzb2b_igs029_scramble_irq_w(u8 data);
+	void lhzb2b_igs029_run();
 
 	u8 mgcs_keys_joy_r();
 	void mgcs_keys_hopper_igs029_w(u8 data);
@@ -845,14 +965,31 @@ private:
 	void mgcs_scramble_data_w(u8 data);
 	u8 mgcs_igs029_data_r();
 	void mgcs_igs029_data_w(u8 data);
+	void mgcs_igs029_run();
+
+	u16 mgcsb_input_r(offs_t offset);
+	void mgcsb_remap_addr_w(address_space &space, u16 data);
+	void mgcsb_igs026_remap_set();
+	void mgcsb_counter_w(u8 data);
+	u8 mgcsb_keys_joy_r();
 
 	void mgdh_keys_hopper_w(u8 data);
 	void mgdh_counter_w(u8 data);
+	u8 mgdh_boot_r(offs_t offset);
 
 	void sdmg2_keys_hopper_w(u8 data);
 
+	void sdmg2p_counter_w(u8 data);
+	void sdmg2p_sound_hopper_w(u8 data);
+	void sdmg2p_keys_w(u8 data);
+
 	void slqz2_sound_hopper_w(u8 data);
 	u8 slqz2_scramble_data_r();
+
+	void jking302us_sound_scramble_w(u8 data);
+	u8 jking302us_scramble_coin_r();
+	void jking302us_igs029_irq_w(u8 data);
+	void jking302us_igs029_run();
 
 	void starzan_counter_w(u8 data);
 	void starzan_lamps_sound_w(u8 data);
@@ -862,7 +999,6 @@ private:
 	void tarzan_incdec_remap_addr_w(offs_t offset, u8 data);
 
 	// Machine
-	DECLARE_MACHINE_RESET(lhzb2a);
 
 	TIMER_DEVICE_CALLBACK_MEMBER(iqblocka_interrupt);
 	TIMER_DEVICE_CALLBACK_MEMBER(mgcs_interrupt);
@@ -875,7 +1011,7 @@ private:
 	void mgcs_decrypt_program_rom() ATTR_COLD;
 	void mgcsa_decrypt_program_rom() ATTR_COLD;
 	void mgcsb_decrypt_program_rom() ATTR_COLD;
-	void mgcs_igs029_run() ATTR_COLD;
+
 	void starzan_decrypt_program_rom() ATTR_COLD;
 	void tarzan_decrypt_program_rom() ATTR_COLD;
 	void tarzana_decrypt_program_rom() ATTR_COLD;
@@ -884,7 +1020,7 @@ private:
 //  void lhzb2_patch_rom() ATTR_COLD;
 //  void mgcs_patch_rom() ATTR_COLD;
 //  void slqz2_patch_rom() ATTR_COLD;
-	void mgdh_patch_rom() ATTR_COLD;
+//  void mgdh_patch_rom() ATTR_COLD;
 	void spkrform_patch_rom() ATTR_COLD;
 
 	// Construct
@@ -913,6 +1049,10 @@ private:
 	void lhzb2_mux_map(address_map &map) ATTR_COLD;
 	void lhzb2a_map(address_map &map) ATTR_COLD;
 	void lhzb2a_mux_map(address_map &map) ATTR_COLD;
+	void lhzb2b_map(address_map &map) ATTR_COLD;
+	void lhzb2b_mux_map(address_map &map) ATTR_COLD;
+	void lhzb2c_map(address_map &map) ATTR_COLD;
+	void lhzb2c_mux_map(address_map &map) ATTR_COLD;
 	void mgcs_map(address_map &map) ATTR_COLD;
 	void mgcs_mux_map(address_map &map) ATTR_COLD;
 	void mgcsa_map(address_map &map) ATTR_COLD;
@@ -940,13 +1080,12 @@ private:
 
 void igs017_state::machine_start()
 {
-	m_lamps.resolve();
-
 	save_item(NAME(m_remap_addr));
 	save_item(NAME(m_input_select));
 	save_item(NAME(m_dsw_select));
 	save_item(NAME(m_scramble_data));
 	save_item(NAME(m_igs022_latch));
+	save_item(NAME(m_mgdh_boot_ptr));
 
 	save_item(NAME(m_igs029_send_data));
 	save_item(NAME(m_igs029_recv_data));
@@ -954,7 +1093,7 @@ void igs017_state::machine_start()
 	save_item(NAME(m_igs029_recv_buf));
 	save_item(NAME(m_igs029_send_len));
 	save_item(NAME(m_igs029_recv_len));
-	save_item(NAME(m_igs029_mgcs_long));
+	save_item(NAME(m_igs029_reg));
 }
 
 void igs017_state::machine_reset()
@@ -963,7 +1102,6 @@ void igs017_state::machine_reset()
 	m_scramble_data = 0;
 
 	m_igs029_send_len = m_igs029_recv_len = 0;
-	m_igs029_mgcs_long = 0;
 }
 
 void igs017_state::dsw_select_w(u8 data)
@@ -978,6 +1116,283 @@ u8 igs017_state::dsw_r()
 	if (!BIT(m_dsw_select, 1)) ret &= m_io_dsw[1]->read();
 	if (!BIT(m_dsw_select, 2)) ret &= m_io_dsw[2]->read();
 	return ret;
+}
+
+inline void igs017_state::igs029_get_reg(u8 reg_offset)
+{
+		put_u32be(m_igs029_recv_buf, m_igs029_reg[reg_offset]);
+
+		m_igs029_recv_len = 4;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x05;
+}
+
+inline void igs017_state::igs029_get_ret(u32 ret)
+{
+		put_u32be(m_igs029_recv_buf, ret);
+
+		m_igs029_recv_len = 4;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x05;
+}
+
+inline void igs017_state::igs029_set_reg(u8 reg_offset, u8 data_offset)
+{
+		m_igs029_reg[reg_offset] = get_u32le(&m_igs029_send_buf[data_offset]);
+
+		m_igs029_recv_len = 0;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+}
+
+void igs017_state::common_igs029_run()
+{
+	if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x04)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "GET 050 cmd\n");
+
+		igs029_get_reg(0x50);
+	}
+	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x0f)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "GET 010 cmd\n");
+
+		igs029_get_reg(0x10);
+	}
+	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x19)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "GET 055 cmd\n");
+
+		igs029_get_reg(0x55);
+	}
+	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x1c)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "NOP ??? cmd\n");
+
+		m_igs029_recv_len = 0;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+	}
+	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x31)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "NOP ??? cmd\n");
+
+		m_igs029_recv_len = 0;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+	}
+	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x39)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "GET DSW cmd\n");
+
+		u8 ret = 0xff;
+		if (!BIT(m_dsw_select, 0))
+			ret &= m_io_dsw[0]->read();
+		if (!BIT(m_dsw_select, 1))
+			ret &= m_io_dsw[1]->read();
+		if (BIT(m_dsw_select, 0) && BIT(m_dsw_select, 1))
+			logerror("%s: warning, reading dsw with dsw_select = %02x\n", machine().describe_context(), m_dsw_select);
+
+		m_igs029_recv_len = 0;
+		m_igs029_recv_buf[m_igs029_recv_len++] = ret;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x02;
+	}
+	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x3c)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "GET 058 cmd\n");
+
+		igs029_get_reg(0x58);
+	}
+	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x55)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "GET 020 cmd\n");
+
+		igs029_get_reg(0x20);
+	}
+	else if (m_igs029_send_buf[0] == 0x04 && m_igs029_send_buf[1] == 0x02)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "NOP ??? cmd\n");
+
+		m_igs029_recv_len = 0;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+	}
+	else if (m_igs029_send_buf[0] == 0x04 && m_igs029_send_buf[1] == 0x48)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "RESET\n");
+
+		m_igs029_recv_len = 0;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+	}
+	else if (m_igs029_send_buf[0] == 0x04 && m_igs029_send_buf[1] == 0x58)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "GET REG cmd\n");
+
+		u8 offset = m_igs029_send_buf[2];
+
+		igs029_get_reg(offset);
+	}
+	else if (m_igs029_send_buf[0] == 0x07 && m_igs029_send_buf[1] == 0x15)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "SET 050 cmd\n");
+
+		igs029_set_reg(0x50, 2);
+	}
+	else if (m_igs029_send_buf[0] == 0x07 && m_igs029_send_buf[1] == 0x21)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "SET 010 cmd\n");
+
+		igs029_set_reg(0x10, 2);
+	}
+	else if (m_igs029_send_buf[0] == 0x07 && m_igs029_send_buf[1] == 0x2c)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "007 02C cmd\n");
+
+		bool no_ret = true;
+
+		if (m_igs029_send_buf[2] == 0x03)
+		{
+			m_igs029_reg[m_igs029_send_buf[5]] = m_igs029_reg[m_igs029_send_buf[3]] & m_igs029_reg[m_igs029_send_buf[4]];
+		}
+		else if (m_igs029_send_buf[2] == 0x15)
+		{
+			u32 ret = m_igs029_reg[m_igs029_send_buf[3]] + m_igs029_reg[m_igs029_send_buf[4]];
+
+			igs029_get_ret(ret);
+
+			no_ret = false;
+		}
+		else if (m_igs029_send_buf[2] == 0x1e)
+		{
+			u32 ret = m_igs029_reg[m_igs029_send_buf[4]] - m_igs029_reg[m_igs029_send_buf[3]];
+
+			igs029_get_ret(ret);
+
+			no_ret = false;
+		}
+		else if (m_igs029_send_buf[2] == 0x28)
+			m_igs029_reg[m_igs029_send_buf[5]] = m_igs029_reg[m_igs029_send_buf[3]] - 1;
+		else if (m_igs029_send_buf[2] == 0x43)
+		{
+			u32 ret = m_igs029_reg[m_igs029_send_buf[5]] + 1;
+
+			igs029_get_ret(ret);
+
+			no_ret = false;
+		}
+		else if (m_igs029_send_buf[2] == 0x67)
+		{
+			m_igs029_reg[m_igs029_send_buf[4]] = m_igs029_reg[m_igs029_send_buf[5]];    //unconfirmed
+		}
+		else if (m_igs029_send_buf[2] == 0xc2)
+		{
+			m_igs029_reg[m_igs029_send_buf[3]] = m_igs029_reg[m_igs029_send_buf[4]] + m_igs029_reg[m_igs029_send_buf[5]];
+		}
+		else if (m_igs029_send_buf[2] == 0xe8)
+		{
+			m_igs029_reg[m_igs029_send_buf[4]] = m_igs029_reg[m_igs029_send_buf[3]] - m_igs029_reg[m_igs029_send_buf[5]];
+		}
+		else if (m_igs029_send_buf[2] == 0xf2)
+		{
+			m_igs029_reg[m_igs029_send_buf[5]] = m_igs029_reg[m_igs029_send_buf[4]];
+		}
+		else
+		{
+			logerror("07 2C cmd %02x %02x %02x %02x %02x %02x\n", m_igs029_send_buf[0], m_igs029_send_buf[1], m_igs029_send_buf[2], m_igs029_send_buf[3], m_igs029_send_buf[4], m_igs029_send_buf[5]);
+		}
+
+		if (no_ret)
+		{
+			m_igs029_recv_len = 0;
+			m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+		}
+	}
+	else if (m_igs029_send_buf[0] == 0x07 && m_igs029_send_buf[1] == 0x3b)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "007 03B cmd\n");
+
+		bool no_ret = true;
+
+		if  (m_igs029_send_buf[2] == 0x00)
+		{
+			m_igs029_reg[m_igs029_send_buf[3]] = m_igs029_reg[m_igs029_send_buf[5]] >> m_igs029_reg[m_igs029_send_buf[4]];
+		}
+		else if (m_igs029_send_buf[2] == 0x34)
+		{
+			m_igs029_reg[m_igs029_send_buf[5]] = m_igs029_reg[m_igs029_send_buf[4]] - 1;
+
+			u32 ret = m_igs029_reg[m_igs029_send_buf[5]];
+
+			igs029_get_ret(ret);
+
+			no_ret = false;
+		}
+		else if (m_igs029_send_buf[2] == 0x71)
+		{
+			m_igs029_reg[m_igs029_send_buf[3]] = m_igs029_reg[m_igs029_send_buf[5]] + 1;
+		}
+		else if (m_igs029_send_buf[2] == 0x9c)
+		{
+			u32 ret = m_igs029_reg[m_igs029_send_buf[4]] + 1;
+
+			igs029_get_ret(ret);
+
+			no_ret = false;
+		}
+		else if (m_igs029_send_buf[2] == 0xa5)
+		{
+			m_igs029_reg[m_igs029_send_buf[4]] = m_igs029_reg[m_igs029_send_buf[5]] + 1;    //unconfirmed
+		}
+		else if (m_igs029_send_buf[2] == 0xb6)
+		{
+			m_igs029_reg[m_igs029_send_buf[5]] = m_igs029_reg[m_igs029_send_buf[3]] * m_igs029_reg[m_igs029_send_buf[4]];
+		}
+		else
+		{
+			logerror("07 3B cmd %02x %02x %02x %02x %02x %02x\n", m_igs029_send_buf[0], m_igs029_send_buf[1], m_igs029_send_buf[2], m_igs029_send_buf[3], m_igs029_send_buf[4], m_igs029_send_buf[5]);
+		}
+
+		if (no_ret)
+		{
+			m_igs029_recv_len = 0;
+			m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+		}
+	}
+	else if (m_igs029_send_buf[0] == 0x07 && m_igs029_send_buf[1] == 0x44)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "SET 020 cmd\n");
+
+		igs029_set_reg(0x20, 2);
+	}
+	else if (m_igs029_send_buf[0] == 0x07 && m_igs029_send_buf[1] == 0x50)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "SET 055 cmd\n");
+
+		igs029_set_reg(0x55, 2);
+	}
+	else if (m_igs029_send_buf[0] == 0x07 && m_igs029_send_buf[1] == 0x64)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "SET 058 cmd\n");
+
+		igs029_set_reg(0x58, 2);
+	}
+	else if (m_igs029_send_buf[0] == 0x08 && m_igs029_send_buf[1] == 0x23)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "SET 00X cmd\n");
+
+		u8 offset = m_igs029_send_buf[6];
+
+		igs029_set_reg(offset, 2);
+	}
+	else if (m_igs029_send_buf[0] == 0x08 && m_igs029_send_buf[1] == 0x73)
+	{
+		LOGMASKED(LOG_PROT_IGS029, "SET 03X cmd\n");
+
+		u8 offset = m_igs029_send_buf[2];
+
+		igs029_set_reg(offset + 0x30, 3);
+	}
+	else
+	{
+		logerror("UNKNOWN cmd %02x %02x %02x %02x %02x %02x %02x\n", m_igs029_send_buf[0], m_igs029_send_buf[1], m_igs029_send_buf[2], m_igs029_send_buf[3], m_igs029_send_buf[4], m_igs029_send_buf[5], m_igs029_send_buf[6]);
+
+		m_igs029_recv_len = 0;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+	}
 }
 
 /***************************************************************************
@@ -1021,7 +1436,7 @@ u16 igs017_state::tarzan_palette_bitswap(u16 bgr) const
                                 Decryption
 ***************************************************************************/
 
-[[maybe_unused]] void save_decrypted_rom(const u8 * const rom, int rom_size)
+[[maybe_unused]] void save_decrypted_rom(const u8 *const rom, int rom_size)
 {
 	FILE *f = fopen("igs017_decrypted.bin", "wb");
 	fwrite(rom, 1, rom_size, f);
@@ -1031,7 +1446,7 @@ u16 igs017_state::tarzan_palette_bitswap(u16 bgr) const
 void igs017_state::decrypt_program_rom(int mask, int a7, int a6, int a5, int a4, int a3, int a2, int a1, int a0)
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u8 * const rom = memregion("maincpu")->base();
+	u8 *const rom = memregion("maincpu")->base();
 	std::unique_ptr<u8[]> tmp = std::make_unique<u8[]>(rom_size);
 
 	// decrypt the program ROM
@@ -1104,7 +1519,7 @@ void igs017_state::init_tjsb()
 void igs017_state::mgcs_decrypt_program_rom()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1152,7 +1567,7 @@ void igs017_state::mgcs_decrypt_program_rom()
 void igs017_state::mgcsa_decrypt_program_rom()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1196,7 +1611,7 @@ void igs017_state::mgcsa_decrypt_program_rom()
 void igs017_state::mgcsb_decrypt_program_rom()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1218,14 +1633,14 @@ void igs017_state::mgcsb_decrypt_program_rom()
 			}
 		}
 
-		if ((i & 0x50100 / 2) == 0x10100 / 2) // TODO: maybe incomplete
-		{
+		if ((i & (0x50100 / 2)) == (0x10100 / 2))
 			x ^= 0x0200;
-		}
-		if ((i & 0x50300 / 2) == 0x100 / 2) // TODO: maybe incomplete
-		{
+
+		if ((i & (0x50300 / 2)) == (0x100 / 2))
 			x ^= 0x0200;
-		}
+
+		if ((i & (0x52300 / 2)) == (0x52300 / 2))
+			x ^= 0x0200;
 
 		rom[i] = x;
 	}
@@ -1235,7 +1650,7 @@ void igs017_state::mgcsb_decrypt_program_rom()
 #if 0
 void igs017_state::mgcs_patch_rom()
 {
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	rom[0x20666/2] = 0x601e; // 020666: 671E    beq $20686 (rom check)
 
@@ -1271,6 +1686,12 @@ void igs017_state::init_mgcsb()
 
 	m_igs017_igs031->mgcs_decrypt_tiles();
 	m_igs017_igs031->mgcs_flip_sprites(0);
+
+	m_remap_addr = 0xf0;
+	mgcsb_igs026_remap_set();
+	machine().save().register_postload(save_prepost_delegate(FUNC(igs017_state::mgcsb_igs026_remap_set), this));
+
+//  m_igs_string->dump("mgcsb_string.key", 0x2562, 0x264e, true);
 }
 
 
@@ -1280,7 +1701,7 @@ void igs017_state::init_mgcsb()
 void igs017_state::tarzan_decrypt_program_rom()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u8 * const rom = memregion("maincpu")->base();
+	u8 *const rom = memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size; i++)
 	{
@@ -1320,7 +1741,7 @@ void igs017_state::init_tarzanc()
 void igs017_state::tarzana_decrypt_program_rom()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u8 * const rom = memregion("maincpu")->base();
+	u8 *const rom = memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size; i++)
 	{
@@ -1375,7 +1796,7 @@ void igs017_state::init_tarzana()
 void igs017_state::starzan_decrypt_program_rom()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u8 * const rom = memregion("maincpu")->base();
+	u8 *const rom = memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size; i++)
 	{
@@ -1429,7 +1850,7 @@ void igs017_state::init_jking103a()
 void igs017_state::jking200pr_decrypt_program_rom()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u8 * const rom = memregion("maincpu")->base();
+	u8 *const rom = memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size; i++)
 	{
@@ -1473,7 +1894,7 @@ void igs017_state::init_jking200pr()
 void igs017_state::init_happyskl()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u8 * const rom = memregion("maincpu")->base();
+	u8 *const rom = memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size; i++)
 	{
@@ -1513,7 +1934,7 @@ void igs017_state::init_happyskl()
 void igs017_state::init_cpoker2()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u8 * const rom = memregion("maincpu")->base();
+	u8 *const rom = memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size; i++)
 	{
@@ -1540,7 +1961,7 @@ void igs017_state::init_cpoker2()
 void igs017_state::init_sdmg2754ca()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1591,7 +2012,7 @@ void igs017_state::init_sdmg2754ca()
 void igs017_state::init_sdmg2754cb()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1641,7 +2062,7 @@ void igs017_state::init_sdmg2754cb()
 void igs017_state::init_sdmg2()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1674,7 +2095,7 @@ void igs017_state::init_sdmg2()
 void igs017_state::init_sdmg2p()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1695,7 +2116,7 @@ void igs017_state::init_sdmg2p()
 		rom[i] = x;
 	}
 
-//  m_igs_string->dump("sdmg2p_string.key", 0x7f512, 0x?????, true);
+//  m_igs_string->dump("sdmg2p_string.key", 0x7f512, 0x7f426, true);
 }
 
 // mgdh, mgdha
@@ -1703,7 +2124,7 @@ void igs017_state::init_sdmg2p()
 void igs017_state::init_mgdha()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1731,23 +2152,18 @@ void igs017_state::init_mgdha()
 
 	m_igs017_igs031->mgcs_flip_sprites(0);
 
-//  m_igs_string->dump("mgdh_string.key", 0x7b214, 0x7b128, true); // mgdh, mgdha (0x7c5ba, ???)
+//  m_igs_string->dump("mgdha_string.key", 0x7b214, 0x7b128, true);
 }
 
+#if 0
 void igs017_state::mgdh_patch_rom()
 {
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	// game id check
 	rom[0x4ad50/2] = 0x4e71;
 }
-
-void igs017_state::init_mgdh()
-{
-	init_mgdha();
-
-	mgdh_patch_rom();
-}
+#endif
 
 
 // lhzb2
@@ -1755,7 +2171,7 @@ void igs017_state::init_mgdh()
 #if 0
 void igs017_state::lhzb2_patch_rom()
 {
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	// Prot. checks:
 	rom[0x14786/2] = 0x6044; // 014786: 6744    beq $147cc
@@ -1768,7 +2184,7 @@ void igs017_state::lhzb2_patch_rom()
 void igs017_state::init_lhzb2()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1862,7 +2278,7 @@ void igs017_state::init_lhzb2()
 void igs017_state::init_lhzb2a()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -1917,16 +2333,151 @@ void igs017_state::init_lhzb2a()
 	m_igs017_igs031->lhzb2_decrypt_tiles();
 	m_igs017_igs031->lhzb2_decrypt_sprites();
 
+	m_remap_addr = 0xf0;
+	lhzb2a_igs026_remap_set();
+	machine().save().register_postload(save_prepost_delegate(FUNC(igs017_state::lhzb2a_igs026_remap_set), this));
+
 //  m_igs_string->dump("lhzb2a_string.key", 0x6e11c, 0x6e030, true); // same data as lhzb2
 }
 
+// lhzb2b
+
+void igs017_state::init_lhzb2b()
+{
+	const int rom_size = memregion("maincpu")->bytes();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
+
+	for (int i = 0; i < rom_size / 2; i++)
+	{
+		u16 x = rom[i];
+
+		// bit 0 xor layer
+		if (i & 0x20/2)
+		{
+			if (i & 0x02/2)
+			{
+				x ^= 0x0001;
+			}
+		}
+
+		if (!(i & 0x4000/2))
+		{
+			if (!(i & 0x300/2))
+			{
+				x ^= 0x0001;
+			}
+		}
+
+		// bit 10 xor layer
+
+		if (i & 0x8000/2)
+		{
+			if (i & 0x2000/2)
+			{
+				if (!(i & 0x800/2))
+				{
+					if (!(i & 0x200/2))
+						if (i & 0x100/2)
+							if (i & 0x40/2)
+								x ^= 0x0400;
+				}
+				else
+					if (i & 0x100/2)
+						if (i & 0x40/2)
+							x ^= 0x0400;
+			}
+		}
+		else
+		{
+			if (!(i & 0x800/2))
+			{
+				if (!(i & 0x200/2))
+					if (i & 0x040/2)
+						x ^= 0x0400;
+			}
+			else
+				if (i & 0x040/2)
+					x ^= 0x0400;
+		}
+
+		rom[i] = x;
+	}
+
+	m_igs017_igs031->lhzb2_decrypt_tiles();
+	m_igs017_igs031->lhzb2_decrypt_sprites();
+
+//  m_igs_string->dump("lhzb2b_string.key", 0x2b06e, 0x2b15a, true);
+}
+
+// lhzb2c
+
+void igs017_state::init_lhzb2c()
+{
+	const int rom_size = memregion("maincpu")->bytes();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
+
+	for (int i = 0; i < rom_size / 2; i++)
+	{
+		u16 x = rom[i];
+
+		// bit 0 xor layer
+		if (i & 0x20/2)
+		{
+			if (i & 0x02/2)
+			{
+				x ^= 0x0001;
+			}
+		}
+
+		if (!(i & 0x4000/2))
+		{
+			if (!(i & 0x300/2))
+			{
+				x ^= 0x0001;
+			}
+		}
+
+		// bit 5 xor layer
+
+		if (i & 0x4000/2)
+		{
+			if (i & 0x8000/2)
+			{
+				if (!(i & 0x2000/2))
+				{
+					if (i & 0x200/2)
+					{
+						if (!(i & 0x40/2) || (i & 0x800/2))
+						{
+							x ^= 0x0020;
+						}
+					}
+				}
+			}
+			else
+			{
+				if (!(i & 0x40/2) || (i & 0x800/2))
+				{
+					x ^= 0x0020;
+				}
+			}
+		}
+
+		rom[i] = x;
+	}
+
+	m_igs017_igs031->lhzb2_decrypt_tiles();
+	m_igs017_igs031->lhzb2_decrypt_sprites();
+
+//  m_igs_string->dump("lhzb2c_string.key", 0x6e11c, 0x6e030, true);
+}
 
 // slqz2
 
 #if 0
 void igs017_state::slqz2_patch_rom()
 {
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	// Prot. checks:
 	rom[0x1489c/2] = 0x6044; // 01489C: 6744    beq $148e2
@@ -1939,7 +2490,7 @@ void igs017_state::slqz2_patch_rom()
 void igs017_state::init_slqz2()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -2018,12 +2569,87 @@ void igs017_state::init_slqz2()
 //  m_igs_string->dump("slqz2_string.key", 0x7b214, 0x7b128, true);
 }
 
+void igs017_state::init_slqz2b()
+{
+	const int rom_size = memregion("maincpu")->bytes();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
+
+	for (int i = 0; i < rom_size / 2; i++)
+	{
+		u16 x = rom[i];
+
+		// bit 0 xor layer
+
+		if (i & 0x20/2)
+		{
+			if (i & 0x02/2)
+			{
+				x ^= 0x0001;
+			}
+		}
+
+		if (!(i & 0x4000/2))
+		{
+			if (!(i & 0x300/2))
+			{
+				x ^= 0x0001;
+			}
+		}
+
+		// bit 14 xor layer
+
+		if (!(i & 0x800/2))
+		{
+			if (i & 0x1000/2)
+			{
+				if (i & 0x200/2)
+				{
+					if (!(i & 0x100/2))
+						{
+							if (!(i & 0x40/2))
+							{
+								x ^= 0x4000;
+							}
+						}
+					else
+					{
+						x ^= 0x4000;
+					}
+				}
+			}
+			else
+			{
+				if (i & 0x100/2)
+				{
+					x ^= 0x4000;
+				}
+				else
+				{
+					if (!(i & 0x40/2))
+					{
+						x ^= 0x4000;
+					}
+				}
+			}
+		}
+
+		rom[i] = x;
+	}
+
+	m_igs017_igs031->slqz2_decrypt_tiles();
+	m_igs017_igs031->lhzb2_decrypt_sprites();
+
+//  slqz2_patch_rom();
+
+//  m_igs_string->dump("slqz2_string.key", 0x7b214, 0x7b128, true);
+}
+
 
 // spkrform
 
 void igs017_state::spkrform_patch_rom()
 {
-	u8 * const rom = memregion("maincpu")->base();
+	u8 *const rom = memregion("maincpu")->base();
 
 	rom[0x32ea9] = 0; // enable poker ($e9be = 0)
 	rom[0x32ef9] = 0; // start with poker ($e9bf = 0)
@@ -2044,7 +2670,7 @@ void igs017_state::init_spkrform()
 void igs017_state::init_jking302us()
 {
 	const int rom_size = memregion("maincpu")->bytes();
-	u16 * const rom = (u16 *)memregion("maincpu")->base();
+	u16 *const rom = (u16 *)memregion("maincpu")->base();
 
 	for (int i = 0; i < rom_size / 2; i++)
 	{
@@ -2100,10 +2726,8 @@ void igs017_state::init_jking302us()
 		rom[i] = x;
 	}
 
-	m_igs017_igs031->tarzan_decrypt_tiles(1); // TODO: verify once it works
-	m_igs017_igs031->tarzan_decrypt_sprites(0, 0); // TODO: verify once it works
-
-// m_igs_string->dump("jking103a_string.key", 0xb14d, 0xb244, false); // TODO
+	m_igs017_igs031->mgcs_decrypt_tiles();
+	m_igs017_igs031->jking302us_decrypt_sprites();
 }
 
 /***************************************************************************
@@ -2240,7 +2864,7 @@ void igs017_state::starzan_io(address_map &map)
 	map(0x9000, 0x9000).rw(m_oki, FUNC(okim6295_device::read), FUNC(okim6295_device::write));
 }
 
-// cpoker2, happyksl, starzan
+// cpoker2, happyskl, starzan
 void igs017_state::starzan_counter_w(u8 data)
 {
 	//                                        BIT(data, 0)   // always on in cpoker2/happyskl?
@@ -2258,12 +2882,12 @@ void igs017_state::starzan_counter_w(u8 data)
 
 void igs017_state::starzan_lamps_sound_w(u8 data)
 {
-	m_lamps[0] = BIT(data, 2); // stop 1
-	m_lamps[1] = BIT(data, 0); // stop 2
-	m_lamps[2] = BIT(data, 4); // stop 3
-	m_lamps[3] = BIT(data, 1); // stop 4
-	m_lamps[4] = BIT(data, 3); // bet/stop
-	m_lamps[5] = BIT(data, 5); // start
+	m_lamps[0] = BIT(data, 0);
+	m_lamps[1] = BIT(data, 1);
+	m_lamps[2] = BIT(data, 2);
+	m_lamps[3] = BIT(data, 3);
+	m_lamps[4] = BIT(data, 4);
+	m_lamps[5] = BIT(data, 5);
 //               BIT(data, 6); // unused?
 	m_oki->set_rom_bank(BIT(data, 7));
 
@@ -2284,7 +2908,7 @@ void igs017_state::starzan_mux_map(address_map &map)
 }
 
 
-// happyksl
+// happyskl
 
 void igs017_state::happyskl_map(address_map &map)
 {
@@ -2436,7 +3060,7 @@ void igs017_state::mgcs_igs029_run()
 	for (int i = 0; i < m_igs029_send_len; i++)
 		LOGMASKED(LOG_PROT_IGS029, "%02x ", m_igs029_send_buf[i]);
 
-	if (m_igs029_send_buf[0] == 0x05 && m_igs029_send_buf[1] == 0x5a) // 'Z'
+	if (m_igs029_send_buf[0] == 0x05 && m_igs029_send_buf[1] == 0x5a)
 	{
 		u8 data = m_igs029_send_buf[2];
 		u8 port = m_igs029_send_buf[3];
@@ -2474,73 +3098,9 @@ void igs017_state::mgcs_igs029_run()
 		m_igs029_recv_len = 0;
 		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
 	}
-	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x55) // 'U'
-	{
-		LOGMASKED(LOG_PROT_IGS029, "MIN BET?\n");
-
-		// No inputs. Returns 1 long
-
-		u8 min_bets[4] = {1, 2, 3, 5};
-
-		m_igs029_recv_len = 0;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x00;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x00;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x00;
-		m_igs029_recv_buf[m_igs029_recv_len++] = min_bets[ (~m_io_dsw[1]->read()) & 3 ];
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x05;
-	}
-	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x39) // '9'
-	{
-		LOGMASKED(LOG_PROT_IGS029, "READ DSW\n");
-
-		u8 ret = 0xff;
-		if      (!BIT(m_dsw_select, 0)) ret &= m_io_dsw[0]->read();
-		else if (!BIT(m_dsw_select, 1)) ret &= m_io_dsw[1]->read();
-		else logerror("%s: warning, reading dsw with dsw_select = %02x\n", machine().describe_context(), m_dsw_select);
-
-		m_igs029_recv_len = 0;
-		m_igs029_recv_buf[m_igs029_recv_len++] = ret;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x02;
-	}
-	else if (m_igs029_send_buf[0] == 0x07 && m_igs029_send_buf[1] == 0x2c) // ','
-	{
-		LOGMASKED(LOG_PROT_IGS029, "?? (2C)\n"); // ??
-
-		// 4 inputs. Returns 1 long
-
-		// called when pressing start without betting.
-		// Returning high values produces an overflow causing a division by 0, and then the game hangs.
-		m_igs029_recv_len = 0;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x00;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x00;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x00;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01; // ??
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x05;
-	}
-	else if (m_igs029_send_buf[0] == 0x07 && m_igs029_send_buf[1] == 0x15)
-	{
-		LOGMASKED(LOG_PROT_IGS029, "SET LONG\n");
-
-		m_igs029_mgcs_long = get_u32be(&m_igs029_send_buf[2]);
-
-		m_igs029_recv_len = 0;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
-	}
-	else if (m_igs029_send_buf[0] == 0x03 && m_igs029_send_buf[1] == 0x04)
-	{
-		LOGMASKED(LOG_PROT_IGS029, "GET LONG\n");
-
-		m_igs029_recv_len = 0;
-		put_u32le(&m_igs029_recv_buf[m_igs029_recv_len], m_igs029_mgcs_long);
-		m_igs029_recv_len += 4;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x05;
-	}
 	else
 	{
-		LOGMASKED(LOG_PROT_IGS029, "UNKNOWN\n");
-
-		m_igs029_recv_len = 0;
-		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+		common_igs029_run();
 	}
 
 	m_igs029_send_len = 0;
@@ -2668,9 +3228,87 @@ void igs017_state::mgcsa_map(address_map &map)
 	// oki banking through protection (code at $1a350)
 }
 
+//mgcsb
+
+void igs017_state::mgcsb_counter_w(u8 data)
+{
+	m_hopper->motor_w(BIT(data, 5));   // hopper
+	machine().bookkeeping().coin_counter_w(1, BIT(data, 6)); // coin out
+	machine().bookkeeping().coin_counter_w(0, BIT(data, 7)); // coin in
+}
+
+u8 igs017_state::mgcsb_keys_joy_r()
+{
+	u8 ret = 0xff;
+	if (!BIT(m_input_select, 5, 3)) ret &= (m_io_joy->read() | 0x3f); //  (joystick mode, top 2 bits)
+	if (!BIT(m_input_select, 0))    ret &= m_io_key[0]->read();       //  (keyboard mode)
+	if (!BIT(m_input_select, 1))    ret &= m_io_key[1]->read();
+	if (!BIT(m_input_select, 2))    ret &= m_io_key[2]->read();
+	if (!BIT(m_input_select, 3))    ret &= m_io_key[3]->read();
+	if (!BIT(m_input_select, 4))    ret &= m_io_key[4]->read();
+	return ret;
+}
+
+u16 igs017_state::mgcsb_input_r(offs_t offset)
+{
+	switch (offset * 2)
+	{
+		case 0x00:
+			return (m_io_dsw[1]->read() << 8) | 0xff;
+
+		case 0x02:
+			return (m_io_joy->read() << 8) | mgcsb_keys_joy_r();
+
+		case 0x04:
+			return 0xff00 | m_io_coins->read();
+
+		case 0x06:
+			return 0xff00 | m_io_dsw[0]->read();
+	}
+
+	return 0xffff;
+}
+
+void igs017_state::mgcsb_remap_addr_w(address_space &space, u16 data)
+{
+	m_remap_addr = data & 0xff;
+
+	mgcsb_igs026_remap_set();
+}
+
+void igs017_state::mgcsb_igs026_remap_set()
+{
+	address_space &space = m_maincpu->space(AS_PROGRAM);
+
+	// Unmap previous address ranges
+	if (m_remap_addr != -1)
+	{
+		space.unmap_write    (m_remap_addr * 0x10000 + 0x4000, m_remap_addr * 0x10000 + 0x4001);
+		space.unmap_readwrite(m_remap_addr * 0x10000 + 0x4002, m_remap_addr * 0x10000 + 0x4003);
+
+		space.unmap_read     (m_remap_addr * 0x10000 + 0x8000, m_remap_addr * 0x10000 + 0x8007);
+		space.unmap_write    (m_remap_addr * 0x10000 + 0xc000, m_remap_addr * 0x10000 + 0xc001);
+	}
+
+	// Add new memory ranges
+	space.install_write_handler    (m_remap_addr * 0x10000 + 0x4001, m_remap_addr * 0x10000 + 0x4001, write8smo_delegate(*m_igs_mux, FUNC(igs_mux_device::address_w)));
+	space.install_readwrite_handler(m_remap_addr * 0x10000 + 0x4003, m_remap_addr * 0x10000 + 0x4003, read8smo_delegate (*m_igs_mux, FUNC(igs_mux_device::data_r)), write8smo_delegate(*m_igs_mux, FUNC(igs_mux_device::data_w)));
+
+	space.install_read_handler     (m_remap_addr * 0x10000 + 0x8000, m_remap_addr * 0x10000 + 0x8007, read16sm_delegate (*this, FUNC(igs017_state::mgcsb_input_r)));
+	space.install_write_handler    (m_remap_addr * 0x10000 + 0xc000, m_remap_addr * 0x10000 + 0xc001, write16mo_delegate(*this, FUNC(igs017_state::mgcsb_remap_addr_w)));
+
+	LOGMASKED(LOG_PROT_REMAP, "%s: inputs and protection remapped at %02xxxxx\n", machine().describe_context(), m_remap_addr);
+}
+
 void igs017_state::mgcsb_map(address_map &map)
 {
 	map(0x000000, 0x07ffff).rom();
+
+	map(0x002001, 0x002001).w(m_igs_incdec, FUNC(igs_incdec_device::reset_w));
+	map(0x002003, 0x002003).w(m_igs_incdec, FUNC(igs_incdec_device::dec_w));
+	map(0x002007, 0x002007).w(m_igs_incdec, FUNC(igs_incdec_device::inc_w));
+	map(0x00200b, 0x00200b).r(m_igs_incdec, FUNC(igs_incdec_device::result_r));
+
 	map(0x300000, 0x303fff).ram().share("nvram");
 
 	map(0x49c000, 0x49c001).nopr().w(m_igs_mux, FUNC(igs_mux_device::address_w)).umask16(0x00ff); // clr.w dummy read
@@ -2681,14 +3319,15 @@ void igs017_state::mgcsb_map(address_map &map)
 	map(0xa10001, 0xa10001).rw(m_oki, FUNC(okim6295_device::read), FUNC(okim6295_device::write));
 }
 
-void igs017_state::mgcsb_mux_map(address_map &map) // TODO
+void igs017_state::mgcsb_mux_map(address_map &map)
 {
-	//map(0x00, 0x00).lr8(NAME([this](){ return m_input_select | 0x02; })).w(FUNC(igs017_state::mgcs_keys_hopper_igs029_w));
-	//map(0x01, 0x01).r(FUNC(igs017_state::mgcs_scramble_data_r)).w(FUNC(igs017_state::mgcs_scramble_data_w));
-	//map(0x02, 0x02).r(FUNC(igs017_state::mgcs_igs029_data_r));
-	//map(0x03, 0x03).w(FUNC(igs017_state::mgcs_igs029_data_w));
+	map(0x00, 0x00).w(FUNC(igs017_state::mgcsb_counter_w));
+	map(0x01, 0x01).w(NAME((&igs017_state::oki_sound_bank_w<0, 0xfe>)));
+	map(0x02, 0x02).w(FUNC(igs017_state::input_select_w<0x00>));
 
-	//igs_string_mux_map(map); // 0x05 r, 0x20 - 0x27 w, 0x40 r
+	igs_bitswap_mux_map(map);
+
+	igs_string_mux_map(map);
 }
 
 // sdmg2
@@ -2702,6 +3341,9 @@ void igs017_state::sdmg2_map(address_map &map)
 	map(0x002003, 0x002003).w(m_igs_incdec, FUNC(igs_incdec_device::dec_w));
 	map(0x002007, 0x002007).w(m_igs_incdec, FUNC(igs_incdec_device::inc_w));
 	map(0x00200b, 0x00200b).r(m_igs_incdec, FUNC(igs_incdec_device::result_r));
+
+	// incalt protection
+	map(0x010000, 0x0107ff).rw(m_igs_incalt, FUNC(igs_incalt_device::result_r), FUNC(igs_incalt_device::byte_w));
 
 	map(0x1f0000, 0x1fffff).ram().share("nvram");
 
@@ -2741,6 +3383,18 @@ void igs017_state::sdmg2_mux_map(address_map &map)
 }
 
 // mgdh, mgdha
+
+u8 igs017_state::mgdh_boot_r(offs_t offset)
+{
+	constexpr u8 mgdh_boot_table[4] = {0, 1, 2, 0};
+
+	u8 ret = mgdh_boot_table[m_mgdh_boot_ptr];
+
+	if (!machine().side_effects_disabled())
+		m_mgdh_boot_ptr = (m_mgdh_boot_ptr + 1) & 3;
+
+	return ret;
+}
 
 void igs017_state::mgdh_map(address_map &map)
 {
@@ -2785,14 +3439,45 @@ void igs017_state::mgdh_mux_map(address_map &map)
 {
 	mgdha_mux_map(map);
 
-//  igs_string_mux_map(map); // 0x05 r, 0x20 - 0x27 w, 0x40 r (actually unused except for the game id check?)
+	map(0x05, 0x05).r(FUNC(igs017_state::mgdh_boot_r));
 }
 
 // sdmg2p
 
+void igs017_state::sdmg2p_counter_w(u8 data)
+{
+	machine().bookkeeping().coin_counter_w(1, BIT(data, 1));   // coin out counter
+	machine().bookkeeping().coin_counter_w(0, BIT(data, 0));   // coin in  counter
+
+	if (data & ~0x03)
+		logerror("%s: warning, unknown bits written in counter_w = %02x\n", machine().describe_context(), data);
+}
+
+void igs017_state::sdmg2p_sound_hopper_w(u8 data)
+{
+	m_hopper->motor_w(BIT(data, 6));
+	m_oki->set_rom_bank(BIT(data, 7));
+
+	if (data & ~0xc0)
+		logerror("%s: warning, unknown bits written in sound_hopper_w = %02x\n", machine().describe_context(), data);
+}
+
+void igs017_state::sdmg2p_keys_w(u8 data)
+{
+	m_input_select = BIT(data, 2, 5);
+
+	if (data & ~0x7c)
+		logerror("%s: warning, unknown bits written in keys_w = %02x\n", machine().describe_context(), data);
+}
+
 void igs017_state::sdmg2p_map(address_map &map)
 {
 	map(0x000000, 0x07ffff).rom();
+
+	map(0x003041, 0x003041).w(m_igs_incdec, FUNC(igs_incdec_device::reset_w));
+	map(0x003043, 0x003043).w(m_igs_incdec, FUNC(igs_incdec_device::dec_w));
+	map(0x003047, 0x003047).w(m_igs_incdec, FUNC(igs_incdec_device::inc_w));
+	map(0x00304a, 0x00304b).r(m_igs_incdec, FUNC(igs_incdec_device::result_r));
 
 	map(0x100000, 0x103fff).ram().share("nvram");
 
@@ -2804,13 +3489,13 @@ void igs017_state::sdmg2p_map(address_map &map)
 	map(0xb10001, 0xb10001).rw(m_oki, FUNC(okim6295_device::read), FUNC(okim6295_device::write));
 }
 
-void igs017_state::sdmg2p_mux_map(address_map &map) // TODO: hopper motor w
+void igs017_state::sdmg2p_mux_map(address_map &map)
 {
 	map.unmap_value_high();
-	map(0x00, 0x00).r(NAME((&igs017_state::keys_ipt_r<u8, 2, 2>)));
+	map(0x00, 0x00).r(NAME((&igs017_state::keys_ipt_r<u8, 0, 2>))).w(FUNC(igs017_state::sdmg2p_counter_w));
 	map(0x01, 0x01).portr("JOY");
-	map(0x02, 0x02).portr("BUTTONS").w(FUNC(igs017_state::mgdh_keys_hopper_w));
-	map(0x03, 0x03).portr("COINS").w(FUNC(igs017_state::mgdh_counter_w));
+	map(0x02, 0x02).portr("BUTTONS").w(FUNC(igs017_state::sdmg2p_keys_w));
+	map(0x03, 0x03).portr("COINS").w(FUNC(igs017_state::sdmg2p_sound_hopper_w));
 
 	igs_string_mux_map(map);
 }
@@ -2824,8 +3509,7 @@ void igs017_state::tjsb_map(address_map &map)
 	map(0x0e000, 0x0e000).w (m_igs_mux, FUNC(igs_mux_device::address_w));
 	map(0x0e001, 0x0e001).rw(m_igs_mux, FUNC(igs_mux_device::data_r), FUNC(igs_mux_device::data_w));
 
-	map(0x0e002, 0x0efff).ram();
-	map(0x0f000, 0x0ffff).ram();
+	map(0x0e002, 0x0ffff).ram().share("nvram");
 	map(0x10000, 0x3ffff).rom();
 }
 
@@ -2921,7 +3605,8 @@ void igs017_state::lhzb2_keys_hopper_w(u8 data)
 u8 igs017_state::lhzb2_scramble_data_r()
 {
 	u8 ret = bitswap<8>(m_scramble_data, 0,1,2,3,4,5,6,7);
-	LOGMASKED(LOG_PROT_SCRAMBLE, "%s: reading scrambled data %02x from igs_mux\n", machine().describe_context(), ret);
+	if (!machine().side_effects_disabled())
+		LOGMASKED(LOG_PROT_SCRAMBLE, "%s: reading scrambled data %02x from igs_mux\n", machine().describe_context(), ret);
 	return ret;
 }
 
@@ -2972,6 +3657,15 @@ u16 igs017_state::lhzb2a_input_r(offs_t offset)
 
 void igs017_state::lhzb2a_remap_addr_w(address_space &space, u16 data)
 {
+	m_remap_addr = data & 0xff;
+
+	lhzb2a_igs026_remap_set();
+}
+
+void igs017_state::lhzb2a_igs026_remap_set()
+{
+	address_space &space = m_maincpu->space(AS_PROGRAM);
+
 	// Unmap previous address ranges
 	if (m_remap_addr != -1)
 	{
@@ -2981,8 +3675,6 @@ void igs017_state::lhzb2a_remap_addr_w(address_space &space, u16 data)
 		space.unmap_read     (m_remap_addr * 0x10000 + 0x8000, m_remap_addr * 0x10000 + 0x8005);
 		space.unmap_write    (m_remap_addr * 0x10000 + 0xc000, m_remap_addr * 0x10000 + 0xc001);
 	}
-
-	m_remap_addr = data & 0xff;
 
 	// Add new memory ranges
 	space.install_write_handler    (m_remap_addr * 0x10000 + 0x4001, m_remap_addr * 0x10000 + 0x4001, write8smo_delegate(*m_igs_mux, FUNC(igs_mux_device::address_w)));
@@ -3000,12 +3692,12 @@ void igs017_state::lhzb2a_keys_hopper_w(offs_t offset, u16 data, u16 mem_mask)
 	{
 		m_input_select =                          BIT(data, 0, 5); // keys
 		m_hopper->motor_w(                        BIT(data, 5));   // hopper
-		machine().bookkeeping().coin_counter_w(0, BIT(data, 6));   // coin out counter
-		machine().bookkeeping().coin_counter_w(1, BIT(data, 7));   // coin in  counter
+		machine().bookkeeping().coin_counter_w(1, BIT(data, 6));   // coin out counter
+		machine().bookkeeping().coin_counter_w(0, BIT(data, 7));   // coin in  counter
 	}
 	if (ACCESSING_BITS_8_15)
 	{
-		m_oki->set_rom_bank(BIT(data, 7));
+		m_oki->set_rom_bank(BIT(data, 8));
 
 		if (data & 0xfe00)
 			logerror("%s: warning, unknown bits written in keys_hopper_w = %04x\n", machine().describe_context(), data);
@@ -3042,6 +3734,151 @@ void igs017_state::lhzb2a_mux_map(address_map &map)
 	igs_string_mux_map(map); // 0x05 r, 0x20 - 0x27 w, 0x40 r
 }
 
+u8 igs017_state::lhzb2b_scramble_data_r()
+{
+	u8 ret = (bitswap<8>(m_scramble_data, 0,1,2,3,4,5,6,7) + 1) & 3;
+	LOGMASKED(LOG_PROT_SCRAMBLE, "%s: reading scrambled data %02x from igs_mux\n", machine().describe_context(), ret);
+	return ret;
+}
+
+void igs017_state::lhzb2b_igs029_run()
+{
+	LOGMASKED(LOG_PROT_IGS029, "%s: running igs029 command ", machine().describe_context());
+	for (int i = 0; i < m_igs029_send_len; i++)
+		LOGMASKED(LOG_PROT_IGS029, "%02x ", m_igs029_send_buf[i]);
+
+	if (m_igs029_send_buf[0] == 0x05 && m_igs029_send_buf[1] == 0x5a)
+	{
+		u8 data = m_igs029_send_buf[2];
+		u8 port = m_igs029_send_buf[3];
+
+		LOGMASKED(LOG_PROT_IGS029, "PORT %02x = %02x\n", port, data);
+
+		switch (port)
+		{
+			case 0x01:
+				m_dsw_select = data;
+				if (data & ~0x03)
+					logerror("%s: warning, unknown bits written in port %02x = %02x\n", machine().describe_context(), port, data);
+				break;
+
+			default:
+				logerror("%s: warning, unknown port %02x written with %02x\n", machine().describe_context(), port, data);
+		}
+
+		m_igs029_recv_len = 0;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+	}
+	else
+		common_igs029_run();
+
+	m_igs029_send_len = 0;
+}
+
+void igs017_state::lhzb2b_igs029_scramble_irq_w(u8 data)
+{
+	// ---- 3--- IRQ on IGS029
+	const bool igs029_irq = BIT(data, 3);
+	m_scramble_data = data;
+
+	if (igs029_irq)
+	{
+		if (!m_igs029_recv_len)
+		{
+			// SEND
+			if (m_igs029_send_len < sizeof(m_igs029_send_buf))
+				m_igs029_send_buf[m_igs029_send_len++] = m_igs029_send_data;
+
+			LOGMASKED(LOG_PROT_IGS029, "%s: igs029 send", machine().describe_context());
+			for (int i = 0; i < m_igs029_send_len; i++)
+				LOGMASKED(LOG_PROT_IGS029, " %02x", m_igs029_send_buf[i]);
+			LOGMASKED(LOG_PROT_IGS029, "\n");
+
+			if (m_igs029_send_buf[0] == m_igs029_send_len)
+				lhzb2b_igs029_run();
+		}
+
+		if (m_igs029_recv_len)
+		{
+			// RECV
+			LOGMASKED(LOG_PROT_IGS029, "%s: igs029 recv", machine().describe_context());
+			for (int i = 0; i < m_igs029_recv_len; i++)
+				LOGMASKED(LOG_PROT_IGS029, " %02x", m_igs029_recv_buf[i]);
+			LOGMASKED(LOG_PROT_IGS029, "\n");
+
+			if (m_igs029_recv_len)
+				--m_igs029_recv_len;
+
+			m_igs029_recv_data = m_igs029_recv_buf[m_igs029_recv_len];
+		}
+	}
+}
+
+void igs017_state::lhzb2b_map(address_map &map)
+{
+	map(0x000000, 0x07ffff).rom();
+
+	// incdec protection
+	map(0x003201, 0x003201).w(m_igs_incdec, FUNC(igs_incdec_device::reset_w));
+	map(0x003203, 0x003203).w(m_igs_incdec, FUNC(igs_incdec_device::dec_w));
+	map(0x003207, 0x003207).w(m_igs_incdec, FUNC(igs_incdec_device::inc_w));
+	map(0x00320b, 0x00320b).r(m_igs_incdec, FUNC(igs_incdec_device::result_r));
+
+	map(0x500000, 0x503fff).ram().share("nvram");
+
+	map(0x910000, 0x910001).nopr().w(m_igs_mux, FUNC(igs_mux_device::address_w)).umask16(0x00ff); // clr.w dummy read
+	map(0x910002, 0x910003).rw(m_igs_mux, FUNC(igs_mux_device::data_r), FUNC(igs_mux_device::data_w)).umask16(0x00ff);
+
+	map(0xb00000, 0xb0ffff).rw(m_igs017_igs031, FUNC(igs017_igs031_device::read), FUNC(igs017_igs031_device::write)).umask16(0x00ff);
+
+	map(0xb10001, 0xb10001).rw(m_oki, FUNC(okim6295_device::read), FUNC(okim6295_device::write));
+}
+
+void igs017_state::lhzb2b_mux_map(address_map &map)
+{
+	map(0x00, 0x00).w(FUNC(igs017_state::lhzb2_keys_hopper_w));
+	map(0x01, 0x01).r(FUNC(igs017_state::lhzb2_keys_r)).w(NAME((&igs017_state::oki_sound_bank_w<7, 0x7f>)));
+	map(0x02, 0x02).w(FUNC(igs017_state::mgcs_igs029_data_w));
+	map(0x03, 0x03).w(FUNC(igs017_state::lhzb2b_igs029_scramble_irq_w));
+
+	igs_string_mux_map(map);
+}
+
+void igs017_state::lhzb2c_map(address_map &map)
+{
+	map(0x000000, 0x07ffff).rom();
+
+	// incdec protection
+	map(0x003201, 0x003201).w(m_igs_incdec, FUNC(igs_incdec_device::reset_w));
+	map(0x003203, 0x003203).w(m_igs_incdec, FUNC(igs_incdec_device::dec_w));
+	map(0x003207, 0x003207).w(m_igs_incdec, FUNC(igs_incdec_device::inc_w));
+	map(0x00320b, 0x00320b).r(m_igs_incdec, FUNC(igs_incdec_device::result_r));
+
+	map(0x500000, 0x503fff).ram().share("nvram");
+
+	map(0x910000, 0x910001).nopr().w(m_igs_mux, FUNC(igs_mux_device::address_w)).umask16(0x00ff); // clr.w dummy read
+	map(0x910002, 0x910003).rw(m_igs_mux, FUNC(igs_mux_device::data_r), FUNC(igs_mux_device::data_w)).umask16(0x00ff);
+
+	map(0xb00000, 0xb0ffff).rw(m_igs017_igs031, FUNC(igs017_igs031_device::read), FUNC(igs017_igs031_device::write)).umask16(0x00ff);
+
+	map(0xb10001, 0xb10001).rw(m_oki, FUNC(okim6295_device::read), FUNC(okim6295_device::write));
+
+	map(0xf04000, 0xf04001).nopr().w(m_igs_mux, FUNC(igs_mux_device::address_w)).umask16(0x00ff); // clr.w dummy read
+	map(0xf04002, 0xf04003).rw(m_igs_mux, FUNC(igs_mux_device::data_r), FUNC(igs_mux_device::data_w)).umask16(0x00ff);
+
+	map(0xf08000, 0xf08005).r(FUNC(igs017_state::lhzb2a_input_r));
+}
+
+void igs017_state::lhzb2c_mux_map(address_map &map)
+{
+	map(0x00, 0x00).w(FUNC(igs017_state::lhzb2_keys_hopper_w));
+	map(0x01, 0x01).w(NAME((&igs017_state::oki_sound_bank_w<0, 0xfe>)));
+	map(0x02, 0x02).w(FUNC(igs017_state::input_select_w<0xe0>));
+
+	igs_bitswap_mux_map(map);
+
+	igs_string_mux_map(map);
+}
 
 // slqz2
 
@@ -3092,26 +3929,119 @@ void igs017_state::slqz2_mux_map(address_map &map)
 
 // jking302us
 
+void igs017_state::jking302us_igs029_run()
+{
+	LOGMASKED(LOG_PROT_IGS029, "%s: running igs029 command ", machine().describe_context());
+	for (int i = 0; i < m_igs029_send_len; i++)
+		LOGMASKED(LOG_PROT_IGS029, "%02x ", m_igs029_send_buf[i]);
+
+	if (m_igs029_send_buf[0] == 0x05 && m_igs029_send_buf[1] == 0x5a)
+	{
+		u8 data = m_igs029_send_buf[2];
+		u8 port = m_igs029_send_buf[3];
+
+		LOGMASKED(LOG_PROT_IGS029, "PORT %02x = %02x\n", port, data);
+
+		switch (port)
+		{
+			case 0x03:
+				m_dsw_select = data;
+				if (data & ~0x03)
+					logerror("%s: warning, unknown bits written in port %02x = %02x\n", machine().describe_context(), port, data);
+				break;
+
+			default:
+				logerror("%s: warning, unknown port %02x written with %02x\n", machine().describe_context(), port, data);
+		}
+
+		m_igs029_recv_len = 0;
+		m_igs029_recv_buf[m_igs029_recv_len++] = 0x01;
+	}
+	else
+	{
+		common_igs029_run();
+	}
+
+	m_igs029_send_len = 0;
+}
+
+void igs017_state::jking302us_igs029_irq_w(u8 data)
+{
+	// 7--- ---- IRQ on IGS029
+	const bool igs029_irq = BIT(data, 7);
+
+	if (igs029_irq)
+	{
+		if (!m_igs029_recv_len)
+		{
+			// SEND
+			if (m_igs029_send_len < sizeof(m_igs029_send_buf))
+				m_igs029_send_buf[m_igs029_send_len++] = m_igs029_send_data;
+
+			LOGMASKED(LOG_PROT_IGS029, "%s: igs029 send", machine().describe_context());
+			for (int i = 0; i < m_igs029_send_len; i++)
+				LOGMASKED(LOG_PROT_IGS029, " %02x", m_igs029_send_buf[i]);
+			LOGMASKED(LOG_PROT_IGS029, "\n");
+
+			if (m_igs029_send_buf[0] == m_igs029_send_len)
+				jking302us_igs029_run();
+		}
+
+		if (m_igs029_recv_len)
+		{
+			// RECV
+			LOGMASKED(LOG_PROT_IGS029, "%s: igs029 recv", machine().describe_context());
+			for (int i = 0; i < m_igs029_recv_len; i++)
+				LOGMASKED(LOG_PROT_IGS029, " %02x", m_igs029_recv_buf[i]);
+			LOGMASKED(LOG_PROT_IGS029, "\n");
+
+			if (m_igs029_recv_len)
+				--m_igs029_recv_len;
+
+			m_igs029_recv_data = m_igs029_recv_buf[m_igs029_recv_len];
+		}
+	}
+}
+
+void igs017_state::jking302us_sound_scramble_w(u8 data)
+{
+	m_oki->set_rom_bank(                      BIT(data, 4));
+	m_hopper->motor_w(                        BIT(data, 5)); // hopper
+	machine().bookkeeping().coin_counter_w(1, BIT(data, 6)); // coin out counter
+	machine().bookkeeping().coin_counter_w(0, BIT(data, 7)); // coin in  counter
+
+	m_scramble_data = data & 3;
+}
+
+u8 igs017_state::jking302us_scramble_coin_r()
+{
+	u8 ret = (bitswap<4>((m_scramble_data + 1) & 3, 0, 1, 2, 3) << 4) | (m_io_coins->read() & 0xf);
+	if (!machine().side_effects_disabled())
+		LOGMASKED(LOG_PROT_SCRAMBLE, "%s: reading scrambled data %02x from igs_mux\n", machine().describe_context(), ret);
+	return ret;
+}
+
 void igs017_state::jking302us_map(address_map &map)
 {
 	map(0x000000, 0x07ffff).rom();
-	map(0x100000, 0x103fff).ram().share("nvram"); // TODO: verify once it works
+	map(0x100000, 0x103fff).ram().share("nvram");
 
 	map(0x638000, 0x638001).nopr().w(m_igs_mux, FUNC(igs_mux_device::address_w)).umask16(0x00ff); // clr.w dummy read
 	map(0x638002, 0x638003).rw(m_igs_mux, FUNC(igs_mux_device::data_r), FUNC(igs_mux_device::data_w)).umask16(0x00ff);
 
 	map(0xb00000, 0xb0ffff).rw(m_igs017_igs031, FUNC(igs017_igs031_device::read), FUNC(igs017_igs031_device::write)).umask16(0x00ff);
 
-	// map(0x912001, 0x912001).rw(m_oki, FUNC(okim6295_device::read), FUNC(okim6295_device::write)); // TODO
+	map(0xb12001, 0xb12001).rw(m_oki, FUNC(okim6295_device::read), FUNC(okim6295_device::write));
 
-	// map(0xfff000, 0xf00003).rw(); // TODO
+	map(0xb14000, 0xb14001).r(FUNC(igs017_state::mgcs_igs029_data_r));
 }
 
 void igs017_state::jking302us_mux_map(address_map &map)
 {
-	// TODO
-
-	igs_string_mux_map(map); // 0x05 r, 0x20 - 0x27 w, 0x40 r
+	map(0x00, 0x00).portr("PLAYER2").nopw();    // written by lamp code
+	map(0x01, 0x01).portr("PLAYER1").w(FUNC(igs017_state::jking302us_igs029_irq_w));
+	map(0x02, 0x02).w(FUNC(igs017_state::jking302us_sound_scramble_w));
+	map(0x03, 0x03).w(FUNC(igs017_state::mgcs_igs029_data_w));
 }
 
 
@@ -3474,7 +4404,7 @@ static INPUT_PORTS_START( lhzb )
 	PORT_DIPUNKNOWN_DIPLOC( 0x80, 0x80, "SW2:8" )
 INPUT_PORTS_END
 
-static INPUT_PORTS_START( mgcs )
+static INPUT_PORTS_START( mgcs_common )
 	// DSWs are read through a protection device (IGS029). See code at $1cf16
 
 	PORT_START("DSW1") // $3009e2
@@ -3482,7 +4412,7 @@ static INPUT_PORTS_START( mgcs )
 	PORT_DIPNAME( 0x10, 0x10, "Credit Limit" )                          PORT_DIPLOCATION("SW1:5")     // 進分上限
 	PORT_DIPSETTING(    0x10, "500" )
 	PORT_DIPSETTING(    0x00, "1000" )
-	PORT_DIPNAME( 0x80, 0x03, "Double Up Jackpot" )                     PORT_DIPLOCATION("SW1:8")     // 比倍爆機
+	PORT_DIPNAME( 0x80, 0x80, "Double Up Jackpot" )                     PORT_DIPLOCATION("SW1:8")     // 比倍爆機
 	PORT_DIPSETTING(    0x80, "1000" )
 	PORT_DIPSETTING(    0x00, "2000" )
 
@@ -3509,6 +4439,12 @@ static INPUT_PORTS_START( mgcs )
 	PORT_DIPSETTING(    0x00, DEF_STR( On ) )                                                         // 有
 	PORT_DIPUNUSED_DIPLOC( 0x80, 0x80, "SW2:8" )
 
+	IGS_MAHJONG_MATRIX_CONDITIONAL("DSW2", 0x10, 0x10)
+INPUT_PORTS_END
+
+static INPUT_PORTS_START( mgcs )
+	PORT_INCLUDE(mgcs_common)
+
 	// Joystick mode: the top 2 bits of COINS (port A) and JOY (port B) are read and combined with the bottom 4 bits read from port C (see code at $1c83a)
 
 	PORT_START("JOY")
@@ -3534,7 +4470,34 @@ static INPUT_PORTS_START( mgcs )
 	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_BUTTON2 )                PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)  // 押注
 	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_BUTTON3 )                PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)  // 功能
 
-	IGS_MAHJONG_MATRIX_CONDITIONAL("DSW2", 0x10, 0x10)
+INPUT_PORTS_END
+
+static INPUT_PORTS_START( mgcsb )
+	PORT_INCLUDE(mgcs_common)
+
+	PORT_START("JOY")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_START1 )                 PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)  // 开始
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_JOYSTICK_UP )            PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)  // 上
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_JOYSTICK_DOWN )          PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)  // 下
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_JOYSTICK_LEFT )          PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)  // 左
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_JOYSTICK_RIGHT )         PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)  // 右
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_BUTTON1 )                PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)  // 摸/舍
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_BUTTON3 )                PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)  // 功能
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN )                PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)
+
+	PORT_START("COINS")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_CUSTOM ) PORT_READ_LINE_DEVICE_MEMBER("hopper", FUNC(hopper_device::line_r)) // 哈巴
+	PORT_SERVICE_NO_TOGGLE( 0x02, IP_ACTIVE_LOW )                                                                   // 測試      (hold on start for input test)
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_GAMBLE_BOOK )                                                                // 查帳
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_COIN1 ) PORT_IMPULSE(5)  PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)          // 投幣
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_GAMBLE_KEYIN )           PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)          // 投幣
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_GAMBLE_PAYOUT )          PORT_CONDITION("DSW1", 0x40, EQUALS, 0x40)          // 退幣
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_GAMBLE_KEYOUT )          PORT_CONDITION("DSW1", 0x40, EQUALS, 0x00)          // 退幣
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_SERVICE1 )               PORT_NAME("Show Credits")                           // 清除      (hold to show credits/bets/wins when hidden)
+	PORT_BIT( 0xc0, IP_ACTIVE_LOW, IPT_UNKNOWN )                PORT_CONDITION("DSW2", 0x10, EQUALS, 0x10)
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_BUTTON2 )                PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)          // 押注
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN )                PORT_CONDITION("DSW2", 0x10, EQUALS, 0x00)
+
 INPUT_PORTS_END
 
 static INPUT_PORTS_START( sdmg2_common )
@@ -3712,7 +4675,7 @@ static INPUT_PORTS_START( mgdh )
 	PORT_DIPSETTING(    0x60, DEF_STR( 7C_1C ) )
 	PORT_DIPSETTING(    0x40, DEF_STR( 8C_1C ) )
 	PORT_DIPSETTING(    0x20, DEF_STR( 9C_1C ) )
-	PORT_DIPSETTING(    0x00, "10 Coins/1 Credit" )
+	PORT_DIPSETTING(    0x00, DEF_STR( 10C_1C ) )
 
 	PORT_START("COINS")
 	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_CUSTOM ) PORT_READ_LINE_DEVICE_MEMBER("hopper", FUNC(hopper_device::line_r)) // 哈巴
@@ -4004,10 +4967,10 @@ static INPUT_PORTS_START( tarzan )
 	PORT_DIPSETTING( 0x0c, DEF_STR(1C_2C) )
 	PORT_DIPSETTING( 0x0a, DEF_STR(1C_4C) )
 	PORT_DIPSETTING( 0x08, DEF_STR(1C_5C) )
-	PORT_DIPSETTING( 0x06, "1 Coin/10 Credits" )
-	PORT_DIPSETTING( 0x04, "1 Coin/20 Credits" )
-	PORT_DIPSETTING( 0x02, "1 Coin/50 Credits" )
-	PORT_DIPSETTING( 0x00, "1 Coin/100 Credits" )
+	PORT_DIPSETTING( 0x06, DEF_STR(1C_10C) )
+	PORT_DIPSETTING( 0x04, DEF_STR(1C_20C) )
+	PORT_DIPSETTING( 0x02, DEF_STR(1C_50C) )
+	PORT_DIPSETTING( 0x00, DEF_STR(1C_100C) )
 	PORT_DIPNAME( 0x30, 0x30, "Key-In Rate" )                           PORT_DIPLOCATION("SW1:5,6")   // 开分比率
 	PORT_DIPSETTING( 0x30, "100" )
 	PORT_DIPSETTING( 0x20, "200" )
@@ -4097,36 +5060,36 @@ INPUT_PORTS_END
 
 static INPUT_PORTS_START( starzan )
 	PORT_START("DSW1")
-	PORT_DIPNAME( 0x01, 0x01, DEF_STR( Demo_Sounds ) ) PORT_DIPLOCATION("SW1:1")
-	PORT_DIPSETTING( 0x01, DEF_STR( Off ) )
-	PORT_DIPSETTING( 0x00, DEF_STR( On ) )
-	PORT_DIPNAME( 0x02, 0x02, "System Limit" ) PORT_DIPLOCATION("SW1:2")
+	PORT_DIPNAME( 0x01, 0x01, DEF_STR(Demo_Sounds) )  PORT_DIPLOCATION("SW1:1")
+	PORT_DIPSETTING( 0x01, DEF_STR(Off) )
+	PORT_DIPSETTING( 0x00, DEF_STR(On) )
+	PORT_DIPNAME( 0x02, 0x02, "System Limit" )        PORT_DIPLOCATION("SW1:2")
 	PORT_DIPSETTING( 0x02, "Unlimited" )
 	PORT_DIPSETTING( 0x00, "Limited" )
-	PORT_DIPNAME( 0x04, 0x04, "W-Up Game" ) PORT_DIPLOCATION("SW1:3")
+	PORT_DIPNAME( 0x04, 0x04, "Double Up Game" )      PORT_DIPLOCATION("SW1:3")
 	PORT_DIPSETTING( 0x04, DEF_STR( Off ) )
 	PORT_DIPSETTING( 0x00, DEF_STR( On ) )
-	PORT_DIPNAME( 0x08, 0x00, "Back Color" ) PORT_DIPLOCATION("SW1:4")
+	PORT_DIPNAME( 0x08, 0x00, "Back Color" )          PORT_DIPLOCATION("SW1:4")
 	PORT_DIPSETTING( 0x08, "Black" )
 	PORT_DIPSETTING( 0x00, "Color" )
-	PORT_DIPNAME( 0x10, 0x10, "Stop Status" ) PORT_DIPLOCATION("SW1:5")
-	PORT_DIPSETTING( 0x10, "Non Stop" )
-	PORT_DIPSETTING( 0x00, "Auto Stop" )
-	PORT_DIPNAME( 0x20, 0x20, "Key" ) PORT_DIPLOCATION("SW1:6")
+	PORT_DIPNAME( 0x10, 0x10, "Auto Stop" )           PORT_DIPLOCATION("SW1:5")
+	PORT_DIPSETTING( 0x10, DEF_STR(No) )
+	PORT_DIPSETTING( 0x00, DEF_STR(Yes) )
+	PORT_DIPNAME( 0x20, 0x20, "Control Panel Type" )  PORT_DIPLOCATION("SW1:6")
 	PORT_DIPSETTING( 0x20, "Mode 1" )
-	PORT_DIPSETTING( 0x00, "Mode 2" ) // To Do
-	PORT_DIPNAME( 0x40, 0x40, "Credit Level" ) PORT_DIPLOCATION("SW1:7")
+	PORT_DIPSETTING( 0x00, "Mode 2" ) // TODO: add support to internal artwork
+	PORT_DIPNAME( 0x40, 0x40, "Credit Level" )        PORT_DIPLOCATION("SW1:7")
 	PORT_DIPSETTING( 0x40, DEF_STR( Off ) )
 	PORT_DIPSETTING( 0x00, DEF_STR( On ) )
-	PORT_DIPNAME( 0x80, 0x80, "Odds Table" ) PORT_DIPLOCATION("SW1:8")
-	PORT_DIPSETTING( 0x80, "Show" )
-	PORT_DIPSETTING( 0x00, "No Show" )
+	PORT_DIPNAME( 0x80, 0x80, "Show Odds Table" )     PORT_DIPLOCATION("SW1:8")
+	PORT_DIPSETTING( 0x00, DEF_STR(Off) )
+	PORT_DIPSETTING( 0x80, DEF_STR(On) )
 
 	PORT_START("DSW2")
 	PORT_DIPNAME( 0x01, 0x01, "Normal Level" ) PORT_DIPLOCATION("SW2:1")
 	PORT_DIPSETTING( 0x01, DEF_STR( Low ) )
 	PORT_DIPSETTING( 0x00, DEF_STR( High ) )
-	PORT_DIPUNUSED_DIPLOC(0x02, 0x02, "SW2:2") // not used from here on according to test mode, PCB does have 3 8-dip banks
+	PORT_DIPUNUSED_DIPLOC(0x02, 0x02, "SW2:2") // not used from here on according to test mode, PCB does have 3 8-switch banks
 	PORT_DIPUNUSED_DIPLOC(0x04, 0x04, "SW2:3")
 	PORT_DIPUNUSED_DIPLOC(0x08, 0x08, "SW2:4")
 	PORT_DIPUNUSED_DIPLOC(0x10, 0x10, "SW2:5")
@@ -4145,41 +5108,47 @@ static INPUT_PORTS_START( starzan )
 	PORT_DIPUNUSED_DIPLOC(0x80, 0x80, "SW3:8")
 
 	PORT_START("PLAYER1")
-	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_CUSTOM        ) PORT_READ_LINE_DEVICE_MEMBER("hopper", FUNC(hopper_device::line_r)) // hopper switch
-	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
-	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
-	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
-	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
-	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_START1        ) PORT_NAME("Start / HW-Up")
-	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_SLOT_STOP3    ) PORT_NAME("Stop Reel 3 / Low")
-	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_SLOT_STOP_ALL ) PORT_NAME("Stop All Reels / Bet / 2W-Up")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_CUSTOM ) PORT_READ_LINE_DEVICE_MEMBER("hopper", FUNC(hopper_device::line_r)) // hopper switch
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_START1 )         PORT_NAME("Start / HW-Up")                 PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_SLOT_STOP3 )     PORT_NAME("Stop Reel 3 / Low")             PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_SLOT_STOP_ALL )  PORT_NAME("Stop All Reels / Bet / 2W-Up")  PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_START1 )         PORT_NAME("Start / 2W-Up")                 PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_SLOT_STOP2 )     PORT_NAME("Stop Reel 2 / Low")             PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_SLOT_STOP4 )     PORT_NAME("Stop Reel 4 / Bet / HW-Up")     PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
 
 	PORT_START("PLAYER2")
-	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_SLOT_STOP2    ) PORT_NAME("Stop Reel 2 / High")
-	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_SLOT_STOP4    ) PORT_NAME("Stop Reel 4 / W-Up")
-	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_SLOT_STOP1    ) PORT_NAME("Stop Reel 1 / Take")
-	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
-	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
-	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
-	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
-	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_SLOT_STOP2 )     PORT_NAME("Stop Reel 2 / High")            PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_SLOT_STOP4 )     PORT_NAME("Stop Reel 4 / W-Up")            PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_SLOT_STOP1 )     PORT_NAME("Stop Reel 1 / Take")            PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_SLOT_STOP_ALL )  PORT_NAME("Stop All Reels / High")         PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_SLOT_STOP1 )     PORT_NAME("Stop Reel 1 / W-Up")            PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_SLOT_STOP3 )     PORT_NAME("Stop Reel 3 / Take")            PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNUSED )
 
 	PORT_START("COINS")
 	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_GAMBLE_KEYIN  )
-	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_COIN2         ) PORT_IMPULSE(5) // 'coin C'
-	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_COIN1         ) PORT_IMPULSE(5) // 'coin A'
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_COIN2 ) PORT_IMPULSE(5) // 'coin C'
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_COIN1 ) PORT_IMPULSE(5) // 'coin A'
 	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_GAMBLE_PAYOUT )
 	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_GAMBLE_KEYOUT )
-	PORT_SERVICE_NO_TOGGLE( 0x20, IP_ACTIVE_LOW      ) // keep pressed while booting
-	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_GAMBLE_BOOK   ) // enters book-keeping menu
-	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN       ) // no effects in key test
+	PORT_SERVICE_NO_TOGGLE( 0x20, IP_ACTIVE_LOW ) // keep pressed while booting
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_GAMBLE_BOOK ) // enters book-keeping menu
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNUSED )
 INPUT_PORTS_END
 
 static INPUT_PORTS_START( tarzan202fa )
 	PORT_INCLUDE(starzan)
 
 	PORT_MODIFY("DSW1")
-	PORT_DIPUNUSED_DIPLOC(0x40, 0x40, "SW1:7") // not used from here on according to test mode, PCB does have 3 8-dip banks
+	PORT_DIPUNUSED_DIPLOC(0x40, 0x40, "SW1:7") // not used from here on according to test mode, PCB does have 3 8-switch banks
 	PORT_DIPUNUSED_DIPLOC(0x80, 0x80, "SW1:8")
 
 	PORT_MODIFY("DSW2")
@@ -4190,7 +5159,7 @@ static INPUT_PORTS_START( tarzan103m )
 	PORT_INCLUDE(tarzan202fa)
 
 	PORT_MODIFY("DSW1")
-	PORT_DIPUNUSED_DIPLOC(0x10, 0x10, "SW1:5") // not used from here on according to test mode, PCB does have 3 8-dip banks
+	PORT_DIPUNUSED_DIPLOC(0x10, 0x10, "SW1:5") // not used from here on according to test mode, PCB does have 3 8-switch banks
 	PORT_DIPUNUSED_DIPLOC(0x20, 0x20, "SW1:6")
 
 	PORT_MODIFY("PLAYER1")
@@ -4321,10 +5290,10 @@ static INPUT_PORTS_START( cpoker2 )
 	PORT_DIPNAME( 0x02, 0x02, "System Limit" ) PORT_DIPLOCATION("SW1:2")
 	PORT_DIPSETTING( 0x02, "Unlimited" )
 	PORT_DIPSETTING( 0x00, "Limited" )
-	PORT_DIPNAME( 0x04, 0x04, "W-Up Game" ) PORT_DIPLOCATION("SW1:3")
+	PORT_DIPNAME( 0x04, 0x04, "Double Up Game" ) PORT_DIPLOCATION("SW1:3")
 	PORT_DIPSETTING( 0x04, DEF_STR( Off ) )
 	PORT_DIPSETTING( 0x00, DEF_STR( On ) )
-	PORT_DIPNAME( 0x08, 0x08, "W-Up Type" ) PORT_DIPLOCATION("SW1:4")
+	PORT_DIPNAME( 0x08, 0x08, "Double Up Game Type" ) PORT_DIPLOCATION("SW1:4")
 	PORT_DIPSETTING( 0x08, "Big-Small" )
 	PORT_DIPSETTING( 0x00, "Red-Black" )
 	PORT_DIPNAME( 0x10, 0x10, "Game Speed" ) PORT_DIPLOCATION("SW1:5")
@@ -4359,6 +5328,84 @@ static INPUT_PORTS_START( cpoker2 )
 	PORT_DIPUNUSED_DIPLOC(0x02, 0x02, "SW3:2")
 INPUT_PORTS_END
 
+static INPUT_PORTS_START( jking302us )
+	PORT_START("DSW1")
+	PORT_DIPNAME( 0x01, 0x01, DEF_STR(Demo_Sounds) )  PORT_DIPLOCATION("SW1:1")
+	PORT_DIPSETTING( 0x01, DEF_STR(Off) )
+	PORT_DIPSETTING( 0x00, DEF_STR(On) )
+	PORT_DIPNAME( 0x02, 0x02, "System Limit" )        PORT_DIPLOCATION("SW1:2")
+	PORT_DIPSETTING( 0x02, "Unlimited" )
+	PORT_DIPSETTING( 0x00, "Limited" )
+	PORT_DIPNAME( 0x04, 0x04, "Double Up Game" )      PORT_DIPLOCATION("SW1:3")
+	PORT_DIPSETTING( 0x04, DEF_STR( Off ) )
+	PORT_DIPSETTING( 0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x08, 0x00, "Back Color" )          PORT_DIPLOCATION("SW1:4")
+	PORT_DIPSETTING( 0x08, "Black" )
+	PORT_DIPSETTING( 0x00, "Color" )
+	PORT_DIPNAME( 0x10, 0x10, "Auto Stop" )           PORT_DIPLOCATION("SW1:5")
+	PORT_DIPSETTING( 0x10, DEF_STR(No) )
+	PORT_DIPSETTING( 0x00, DEF_STR(Yes) )
+	PORT_DIPNAME( 0x20, 0x20, "Control Panel Type" )  PORT_DIPLOCATION("SW1:6")
+	PORT_DIPSETTING( 0x20, "Mode 1" )
+	PORT_DIPSETTING( 0x00, "Mode 2" ) // TODO: add support to internal artwork
+	PORT_DIPNAME( 0x40, 0x40, "Password" )            PORT_DIPLOCATION("SW1:7")
+	PORT_DIPSETTING( 0x40, DEF_STR( Off ) )
+	PORT_DIPSETTING( 0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x80, 0x80, "Credit Mode" )         PORT_DIPLOCATION("SW1:8")
+	PORT_DIPSETTING( 0x80, "Coin Acceptor" )
+	PORT_DIPSETTING( 0x00, "Key-In" )
+
+	PORT_START("DSW2")
+	PORT_DIPNAME( 0x03, 0x03, "Payout Mode" )         PORT_DIPLOCATION("SW2:1,2")
+	PORT_DIPSETTING( 0x03, "Hopper" )
+	PORT_DIPSETTING( 0x02, "Ticket" )
+	PORT_DIPSETTING( 0x01, "Key-Out" )
+	PORT_DIPSETTING( 0x00, "Key-Out" )
+	PORT_DIPUNUSED_DIPLOC(0x04, 0x04, "SW2:3")
+	PORT_DIPUNUSED_DIPLOC(0x08, 0x08, "SW2:4")
+	PORT_DIPUNUSED_DIPLOC(0x10, 0x10, "SW2:5")
+	PORT_DIPUNUSED_DIPLOC(0x20, 0x20, "SW2:6")
+	PORT_DIPUNUSED_DIPLOC(0x40, 0x40, "SW2:7")
+	PORT_DIPUNUSED_DIPLOC(0x80, 0x80, "SW2:8")
+
+	PORT_START("PLAYER1")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_SLOT_STOP2 )     PORT_NAME("Stop Reel 2 / Big")            PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_SLOT_STOP4 )     PORT_NAME("Stop Reel 4 / W-Up")           PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_SLOT_STOP1 )     PORT_NAME("Stop Reel 1 / Take")           PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_GAMBLE_BET )     PORT_NAME("Bet / Double")                 PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_SLOT_STOP3 )     PORT_NAME("Stop Reel 3 / Small")          PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_START1 )         PORT_NAME("Start / Half")                 PORT_CONDITION("DSW1", 0x20, EQUALS, 0x20)
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_SLOT_STOP_ALL )  PORT_NAME("All Stop / Big")               PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_SLOT_STOP1 )     PORT_NAME("Stop Reel 1 / W-Up")           PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_SLOT_STOP3 )     PORT_NAME("Stop Reel 3 / Take")           PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_SLOT_STOP4 )     PORT_NAME("Stop Reel 4 / Bet / Half")     PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_SLOT_STOP2 )     PORT_NAME("Stop Reel 2 / Small")          PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_START1 )         PORT_NAME("Start / Double")               PORT_CONDITION("DSW1", 0x20, EQUALS, 0x00)
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNUSED )
+
+	PORT_START("PLAYER2")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_GAMBLE_KEYOUT )
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNUSED )
+
+	PORT_START("COINS")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_CUSTOM ) PORT_READ_LINE_DEVICE_MEMBER("hopper", FUNC(hopper_device::line_r))
+	PORT_SERVICE_NO_TOGGLE( 0x02, IP_ACTIVE_LOW ) // keep pressed while booting
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_GAMBLE_BOOK )
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_COIN1 ) PORT_IMPULSE(5)
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNUSED )
+
+INPUT_PORTS_END
+
 /***************************************************************************
                                 Machine Drivers
 ***************************************************************************/
@@ -4366,7 +5413,7 @@ INPUT_PORTS_END
 void igs017_state::base_machine_oki(machine_config &config, const XTAL &xtal_oki)
 {
 	// i/o
-	IGS_MUX(config, m_igs_mux, 0);
+	IGS_MUX(config, m_igs_mux);
 
 	I8255A(config, m_ppi);
 
@@ -4379,11 +5426,11 @@ void igs017_state::base_machine_oki(machine_config &config, const XTAL &xtal_oki
 	m_screen->set_screen_update("igs017_igs031", FUNC(igs017_igs031_device::screen_update));
 	m_screen->set_palette("igs017_igs031:palette");
 
-	IGS017_IGS031(config, m_igs017_igs031, 0);
+	IGS017_IGS031(config, m_igs017_igs031);
 
 	// sound
 	SPEAKER(config, "mono").front_center();
-	OKIM6295(config, m_oki, xtal_oki, okim6295_device::PIN7_HIGH).add_route(ALL_OUTPUTS, "mono", 0.5);
+	OKIM6295(config, m_oki, xtal_oki, okim6295_device::PIN7_HIGH).add_route(ALL_OUTPUTS, "mono", 1.0);
 }
 
 
@@ -4419,7 +5466,7 @@ void igs017_state::iqblocka(machine_config &config)
 	m_igs017_igs031->in_pc_callback().set_ioport("DSW3");
 
 	// protection
-	IGS_BITSWAP(config, m_igs_bitswap, 0);
+	IGS_BITSWAP(config, m_igs_bitswap);
 	m_igs_bitswap->set_val_xor(0x15d6);
 	m_igs_bitswap->set_mf_bits(3, 5, 9, 11);
 	m_igs_bitswap->set_m3_bits<0>(~5,  8, ~10, ~15);
@@ -4427,7 +5474,7 @@ void igs017_state::iqblocka(machine_config &config)
 	m_igs_bitswap->set_m3_bits<2>( 2, ~6, ~11, ~15);
 	m_igs_bitswap->set_m3_bits<3>( 0, ~1, ~3,  ~15);
 
-	IGS_INCDEC(config, m_igs_incdec, 0);
+	IGS_INCDEC(config, m_igs_incdec);
 
 	// sound
 	YM2413(config, "ymsnd", 3.579545_MHz_XTAL).add_route(ALL_OUTPUTS, "mono", 0.5);
@@ -4463,7 +5510,7 @@ void igs017_state::tarzan(machine_config &config)
 	base_machine_oki(config, 16_MHz_XTAL / 16);
 
 	HD64180RP(config, m_maincpu, 16_MHz_XTAL);
-	m_maincpu->set_addrmap(AS_PROGRAM, &igs017_state::iqblocka_map);
+	m_maincpu->set_addrmap(AS_PROGRAM, &igs017_state::happyskl_map);
 	m_maincpu->set_addrmap(AS_IO, &igs017_state::tarzan_io);
 	m_maincpu->set_addrmap(AS_OPCODES, &igs017_state::decrypted_opcodes_map);
 	TIMER(config, "scantimer").configure_scanline(FUNC(igs017_state::iqblocka_interrupt), "screen", 0, 1);
@@ -4479,9 +5526,9 @@ void igs017_state::tarzan(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_STRING(config, m_igs_string, 0);
+	IGS_STRING(config, m_igs_string);
 
-	IGS_INCDEC(config, m_igs_incdec, 0);
+	IGS_INCDEC(config, m_igs_incdec);
 
 	// video
 	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::tarzan_palette_bitswap));
@@ -4498,7 +5545,7 @@ void igs017_state::starzan(machine_config &config)
 	base_machine_oki(config, 16_MHz_XTAL / 16);
 
 	HD64180RP(config, m_maincpu, 16_MHz_XTAL);
-	m_maincpu->set_addrmap(AS_PROGRAM, &igs017_state::iqblocka_map);
+	m_maincpu->set_addrmap(AS_PROGRAM, &igs017_state::happyskl_map);
 	m_maincpu->set_addrmap(AS_IO, &igs017_state::starzan_io);
 	m_maincpu->set_addrmap(AS_OPCODES, &igs017_state::decrypted_opcodes_map);
 	TIMER(config, "scantimer").configure_scanline(FUNC(igs017_state::iqblocka_interrupt), "screen", 0, 1);
@@ -4515,9 +5562,9 @@ void igs017_state::starzan(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_STRING(config, m_igs_string, 0);
+	IGS_STRING(config, m_igs_string);
 
-	IGS_INCDEC(config, m_igs_incdec, 0);
+	IGS_INCDEC(config, m_igs_incdec);
 
 	// video
 	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::tarzan_palette_bitswap));
@@ -4578,9 +5625,9 @@ void igs017_state::cpoker2(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_INCDEC(config, m_igs_incdec, 0);
+	IGS_INCDEC(config, m_igs_incdec);
 
-	IGS_INC(config, m_igs_inc, 0);
+	IGS_INC(config, m_igs_inc);
 
 	// video
 	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::tarzan_palette_bitswap));
@@ -4598,6 +5645,8 @@ void igs017_state::tjsb(machine_config &config)
 	m_maincpu->set_addrmap(AS_IO, &igs017_state::tjsb_io);
 	TIMER(config, "scantimer").configure_scanline(FUNC(igs017_state::iqblocka_interrupt), "screen", 0, 1);
 
+	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);
+
 	// i/o
 	m_igs_mux->set_addrmap(0, &igs017_state::tjsb_mux_map);
 
@@ -4608,7 +5657,7 @@ void igs017_state::tjsb(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_STRING(config, m_igs_string, 0);
+	IGS_STRING(config, m_igs_string);
 
 	// video
 	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::tjsb_palette_bitswap));
@@ -4641,9 +5690,9 @@ void igs017_state::spkrform(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_STRING(config, m_igs_string, 0);
+	IGS_STRING(config, m_igs_string);
 
-	IGS_INCDEC(config, m_igs_incdec, 0);
+	IGS_INCDEC(config, m_igs_incdec);
 
 	// sound
 	YM2413(config, "ymsnd", 3.579545_MHz_XTAL).add_route(ALL_OUTPUTS, "mono", 0.5);
@@ -4683,7 +5732,7 @@ void igs017_state::mgcs(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_STRING(config, m_igs_string, 0);
+	IGS_STRING(config, m_igs_string);
 
 	// video
 	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::mgcs_palette_bitswap));
@@ -4698,11 +5747,34 @@ void igs017_state::mgcsa(machine_config &config)
 
 void igs017_state::mgcsb(machine_config &config)
 {
-	mgcs(config);
+	base_machine_oki(config, 8_MHz_XTAL / 8);
 
+	M68000(config, m_maincpu, 22_MHz_XTAL / 2);
 	m_maincpu->set_addrmap(AS_PROGRAM, &igs017_state::mgcsb_map);
+	TIMER(config, "scantimer").configure_scanline(FUNC(igs017_state::mgcs_interrupt), "screen", 0, 1);
 
+	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);
+
+	// i/o
 	m_igs_mux->set_addrmap(0, &igs017_state::mgcsb_mux_map);
+
+	HOPPER(config, m_hopper, attotime::from_msec(50));
+
+	// protection
+	IGS_STRING(config, m_igs_string);
+
+	IGS_BITSWAP(config, m_igs_bitswap);
+	m_igs_bitswap->set_val_xor(0x289a);
+	m_igs_bitswap->set_mf_bits(4, 7,  10, 13);
+	m_igs_bitswap->set_m3_bits<0>(~3,   8, ~12, ~15);
+	m_igs_bitswap->set_m3_bits<1>(~3,  ~6,  ~9, ~15);
+	m_igs_bitswap->set_m3_bits<2>(~3,   4,  ~5, ~15);
+	m_igs_bitswap->set_m3_bits<3>(~9, ~11,  12, ~15);
+
+	// video
+	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::mgcs_palette_bitswap));
+
+	IGS_INCDEC(config, m_igs_incdec);
 }
 
 
@@ -4728,9 +5800,9 @@ void igs017_state::lhzb2(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_STRING(config, m_igs_string, 0);
+	IGS_STRING(config, m_igs_string);
 
-	IGS022(config, m_igs022, 0);
+	IGS022(config, m_igs022);
 
 	// video
 	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::lhzb2a_palette_bitswap));
@@ -4738,12 +5810,6 @@ void igs017_state::lhzb2(machine_config &config)
 
 
 // lhzb2a
-
-MACHINE_RESET_MEMBER(igs017_state, lhzb2a)
-{
-	machine_reset();
-	lhzb2a_remap_addr_w(m_maincpu->space(AS_PROGRAM), 0xf0);
-}
 
 void igs017_state::lhzb2a(machine_config &config)
 {
@@ -4755,8 +5821,6 @@ void igs017_state::lhzb2a(machine_config &config)
 
 	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);
 
-	MCFG_MACHINE_RESET_OVERRIDE(igs017_state, lhzb2a)
-
 	// i/o
 	m_igs_mux->set_addrmap(0, &igs017_state::lhzb2a_mux_map);
 
@@ -4765,9 +5829,9 @@ void igs017_state::lhzb2a(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_STRING(config, m_igs_string, 0);
+	IGS_STRING(config, m_igs_string);
 
-	IGS_BITSWAP(config, m_igs_bitswap, 0);
+	IGS_BITSWAP(config, m_igs_bitswap);
 	m_igs_bitswap->set_val_xor(0x289a);
 	m_igs_bitswap->set_mf_bits(4, 7,  10, 13);
 	m_igs_bitswap->set_m3_bits<0>(~3,   8, ~12, ~15);
@@ -4775,7 +5839,67 @@ void igs017_state::lhzb2a(machine_config &config)
 	m_igs_bitswap->set_m3_bits<2>(~3,   4,  ~5, ~15);
 	m_igs_bitswap->set_m3_bits<3>(~9, ~11,  12, ~15);
 
-	IGS_INCDEC(config, m_igs_incdec, 0);
+	IGS_INCDEC(config, m_igs_incdec);
+
+	// video
+	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::lhzb2a_palette_bitswap));
+}
+
+void igs017_state::lhzb2b(machine_config &config)
+{
+	base_machine_oki(config, 8_MHz_XTAL / 8);
+
+	M68000(config, m_maincpu, 22_MHz_XTAL / 2);
+	m_maincpu->set_addrmap(AS_PROGRAM, &igs017_state::lhzb2b_map);
+	TIMER(config, "scantimer").configure_scanline(FUNC(igs017_state::mgcs_interrupt), "screen", 0, 1);
+
+	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);
+
+	// i/o
+	m_igs_mux->set_addrmap(0, &igs017_state::lhzb2b_mux_map);
+
+	m_igs017_igs031->in_pa_callback().set_ioport("COINS");
+	m_igs017_igs031->in_pb_callback().set(FUNC(igs017_state::mgcs_igs029_data_r));
+	m_igs017_igs031->in_pc_callback().set(FUNC(igs017_state::lhzb2b_scramble_data_r));
+
+	HOPPER(config, m_hopper, attotime::from_msec(50));
+
+	// protection
+	IGS_STRING(config, m_igs_string);
+
+	IGS_INCDEC(config, m_igs_incdec);
+
+	// video
+	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::lhzb2a_palette_bitswap));
+}
+
+void igs017_state::lhzb2c(machine_config &config)
+{
+	base_machine_oki(config, 8_MHz_XTAL / 8);
+
+	M68000(config, m_maincpu, 22_MHz_XTAL / 2);
+	m_maincpu->set_addrmap(AS_PROGRAM, &igs017_state::lhzb2c_map);
+	TIMER(config, "scantimer").configure_scanline(FUNC(igs017_state::mgcs_interrupt), "screen", 0, 1);
+
+	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);
+
+	// i/o
+	m_igs_mux->set_addrmap(0, &igs017_state::lhzb2c_mux_map);
+
+	HOPPER(config, m_hopper, attotime::from_msec(50));
+
+	// protection
+	IGS_STRING(config, m_igs_string);
+
+	IGS_BITSWAP(config, m_igs_bitswap);
+	m_igs_bitswap->set_val_xor(0x289a);
+	m_igs_bitswap->set_mf_bits(4, 7,  10, 13);
+	m_igs_bitswap->set_m3_bits<0>(~3,   8, ~12, ~15);
+	m_igs_bitswap->set_m3_bits<1>(~3,  ~6,  ~9, ~15);
+	m_igs_bitswap->set_m3_bits<2>(~3,   4,  ~5, ~15);
+	m_igs_bitswap->set_m3_bits<3>(~9, ~11,  12, ~15);
+
+	IGS_INCDEC(config, m_igs_incdec);
 
 	// video
 	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::lhzb2a_palette_bitswap));
@@ -4804,9 +5928,9 @@ void igs017_state::slqz2(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_STRING(config, m_igs_string, 0);
+	IGS_STRING(config, m_igs_string);
 
-	IGS022(config, m_igs022, 0);
+	IGS022(config, m_igs022);
 
 	// video
 	m_igs017_igs031->set_palette_scramble_cb(FUNC(igs017_state::slqz2_palette_bitswap));
@@ -4835,7 +5959,9 @@ void igs017_state::sdmg2(machine_config &config)
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
 	// protection
-	IGS_INCDEC(config, m_igs_incdec, 0);
+	IGS_INCDEC(config, m_igs_incdec);
+
+	IGS_INCALT(config, m_igs_incalt);
 }
 
 
@@ -4875,9 +6001,6 @@ void igs017_state::mgdh(machine_config &config)
 	mgdha(config);
 
 	m_igs_mux->set_addrmap(0, &igs017_state::mgdh_mux_map);
-
-	// protection (only used for the game id check?)
-//  IGS_STRING(config, m_igs_string, 0);
 }
 
 void igs017_state::sdmg2p(machine_config &config)
@@ -4899,7 +6022,9 @@ void igs017_state::sdmg2p(machine_config &config)
 
 	HOPPER(config, m_hopper, attotime::from_msec(50));
 
-	IGS_STRING(config, m_igs_string, 0);
+	IGS_STRING(config, m_igs_string);
+
+	IGS_INCDEC(config, m_igs_incdec);
 }
 
 void igs017_state::jking302us(machine_config &config)
@@ -4915,9 +6040,9 @@ void igs017_state::jking302us(machine_config &config)
 	// i/o
 	m_igs_mux->set_addrmap(0, &igs017_state::jking302us_mux_map);
 
-	HOPPER(config, m_hopper, attotime::from_msec(50));
+	m_igs017_igs031->in_pa_callback().set(FUNC(igs017_state::jking302us_scramble_coin_r));
 
-	IGS_STRING(config, m_igs_string, 0);
+	HOPPER(config, m_hopper, attotime::from_msec(50));
 }
 
 
@@ -5290,7 +6415,7 @@ ROM_START( mgcsa )
 	ROM_LOAD( "s1502.u12", 0x00000, 0x80000, CRC(a8a6ba58) SHA1(59276a8ab4a31812600816c2a43b74bd71394419) )
 
 	ROM_REGION( 0xec, "igs_string", 0 )
-	ROM_LOAD( "mgcs_string.key", 0x00, 0xec, BAD_DUMP CRC(6cdadd19) SHA1(c2b4ced5d45d0af1ddeeabd0e352fd5383995d32) ) // TODO: seems the same as the parent, but double-check
+	ROM_LOAD( "mgcs_string.key", 0x00, 0xec, CRC(6cdadd19) SHA1(c2b4ced5d45d0af1ddeeabd0e352fd5383995d32) )
 ROM_END
 
 // IGS PCB N0-0266. No IGS029, but a IGS026
@@ -5302,12 +6427,13 @@ ROM_START( mgcsb )
 	ROM_LOAD( "m1501.u21", 0x000000, 0x400000, CRC(96fce058) SHA1(6b87f47d646bad9b3061bdc8a9af65467fdbbc9f) )
 
 	ROM_REGION( 0x80000, "igs017_igs031:tilemaps", 0 )
-	ROM_LOAD( "m1503-text v100c.u12", 0x00000, 0x80000, CRC(9925423e) SHA1(c0df6f9a0886810d1f137093f5bff1b326c4a522) )
+	ROM_LOAD( "m1503-text v100c.u12", 0x00000, 0x80000, CRC(a37f9613) SHA1(812f060ca98a34540c48a180c359c3d0f1c0b5bb) )
 
 	ROM_REGION( 0x80000, "oki", 0 )
 	ROM_LOAD( "s1502.u16", 0x00000, 0x80000, CRC(a8a6ba58) SHA1(59276a8ab4a31812600816c2a43b74bd71394419) )
 
-	ROM_REGION( 0xec, "igs_string", ROMREGION_ERASE00 )
+	ROM_REGION( 0xec, "igs_string", 0 )
+	ROM_LOAD( "mgcs_string.key", 0x00, 0xec, CRC(6cdadd19) SHA1(c2b4ced5d45d0af1ddeeabd0e352fd5383995d32) )
 ROM_END
 
 /***************************************************************************
@@ -5456,10 +6582,10 @@ ROM_START( sdmg2p )
 	ROM_LOAD( "ma.dy_text.u18", 0x000000, 0x080000, CRC(e46a3a52) SHA1(7b3f113170904dc474712a6a76162a8ee5dbd318) )
 
 	ROM_REGION( 0x80000, "oki", 0 )
-	ROM_LOAD( "ma.dy_sp.u14", 0x00000, 0x80000, CRC(b31c6349) SHA1(9e8e5b029e1eff47581f99ecf2da3f17bee01f32) ) // 1ST AND 2ND HALF IDENTICAL
+	ROM_LOAD( "ma.dy_sp.u14", 0x00000, 0x80000, CRC(3c16fb8c) SHA1(3361d3774f1bd50f9a0d8f2195a17fd1a2d3a9b3) )
 
 	ROM_REGION( 0xec, "igs_string", 0 )
-	ROM_LOAD( "sdmg2p_string.key", 0x00, 0xec, NO_DUMP )
+	ROM_LOAD( "sdmg2p_string.key", 0x00, 0xec, CRC(c134a304) SHA1(397ef67ebb6c63a6d4d1405a237aa40a4d9a3d43) )
 ROM_END
 
 /***************************************************************************
@@ -5531,6 +6657,43 @@ ROM_END
 ROM_START( lhzb2a )
 	ROM_REGION( 0x80000, "maincpu", 0 )
 	ROM_LOAD16_WORD_SWAP( "p-4096", 0x00000, 0x80000, CRC(41293f32) SHA1(df4e993f4a458729ade13981e58f32d8116c0082) )
+
+	ROM_REGION( 0x400000, "igs017_igs031:sprites", 0 )
+	ROM_LOAD16_WORD_SWAP( "m1101.u6", 0x000000, 0x400000, CRC(0114e9d1) SHA1(5b16170d3cd8b8e1662c949b7234fbdd2ca927f7) ) // FIXED BITS (0xxxxxxxxxxxxxxx)
+
+	ROM_REGION( 0x80000, "igs017_igs031:tilemaps", 0 )
+	ROM_LOAD16_WORD_SWAP( "m1103.u8", 0x00000, 0x80000, CRC(4d3776b4) SHA1(fa9b311b1a6ad56e136b66d090bc62ed5003b2f2) )
+
+	ROM_REGION( 0x80000, "oki", 0 )
+	ROM_LOAD( "s1102.u23", 0x00000, 0x80000, CRC(51ffe245) SHA1(849011b186096add657ab20d49d260ec23363ef3) )
+
+	ROM_REGION( 0xec, "igs_string", 0 )
+	ROM_LOAD( "lhzb2_string.key", 0x00, 0xec, CRC(c964dc35) SHA1(81036e0dfa9abad123701ae8939d0d5b6f91b015) )
+ROM_END
+
+ROM_START( lhzb2b ) // IGS PCB N0-0218-2 (has IGS025 stickered M3, IGS029, 2 banks of 8 switches)
+	ROM_REGION( 0x80000, "maincpu", 0 )
+	ROM_LOAD16_WORD_SWAP( "p-4096", 0x00000, 0x80000, CRC(46bbef6e) SHA1(45cc9de0515adcbc1de6732191511ff5ce3391ca) )
+
+	ROM_REGION( 0x10000, "igs022", ROMREGION_ERASE00 )
+
+	ROM_REGION( 0x400000, "igs017_igs031:sprites", 0 )
+	ROM_LOAD16_WORD_SWAP( "m1101.u6", 0x000000, 0x400000, CRC(0114e9d1) SHA1(5b16170d3cd8b8e1662c949b7234fbdd2ca927f7) ) // FIXED BITS (0xxxxxxxxxxxxxxx)
+
+	ROM_REGION( 0x80000, "igs017_igs031:tilemaps", 0 )
+	ROM_LOAD16_WORD_SWAP( "m1103.u8", 0x00000, 0x80000, CRC(4d3776b4) SHA1(fa9b311b1a6ad56e136b66d090bc62ed5003b2f2) )
+
+	ROM_REGION( 0x80000, "oki", 0 )
+	ROM_LOAD( "s1102.u23", 0x00000, 0x80000, CRC(51ffe245) SHA1(849011b186096add657ab20d49d260ec23363ef3) )
+
+	ROM_REGION( 0xec, "igs_string", 0 )
+	ROM_LOAD( "lhzb2_string.key", 0x00, 0xec, CRC(c964dc35) SHA1(81036e0dfa9abad123701ae8939d0d5b6f91b015) )
+ROM_END
+
+// VS220M: only the program ROM was provided
+ROM_START( lhzb2c )
+	ROM_REGION( 0x80000, "maincpu", 0 )
+	ROM_LOAD16_WORD_SWAP( "janan409", 0x00000, 0x80000, CRC(a52e954c) SHA1(b574ea8ba7956a24514c8e87238bcf587df3331b) )
 
 	ROM_REGION( 0x400000, "igs017_igs031:sprites", 0 )
 	ROM_LOAD16_WORD_SWAP( "m1101.u6", 0x000000, 0x400000, CRC(0114e9d1) SHA1(5b16170d3cd8b8e1662c949b7234fbdd2ca927f7) ) // FIXED BITS (0xxxxxxxxxxxxxxx)
@@ -5639,6 +6802,26 @@ Notes:
 ROM_START( slqz2 )
 	ROM_REGION( 0x80000, "maincpu", 0 )
 	ROM_LOAD16_WORD_SWAP( "p1100.u28", 0x00000, 0x80000, CRC(0b8e5c9e) SHA1(16572bd1163bba4da8a76b10649d2f71e50ad369) )
+
+	ROM_REGION( 0x10000, "igs022", 0 )
+	ROM_LOAD( "m1103.u12", 0x00000, 0x10000, CRC(9f3b8d65) SHA1(5ee1ad025474399c2826f21d970e76f25d0fa1fd) ) // INTERNATIONAL GAMES SYSTEM CO.,LTD
+
+	ROM_REGION( 0x400000, "igs017_igs031:sprites", 0 )
+	ROM_LOAD16_WORD_SWAP( "m1101.u4", 0x000000, 0x400000, CRC(0114e9d1) SHA1(5b16170d3cd8b8e1662c949b7234fbdd2ca927f7) ) // FIXED BITS (0xxxxxxxxxxxxxxx)
+
+	ROM_REGION( 0x80000, "igs017_igs031:tilemaps", 0 )
+	ROM_LOAD( "text.u6", 0x00000, 0x80000, CRC(40d21adf) SHA1(18b202d6330ac89026bec2c9c8224b52540dd48d) )
+
+	ROM_REGION( 0x80000, "oki", 0 )
+	ROM_LOAD( "s1102.u20", 0x00000, 0x80000, CRC(51ffe245) SHA1(849011b186096add657ab20d49d260ec23363ef3) ) // = s1102.u23 Long Hu Zhengba 2
+
+	ROM_REGION( 0xec, "igs_string", 0 )
+	ROM_LOAD( "slqz2_string.key", 0x00, 0xec, CRC(5ca22f9d) SHA1(a795415016fdcb6329623786dc992ac7b0877ddf) )
+ROM_END
+
+ROM_START( slqz2b ) // IGS PCB NO-0207
+	ROM_REGION( 0x80000, "maincpu", 0 )
+	ROM_LOAD16_WORD_SWAP( "slqz2.u28", 0x00000, 0x80000, CRC(63be02a3) SHA1(973a2de12852b533dd6dfb00c96e6760ddc4a430) )
 
 	ROM_REGION( 0x10000, "igs022", 0 )
 	ROM_LOAD( "m1103.u12", 0x00000, 0x10000, CRC(9f3b8d65) SHA1(5ee1ad025474399c2826f21d970e76f25d0fa1fd) ) // INTERNATIONAL GAMES SYSTEM CO.,LTD
@@ -5792,7 +6975,7 @@ ROM_START( mgdh )
 	ROM_LOAD( "m1001.u4", 0x000000, 0x400000, CRC(0cfb60d6) SHA1(e099aca730e7fd91a72915c27e569ad3d21f0d8f) ) // FIXED BITS (xxxxxxx0xxxxxxxx)
 
 	ROM_REGION( 0x20000, "igs017_igs031:tilemaps", 0 )
-	ROM_LOAD( "igs_512e.u6", 0x00000, 0x20000, CRC(db50f8fc) SHA1(e2ce4a42f5bdc0b4b7988ad9e8d14661f17c3d51) ) // == text.u6
+	ROM_LOAD16_WORD_SWAP( "igs_512e.u6", 0x00000, 0x20000, CRC(db50f8fc) SHA1(e2ce4a42f5bdc0b4b7988ad9e8d14661f17c3d51) ) // == text.u6
 
 	ROM_REGION( 0x80000, "oki", 0 )
 	ROM_LOAD( "ig2_8836.u14", 0x00000, 0x80000, CRC(ac1f4da8) SHA1(789a2e0b58750292909dabca42c7e5ad72af3db5) )
@@ -6005,6 +7188,42 @@ ROM_START( starzan )
 	ROM_LOAD( "starzan_string.key", 0x00, 0xec, CRC(b33f5050) SHA1(900d3c48944dbdd95d9e48d74c355e82e00ac012) )
 ROM_END
 
+ROM_START( tarzan201fa )
+	ROM_REGION( 0x40000, "maincpu", 0 )
+	ROM_LOAD( "u9", 0x00000, 0x40000, CRC(455ac41f) SHA1(2c044a3de89f7ae0d1a32469ae81d4a4b593e120) )
+
+	ROM_REGION( 0x400000, "igs017_igs031:sprites", 0 )
+	ROM_LOAD( "igs_a2104_cg_v110.u3", 0x000000, 0x400000, CRC(dcbff16f) SHA1(2bf77ef4448c26124c8d8d18bb7ffe4105cfa940) ) // FIXED BITS (xxxxxxx0xxxxxxxx)
+	// empty u2 socket
+
+	ROM_REGION( 0x80000, "igs017_igs031:tilemaps", 0 )
+	ROM_LOAD( "igs_t2105_cg_v110.u11", 0x00000, 0x80000, CRC(1d4be260) SHA1(6374c61735144b3ff54d5e490f26adac4a10b14d) )
+
+	ROM_REGION( 0x80000, "oki", 0 )
+	ROM_LOAD( "igs_s2102_sp_v102.u8", 0x00000, 0x80000, CRC(90dda82d) SHA1(67fbc1e8d76b85e124136e2f1df09c8b6c5a8f97) )
+
+	ROM_REGION( 0xec, "igs_string", 0 )
+	ROM_LOAD( "tarzan201fa_string.key", 0x00, 0xec, CRC(b33f5050) SHA1(900d3c48944dbdd95d9e48d74c355e82e00ac012) )
+ROM_END
+
+ROM_START( tarzan201faa ) // IGS PCB NO-0230-1 (IGS025 stickered X7). This set uses alt encryption and the Amazonia sprite ROM.
+	ROM_REGION( 0x40000, "maincpu", 0 )
+	ROM_LOAD( "tarzan_v-201fa.u9", 0x00000, 0x40000, CRC(f313df5a) SHA1(04883e388ee6722c3ceee74a21e6a79f73ea8b7d) )
+
+	ROM_REGION( 0x400000, "igs017_igs031:sprites", 0 )
+	ROM_LOAD( "igs_a2107.u3", 0x000000, 0x400000, CRC(d8dadfd7) SHA1(b40a46d56ff46d91e3377be8616c3eed321f7db4) ) // FIXED BITS (xxxxxxx0xxxxxxxx)
+	// empty u2 socket
+
+	ROM_REGION( 0x80000, "igs017_igs031:tilemaps", 0 )
+	ROM_LOAD( "igs_t2105.u11", 0x00000, 0x80000, CRC(1d4be260) SHA1(6374c61735144b3ff54d5e490f26adac4a10b14d) )
+
+	ROM_REGION( 0x80000, "oki", 0 )
+	ROM_LOAD( "igs_s2102.u8", 0x00000, 0x80000, CRC(90dda82d) SHA1(67fbc1e8d76b85e124136e2f1df09c8b6c5a8f97) )
+
+	ROM_REGION( 0xec, "igs_string", 0 )
+	ROM_LOAD( "tarzan201fa_string.key", 0x00, 0xec, CRC(b33f5050) SHA1(900d3c48944dbdd95d9e48d74c355e82e00ac012) )
+ROM_END
+
 ROM_START( tarzan202fa ) // IGS PCB NO-0230-1 (IGS025 stickered X7)
 	ROM_REGION( 0x40000, "maincpu", 0 )
 	ROM_LOAD( "tarzan_v102f.u9", 0x00000, 0x40000, CRC(b099baaa) SHA1(02f021852bf70dcb3ced66974a609acd45162ddc) )
@@ -6075,6 +7294,24 @@ ROM_START( jking103a )
 	ROM_LOAD( "jking103a_string.key", 0x00, 0xec, BAD_DUMP CRC(8d288f5e) SHA1(19c184600d80838ef04be8ab29c93d91cf3161c9) ) // TODO: check this
 ROM_END
 
+ROM_START( jking105us )
+	ROM_REGION( 0x40000, "maincpu", 0 )
+	ROM_LOAD( "j_k_v-105us.u9", 0x00000, 0x40000, CRC(96dac1e9) SHA1(56164a3d6df425b992d22bb91be0023e72c04a52) )
+
+	ROM_REGION( 0x400000, "igs017_igs031:sprites", 0 )
+	ROM_LOAD( "igs_a2104_cg_v110.u3", 0x00000, 0x400000, CRC(dcbff16f) SHA1(2bf77ef4448c26124c8d8d18bb7ffe4105cfa940) ) // FIXED BITS (xxxxxxx0xxxxxxxx)
+	// empty u2
+
+	ROM_REGION( 0x80000, "igs017_igs031:tilemaps", 0 )
+	ROM_LOAD( "igs_t2105_cg_v110.u11", 0x00000, 0x80000, CRC(1d4be260) SHA1(6374c61735144b3ff54d5e490f26adac4a10b14d) )
+
+	ROM_REGION( 0x80000, "oki", 0 )
+	ROM_LOAD( "igs_s2102.u8", 0x00000, 0x80000, CRC(90dda82d) SHA1(67fbc1e8d76b85e124136e2f1df09c8b6c5a8f97) )
+
+	ROM_REGION( 0xec, "igs_string", 0 )
+	ROM_LOAD( "jking105us_string.key", 0x00, 0xec, BAD_DUMP CRC(8d288f5e) SHA1(19c184600d80838ef04be8ab29c93d91cf3161c9) ) // TODO: check this
+ROM_END
+
 // IGS PCB NO-0230-1 (IGS025 without original sticker)
 ROM_START( tarzan103m )
 	ROM_REGION( 0x40000, "maincpu", 0 )
@@ -6097,6 +7334,24 @@ ROM_START( tarzan103m )
 
 	ROM_REGION( 0xec, "igs_string", 0 )
 	ROM_LOAD( "tarzan103m_string.key", 0x00, 0xec, CRC(b33f5050) SHA1(900d3c48944dbdd95d9e48d74c355e82e00ac012) )
+ROM_END
+
+ROM_START( tarzan106fa )
+	ROM_REGION( 0x40000, "maincpu", 0 )
+	ROM_LOAD( "t_z_v-106fa.u9", 0x00000, 0x40000, CRC(588caceb) SHA1(5fe9c3679edb921b3e031b05a6fb683a8b02fc44) )
+
+	ROM_REGION( 0x400000, "igs017_igs031:sprites", 0 )
+	ROM_LOAD( "igs_a2104_cg_v110.u3", 0x00000, 0x400000, CRC(dcbff16f) SHA1(2bf77ef4448c26124c8d8d18bb7ffe4105cfa940) ) // FIXED BITS (xxxxxxx0xxxxxxxx)
+	// empty u2
+
+	ROM_REGION( 0x80000, "igs017_igs031:tilemaps", 0 )
+	ROM_LOAD( "igs_t2105_cg_v110.u11", 0x00000, 0x80000, CRC(1d4be260) SHA1(6374c61735144b3ff54d5e490f26adac4a10b14d) )
+
+	ROM_REGION( 0x80000, "oki", 0 )
+	ROM_LOAD( "igs_s2102.u8", 0x00000, 0x80000, CRC(90dda82d) SHA1(67fbc1e8d76b85e124136e2f1df09c8b6c5a8f97) )
+
+	ROM_REGION( 0xec, "igs_string", 0 )
+	ROM_LOAD( "tarzan106fa_string.key", 0x00, 0xec, BAD_DUMP CRC(8d288f5e) SHA1(19c184600d80838ef04be8ab29c93d91cf3161c9) ) // TODO: check this
 ROM_END
 
 
@@ -6201,8 +7456,8 @@ ROM_START( jking302us )
 	ROM_REGION( 0x80000, "maincpu", 0 )
 	ROM_LOAD16_WORD_SWAP( "jungleking.u28", 0x00000, 0x80000, CRC(d926252e) SHA1(03a3e52cba5e5986b74f57a8798a55b53d73bfd3) )
 
-	ROM_REGION( 0x200000, "igs017_igs031:sprites", 0 )
-	ROM_LOAD( "jungleking_cg_.u22", 0x000000, 0x200000, CRC(4a92fc0e) SHA1(25bdd0b240a1cc80ac737893c417cfe9561623cd) ) // FIXED BITS (xxxxxxx0xxxxxxxx)
+	ROM_REGION( 0x400000, "igs017_igs031:sprites", ROMREGION_ERASE00 )
+	ROM_LOAD( "jungleking_cg_.u22", 0x200000, 0x200000, CRC(4a92fc0e) SHA1(25bdd0b240a1cc80ac737893c417cfe9561623cd) ) // FIXED BITS (xxxxxxx0xxxxxxxx)
 
 	ROM_REGION( 0x80000, "igs017_igs031:tilemaps", 0 )
 	ROM_LOAD( "jungeking_text.u26", 0x00000, 0x80000, CRC(45d22af4) SHA1(1dca31c5049a07b234b0266590e4869685bb6e76) )
@@ -6214,44 +7469,48 @@ ROM_START( jking302us )
 	ROM_LOAD( "dr_u6.u6",   0x000, 0x117, NO_DUMP )
 	ROM_LOAD( "dr_u7.u7",   0x000, 0x117, NO_DUMP )
 	ROM_LOAD( "dr_u18.u18", 0x000, 0x117, NO_DUMP )
-
-	ROM_REGION( 0xec, "igs_string", ROMREGION_ERASE00 )
-	//ROM_LOAD( "jking302us_string.key", 0x00, 0xec, NO_DUMP )
 ROM_END
 
 } // anonymous namespace
 
 GAME ( 1996,  iqblocka,    iqblock,  iqblocka,   iqblocka,    igs017_state, init_iqblocka,   ROT0, "IGS", "Shuzi Leyuan (China, V127M, gambling)",                              0 ) // 數字樂園
 GAME ( 1997,  iqblockf,    iqblock,  iqblockf,   iqblockf,    igs017_state, init_iqblocka,   ROT0, "IGS", "IQ Block (V113FR, gambling)",                                        0 )
-GAME ( 1997,  mgdh,        0,        mgdh,       mgdh,        igs017_state, init_mgdh,       ROT0, "IGS", "Manguan Daheng (Taiwan, V125T1)",                                    MACHINE_IMPERFECT_COLORS | MACHINE_UNEMULATED_PROTECTION) // 滿貫大亨, wrong colors in betting screen, game id check (patched out)
-GAME ( 1997,  mgdha,       mgdh,     mgdha,      mgdh,        igs017_state, init_mgdha,      ROT0, "IGS", "Manguan Daheng (Taiwan, V123T1)",                                    0 ) // 滿貫大亨
-GAME ( 1997,  sdmg2,       0,        sdmg2,      sdmg2,       igs017_state, init_sdmg2,      ROT0, "IGS", "Chaoji Da Manguan II (China, V765C)",                                MACHINE_UNEMULATED_PROTECTION | MACHINE_NOT_WORKING ) // 超級大滿貫II
-GAME ( 1997,  sdmg2754ca,  sdmg2,    sdmg2,      sdmg2,       igs017_state, init_sdmg2754ca, ROT0, "IGS", "Chaoji Da Manguan II (China, V754C, set 1)",                         0 ) // 超級大滿貫II
-GAME ( 1997,  sdmg2754cb,  sdmg2,    sdmg2,      sdmg2,       igs017_state, init_sdmg2754cb, ROT0, "IGS", "Chaoji Da Manguan II (China, V754C, set 2)",                         0 ) // 超級大滿貫II
-GAME ( 1997,  tjsb,        0,        tjsb,       tjsb,        igs017_state, init_tjsb,       ROT0, "IGS", "Tian Jiang Shen Bing (China, V137C)",                                MACHINE_UNEMULATED_PROTECTION ) // 天將神兵, fails the bonus round protection check (if enabled via DSW), see e.g. demo mode
+GAME ( 1997,  mgdh,        0,        mgdh,       mgdh,        igs017_state, init_mgdha,      ROT0, "IGS", "Manguan Daheng (Taiwan, V125T1)",                                    MACHINE_SUPPORTS_SAVE ) // 滿貫大亨
+GAME ( 1997,  mgdha,       mgdh,     mgdha,      mgdh,        igs017_state, init_mgdha,      ROT0, "IGS", "Manguan Daheng (Taiwan, V123T1)",                                    MACHINE_SUPPORTS_SAVE ) // 滿貫大亨
+GAME ( 1997,  sdmg2,       0,        sdmg2,      sdmg2,       igs017_state, init_sdmg2,      ROT0, "IGS", "Chaoji Da Manguan II (China, V765C)",                                MACHINE_SUPPORTS_SAVE ) // 超級大滿貫II
+GAME ( 1997,  sdmg2754ca,  sdmg2,    sdmg2,      sdmg2,       igs017_state, init_sdmg2754ca, ROT0, "IGS", "Chaoji Da Manguan II (China, V754C, set 1)",                         MACHINE_SUPPORTS_SAVE ) // 超級大滿貫II
+GAME ( 1997,  sdmg2754cb,  sdmg2,    sdmg2,      sdmg2,       igs017_state, init_sdmg2754cb, ROT0, "IGS", "Chaoji Da Manguan II (China, V754C, set 2)",                         MACHINE_SUPPORTS_SAVE ) // 超級大滿貫II
+GAME ( 1997,  tjsb,        0,        tjsb,       tjsb,        igs017_state, init_tjsb,       ROT0, "IGS", "Tian Jiang Shen Bing (China, V137C)",                                MACHINE_UNEMULATED_PROTECTION | MACHINE_SUPPORTS_SAVE ) // 天將神兵, fails the bonus round protection check (if enabled via DSW), see e.g. demo mode
 GAME ( 1998,  genius6,     0,        genius6,    genius6,     igs017_state, init_iqblocka,   ROT0, "IGS", "Genius 6 (V110F)",                                                   0 ) // shows Chinese text in puzzle game
 GAME ( 1997,  genius6a,    genius6,  genius6,    genius6,     igs017_state, init_iqblocka,   ROT0, "IGS", "Genius 6 (V133F)",                                                   0 ) // clone because it has older copyright year
 GAME ( 1997,  genius6b,    genius6,  genius6,    genius6,     igs017_state, init_iqblocka,   ROT0, "IGS", "Genius 6 (V132F)",                                                   0 ) // "
-GAME ( 1998,  mgcs,        0,        mgcs,       mgcs,        igs017_state, init_mgcs,       ROT0, "IGS", "Manguan Caishen (China, V103CS)",                                    MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // 满贯财神, finish IGS029 protection
-GAME ( 1998,  mgcsa,       mgcs,     mgcsa,      mgcs,        igs017_state, init_mgcsa,      ROT0, "IGS", "Manguan Caishen (China, V106CS)",                                    MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // 满贯财神, finish IGS029 protection
-GAME ( 1998,  mgcsb,       mgcs,     mgcsb,      mgcs,        igs017_state, init_mgcsb,      ROT0, "IGS", "Manguan Caishen (China, V110C)",                                     MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION )
-GAME ( 1998,  lhzb,        0,        lhzb2,      lhzb,        igs017_state, init_lhzb2,      ROT0, "IGS", "Long Hu Zhengba (China, VS105M, set 1)",                             MACHINE_UNEMULATED_PROTECTION ) // 龙虎争霸, finish IGS022 protection
-GAME ( 1998,  lhzba,       lhzb,     lhzb2,      lhzb,        igs017_state, init_lhzb2,      ROT0, "IGS", "Long Hu Zhengba (China, VS105M, set 2)",                             MACHINE_UNEMULATED_PROTECTION ) // 龙虎争霸, finish IGS022 protection
-GAME ( 1998,  lhzb2,       0,        lhzb2,      lhzb2,       igs017_state, init_lhzb2,      ROT0, "IGS", "Long Hu Zhengba 2 (China, set 1)",                                   MACHINE_UNEMULATED_PROTECTION ) // 龙虎争霸2, finish IGS022 protection
-GAME ( 1998,  lhzb2a,      lhzb2,    lhzb2a,     lhzb2a,      igs017_state, init_lhzb2a,     ROT0, "IGS", "Long Hu Zhengba 2 (China, VS221M)",                                  0 ) // 龙虎争霸2
-GAME ( 1998,  slqz2,       0,        slqz2,      slqz2,       igs017_state, init_slqz2,      ROT0, "IGS", "Shuang Long Qiang Zhu 2 VS (China, VS203J)",                         MACHINE_UNEMULATED_PROTECTION ) // 双龙抢珠, finish IGS022 protection
-GAME ( 1998,  slqz2a,      slqz2,    slqz2,      slqz2,       igs017_state, init_slqz2,      ROT0, "IGS", "Shuang Long Qiang Zhu 2 VS (China, set 2)",                          MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // 双龙抢珠, misses program ROM dump, finish IGS022 protection
-GAME ( 1999,  tarzanc,     0,        tarzan,     tarzan,      igs017_state, init_tarzanc,    ROT0, "IGS", "Tarzan Chuang Tian Guan (China, V109C, set 1)",                      0 ) // 泰山闯天关
-GAME ( 1999,  tarzan,      tarzanc,  tarzan,     tarzan,      igs017_state, init_tarzan,     ROT0, "IGS", "Tarzan Chuang Tian Guan (China, V109C, set 2)",                      MACHINE_NOT_WORKING ) // missing sprites and sound rom, imperfect tiles decryption
-GAME ( 1999,  tarzana,     tarzanc,  tarzan,     tarzan,      igs017_state, init_tarzana,    ROT0, "IGS", "Tarzan (V107)",                                                      MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // missing IGS029 protection, missing sprites and sound rom
-GAME ( 1999,  tarzanb,     tarzanc,  tarzan,     tarzan,      igs017_state, init_tarzanc,    ROT0, "IGS", "Tarzan Chuang Tian Guan (China, V110)",                              0 )
-GAME ( 2000,  sdmg2p,      0,        sdmg2p,     sdmg2p,      igs017_state, init_sdmg2p,     ROT0, "IGS", "Maque Wangchao / Chaoji Da Manguan 2 - Jiaqiang Ban (China, V100C)", MACHINE_UNEMULATED_PROTECTION | MACHINE_NOT_WORKING ) // 麻雀王朝 / 超級大滿貫 2 -加強版 protection kicks in after starting game, hopper isn't hooked up correctly
-GAMEL( 2000?, starzan,     0,        starzan,    starzan,     igs017_state, init_starzan,    ROT0, "IGS (G.F. Gioca license)", "Super Tarzan (Italy, V100I)",                   0, layout_igsslot )
-GAMEL( 2000?, jking103a,   starzan,  starzan,    starzan,     igs017_state, init_jking103a,  ROT0, "IGS", "Jungle King (V103A)",                                                0, layout_igsslot )
-GAMEL( 1999,  jking200pr,  starzan,  starzan,    tarzan202fa, igs017_state, init_jking200pr, ROT0, "IGS", "Jungle King (V200PR)",                                               0, layout_igsslot )
-GAME ( 1999?, tarzan103m,  tarzanc,  starzan,    tarzan103m,  igs017_state, init_starzan,    ROT0, "IGS", "Tarzan (V103M)",                                                     0 )
-GAMEL( 1999?, tarzan202fa, tarzanc,  starzan,    tarzan202fa, igs017_state, init_jking103a,  ROT0, "IGS", "Tarzan (V202FA)",                                                    0, layout_igsslot  )
+GAME ( 1998,  mgcs,        0,        mgcs,       mgcs,        igs017_state, init_mgcs,       ROT0, "IGS", "Manguan Caishen (China, V103CS)",                                    MACHINE_SUPPORTS_SAVE ) // 满贯财神
+GAME ( 1998,  mgcsa,       mgcs,     mgcsa,      mgcs,        igs017_state, init_mgcsa,      ROT0, "IGS", "Manguan Caishen (China, V106CS)",                                    MACHINE_SUPPORTS_SAVE ) // 满贯财神
+GAME ( 1998,  mgcsb,       mgcs,     mgcsb,      mgcsb,       igs017_state, init_mgcsb,      ROT0, "IGS", "Manguan Caishen (China, V110C)",                                     MACHINE_SUPPORTS_SAVE ) // 满贯财神
+GAME ( 1998,  lhzb,        0,        lhzb2,      lhzb,        igs017_state, init_lhzb2,      ROT0, "IGS", "Long Hu Zhengba (China, VS105M, set 1)",                             MACHINE_SUPPORTS_SAVE ) // 龙虎争霸
+GAME ( 1998,  lhzba,       lhzb,     lhzb2,      lhzb,        igs017_state, init_lhzb2,      ROT0, "IGS", "Long Hu Zhengba (China, VS105M, set 2)",                             MACHINE_SUPPORTS_SAVE ) // 龙虎争霸
+GAME ( 1998,  lhzb2,       0,        lhzb2,      lhzb2,       igs017_state, init_lhzb2,      ROT0, "IGS", "Long Hu Zhengba 2 (China, set 1)",                                   MACHINE_SUPPORTS_SAVE ) // 龙虎争霸2
+GAME ( 1998,  lhzb2a,      lhzb2,    lhzb2a,     lhzb2a,      igs017_state, init_lhzb2a,     ROT0, "IGS", "Long Hu Zhengba 2 (China, VS221M)",                                  MACHINE_SUPPORTS_SAVE ) // 龙虎争霸2
+GAME ( 1998,  lhzb2b,      lhzb2,    lhzb2b,     lhzb2,       igs017_state, init_lhzb2b,     ROT0, "IGS", "Long Hu Zhengba 2 (China, VS210M)",                                  MACHINE_SUPPORTS_SAVE ) // 龙虎争霸2
+GAME ( 1998,  lhzb2c,      lhzb2,    lhzb2c,     lhzb2a,      igs017_state, init_lhzb2c,     ROT0, "IGS", "Long Hu Zhengba 2 (China, VS220M)",                                  MACHINE_SUPPORTS_SAVE ) // 龙虎争霸2
+GAME ( 1998,  slqz2,       0,        slqz2,      slqz2,       igs017_state, init_slqz2,      ROT0, "IGS", "Shuang Long Qiang Zhu 2 VS (China, VS203J, set 1)",                  MACHINE_SUPPORTS_SAVE ) // 双龙抢珠
+GAME ( 1998,  slqz2a,      slqz2,    slqz2,      slqz2,       igs017_state, init_slqz2,      ROT0, "IGS", "Shuang Long Qiang Zhu 2 VS (China, unknown version)",                MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // 双龙抢珠, misses program ROM dump
+GAME ( 1998,  slqz2b,      slqz2,    slqz2,      slqz2,       igs017_state, init_slqz2b,     ROT0, "IGS", "Shuang Long Qiang Zhu 2 VS (China, VS203J, set 2)",                  MACHINE_SUPPORTS_SAVE ) // 双龙抢珠
+GAME ( 1999,  tarzanc,     0,        tarzan,     tarzan,      igs017_state, init_tarzanc,    ROT0, "IGS", "Tarzan Chuang Tian Guan (China, V109C, set 1)",                      MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // 泰山闯天关
+GAME ( 1999,  tarzan,      tarzanc,  tarzan,     tarzan,      igs017_state, init_tarzan,     ROT0, "IGS", "Tarzan Chuang Tian Guan (China, V109C, set 2)",                      MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // missing sprites and sound ROM, imperfect tiles decryption
+GAME ( 1999,  tarzana,     tarzanc,  tarzan,     tarzan,      igs017_state, init_tarzana,    ROT0, "IGS", "Tarzan (V107)",                                                      MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // missing IGS029 protection, missing sprites and sound ROM
+GAME ( 1999,  tarzanb,     tarzanc,  tarzan,     tarzan,      igs017_state, init_tarzanc,    ROT0, "IGS", "Tarzan Chuang Tian Guan (China, V110)",                              MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION )
+GAME ( 2000,  sdmg2p,      0,        sdmg2p,     sdmg2p,      igs017_state, init_sdmg2p,     ROT0, "IGS", "Maque Wangchao / Chaoji Da Manguan 2 - Jiaqiang Ban (China, V100C)", MACHINE_SUPPORTS_SAVE ) // 麻雀王朝 / 超級大滿貫 2 -加強版
+GAMEL( 2000?, starzan,     0,        starzan,    starzan,     igs017_state, init_starzan,    ROT0, "IGS (G.F. Gioca license)", "Super Tarzan (Italy, V100I)",                   MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION, layout_starzan )
+GAMEL( 2000?, jking103a,   starzan,  starzan,    starzan,     igs017_state, init_jking103a,  ROT0, "IGS", "Jungle King (V103A)",                                                MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION, layout_starzan )
+GAMEL( 2000?, jking105us,  starzan,  starzan,    tarzan202fa, igs017_state, init_jking103a,  ROT0, "IGS", "Jungle King (V105US)",                                               MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION, layout_starzan )
+GAMEL( 1999,  jking200pr,  starzan,  starzan,    tarzan202fa, igs017_state, init_jking200pr, ROT0, "IGS", "Jungle King (V200PR)",                                               MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION, layout_starzan )
+GAMEL( 1999?, tarzan103m,  tarzanc,  starzan,    tarzan103m,  igs017_state, init_starzan,    ROT0, "IGS", "Tarzan (V103M)",                                                     MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION, layout_tarzan103m ) // always gives ASIC31 error after double up game
+GAMEL( 1999?, tarzan106fa, tarzanc,  starzan,    tarzan202fa, igs017_state, init_jking103a,  ROT0, "IGS", "Tarzan (V106FA)",                                                    MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION, layout_starzan )
+GAMEL( 1999?, tarzan201fa, tarzanc,  starzan,    tarzan202fa, igs017_state, init_jking200pr, ROT0, "IGS", "Tarzan (V201FA)",                                                    MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION, layout_starzan )
+GAMEL( 1999?, tarzan201faa,tarzanc,  starzan,    tarzan202fa, igs017_state, init_jking103a,  ROT0, "IGS", "Tarzan (V201FA, alt encryption)",                                    MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION, layout_starzan )
+GAMEL( 1999?, tarzan202fa, tarzanc,  starzan,    tarzan202fa, igs017_state, init_jking103a,  ROT0, "IGS", "Tarzan (V202FA)",                                                    MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION, layout_starzan )
 GAMEL( 2000?, happyskl,    0,        happyskl,   happyskl,    igs017_state, init_happyskl,   ROT0, "IGS", "Happy Skill (Italy, V611IT)",                                        0, layout_igspoker )
 GAMEL( 2000?, cpoker2,     0,        cpoker2,    cpoker2,     igs017_state, init_cpoker2,    ROT0, "IGS", "Champion Poker 2 (V100A)",                                           0, layout_igspoker )
 GAME ( 2000?, spkrform,    spk306us, spkrform,   spkrform,    igs017_state, init_spkrform,   ROT0, "IGS", "Super Poker (V100xD03) / Formosa",                                   MACHINE_UNEMULATED_PROTECTION ) // poker game enabling forced with a patch. Parent spk306us in driver spoker.cpp
-GAME ( 2000?, jking302us,  0,        jking302us, starzan,     igs017_state, init_jking302us, ROT0, "IGS", "Jungle King (V302US)",                                               MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // missing IGS025 and IGS029 protection
+GAME ( 2000?, jking302us,  0,        jking302us, jking302us,  igs017_state, init_jking302us, ROT0, "IGS", "Jungle King (V302US)",                                               MACHINE_SUPPORTS_SAVE )

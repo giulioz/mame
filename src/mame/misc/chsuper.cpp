@@ -58,7 +58,6 @@ public:
 	void init_losttrea();
 
 protected:
-	virtual void machine_start() override { m_lamps.resolve(); }
 	virtual void video_start() override ATTR_COLD;
 
 private:
@@ -340,7 +339,7 @@ static INPUT_PORTS_START( chsuper )
 	PORT_DIPSETTING(    0x08, "Sensa Abilita" )
 	PORT_DIPSETTING(    0x00, "Con Abilita" )
 	PORT_DIPNAME( 0x30, 0x30, DEF_STR( Coinage ) )  PORT_DIPLOCATION("DSW:5,6")
-	PORT_DIPSETTING(    0x00, "1 Coin/10 Credits" )
+	PORT_DIPSETTING(    0x00, DEF_STR( 1C_10C ) )
 	PORT_DIPSETTING(    0x10, DEF_STR( 1C_5C ) )
 	PORT_DIPSETTING(    0x20, DEF_STR( 1C_2C ) )
 	PORT_DIPSETTING(    0x30, DEF_STR( 1C_1C ) )
@@ -432,7 +431,7 @@ void chsuper_state::chsuper(machine_config &config)
 	GFXDECODE(config, m_gfxdecode, m_palette, gfx_chsuper);
 	PALETTE(config, m_palette).set_entries(0x100);
 
-	ramdac_device &ramdac(RAMDAC(config, "ramdac", 0, m_palette)); // ADV476KP50
+	ramdac_device &ramdac(RAMDAC(config, "ramdac", m_palette)); // ADV476KP50
 	ramdac.set_addrmap(0, &chsuper_state::ramdac_map);
 
 	// sound hardware

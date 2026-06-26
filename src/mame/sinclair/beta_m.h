@@ -23,7 +23,7 @@
 class beta_disk_device : public device_t
 {
 public:
-	beta_disk_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
+	beta_disk_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock = 0);
 
 	uint8_t status_r();
 	uint8_t track_r();
@@ -59,8 +59,6 @@ private:
 	void motors_control();
 	u8 m_control;
 	bool m_motor_active;
-
-	static void floppy_formats(format_registration &fr);
 };
 
 DECLARE_DEVICE_TYPE(BETA_DISK, beta_disk_device)

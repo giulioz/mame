@@ -495,7 +495,7 @@ static INPUT_PORTS_START( sengokmj )
 	PORT_BIT( 0xffc0, IP_ACTIVE_LOW, IPT_UNUSED )
 
 	PORT_START("SYSTEM")
-	PORT_BIT( 0x0001, IP_ACTIVE_LOW, IPT_GAMBLE_DOOR ) // Only used in service mode?
+	PORT_BIT( 0x0001, IP_ACTIVE_LOW, IPT_DOOR ) // Only used in service mode?
 	PORT_SERVICE_NO_TOGGLE( 0x0002, IP_ACTIVE_LOW )
 	PORT_BIT( 0x0004, IP_ACTIVE_LOW, IPT_SERVICE4 ) PORT_NAME("Opt. 1st") // Only used in service mode?
 	PORT_BIT( 0x0008, IP_ACTIVE_LOW, IPT_MEMORY_RESET )
@@ -582,7 +582,7 @@ void sengokmj_state::sengokmj(machine_config &config)
 	screen.set_palette(m_palette);
 	screen.screen_vblank().set(FUNC(sengokmj_state::vblank_irq));
 
-	seibu_crtc_device &crtc(SEIBU_CRTC(config, "crtc", 0));
+	seibu_crtc_device &crtc(SEIBU_CRTC(config, "crtc"));
 	crtc.layer_en_callback().set(FUNC(sengokmj_state::layer_en_w));
 	crtc.layer_scroll_callback().set(FUNC(sengokmj_state::layer_scroll_w));
 
@@ -602,7 +602,7 @@ void sengokmj_state::sengokmj(machine_config &config)
 	okim6295_device &oki(OKIM6295(config, "oki", 1320000, okim6295_device::PIN7_LOW));
 	oki.add_route(ALL_OUTPUTS, "mono", 0.40);
 
-	seibu_sound_device &seibu_sound(SEIBU_SOUND(config, "seibu_sound", 0));
+	seibu_sound_device &seibu_sound(SEIBU_SOUND(config, "seibu_sound"));
 	seibu_sound.coin_io_callback().set_ioport("COIN");
 	seibu_sound.int_callback().set_inputline("audiocpu", 0);
 	seibu_sound.set_rom_tag("audiocpu");

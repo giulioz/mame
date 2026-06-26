@@ -117,13 +117,15 @@ Address          Dir Data     Name      Description
 
 Notes:
 -----
-- we are using an unusually high CPU interleave factor (800) to avoid hangs
-  in rthunder. The two 6809 in this game synchronize using a semaphore at
-  5606/5607 (CPU1) 1606/1607 (CPU2). CPU1 clears 5606, does some quick things,
-  and then increments 5606. While it does its quick things (which require
-  about 40 clock cycles) it expects CPU2 to clear 5607.
-  Raising the interleave factor to 1000 makes wndrmomo crash during attract
-  mode. I haven't investigated on the cause.
+- We are using an unusually tight CPU quantum to avoid hangs in rthunder.
+  The two 6809 in this game synchronize using a semaphore at CPU1:5606/5607 /
+  CPU2:1606/1607. CPU1 clears 5606, does some quick things, and then increments
+  5606. While it does its quick things (which require about 40 clock cycles)
+  it expects CPU2 to clear 5607.
+  If the quantum is not tight enough, CPU1 will crash in wndrmomo after 10
+  attract mode loops, and there are similar soft crashes in rthunder0 and
+  rthunder1 attract mode. For some reason, if quantum is set to perfect,
+  rthunder1 will still crash (the current quantum of clock/4 works ok).
 
 - There are two watchdogs, one per CPU (or maybe three). Handling them
   separately is necessary to allow entering service mode without manually
@@ -183,7 +185,7 @@ TODO:
 #include "speaker.h"
 
 
-void namcos86_state::bankswitch1_w(uint8_t data)
+void namcos86_state::bankswitch1_w(u8 data)
 {
 	// if the ROM expansion module is available, don't do anything. This avoids conflict
 	// with bankswitch1_ext_w() in wndrmomo
@@ -193,7 +195,7 @@ void namcos86_state::bankswitch1_w(uint8_t data)
 	m_mainbank->set_entry(data & 0x03);
 }
 
-void namcos86_state::bankswitch1_ext_w(uint8_t data)
+void namcos86_state::bankswitch1_ext_w(u8 data)
 {
 	if (!m_bankeddata_ptr)
 		return;
@@ -201,13 +203,13 @@ void namcos86_state::bankswitch1_ext_w(uint8_t data)
 	m_mainbank->set_entry(data & 0x1f);
 }
 
-void namcos86_state::bankswitch2_w(uint8_t data)
+void namcos86_state::bankswitch2_w(u8 data)
 {
 	m_subbank->set_entry(data & 0x03);
 }
 
 // Stubs to pass the correct Dip Switch setup to the MCU
-uint8_t namcos86_state::dsw0_r()
+u8 namcos86_state::dsw0_r()
 {
 	int rhi, rlo;
 
@@ -223,7 +225,7 @@ uint8_t namcos86_state::dsw0_r()
 	return rhi | rlo;
 }
 
-uint8_t namcos86_state::dsw1_r()
+u8 namcos86_state::dsw1_r()
 {
 	int rhi, rlo;
 
@@ -241,18 +243,18 @@ uint8_t namcos86_state::dsw1_r()
 }
 
 
-void namcos86_state::int_ack1_w(uint8_t data)
+void namcos86_state::int_ack1_w(u8 data)
 {
 	m_cpu1->set_input_line(0, CLEAR_LINE);
 }
 
-void namcos86_state::int_ack2_w(uint8_t data)
+void namcos86_state::int_ack2_w(u8 data)
 {
 	m_cpu2->set_input_line(0, CLEAR_LINE);
 }
 
 template <unsigned Bit>
-void namcos86_state::watchdog_w(uint8_t data)
+void namcos86_state::watchdog_w(u8 data)
 {
 	m_wdog |= 1 << Bit;
 	if (m_wdog == 0b11)
@@ -263,21 +265,21 @@ void namcos86_state::watchdog_w(uint8_t data)
 }
 
 
-void namcos86_state::coin_w(uint8_t data)
+void namcos86_state::coin_w(u8 data)
 {
 	machine().bookkeeping().coin_lockout_global_w(BIT(data, 0));
 	machine().bookkeeping().coin_counter_w(0, BIT(~data, 1));
 	machine().bookkeeping().coin_counter_w(1, BIT(~data, 2));
 }
 
-void namcos86_state::led_w(uint8_t data)
+void namcos86_state::led_w(u8 data)
 {
 	m_leds[0] = BIT(data, 3);
 	m_leds[1] = BIT(data, 4);
 }
 
 
-void namcos86_state::cus115_w(offs_t offset, uint8_t data)
+void namcos86_state::cus115_w(offs_t offset, u8 data)
 {
 	// make sure the expansion board is present
 	if (!m_bankeddata_ptr)
@@ -317,8 +319,6 @@ void namcos86_state::machine_start()
 	if (m_subbank)
 		m_subbank->configure_entries(0, 4, memregion("cpu2")->base(), 0x2000);
 
-	m_leds.resolve();
-
 	save_item(NAME(m_wdog));
 }
 
@@ -328,9 +328,10 @@ void namcos86_state::cpu1_map(address_map &map)
 	map(0x0000, 0x1fff).rw(m_tilegen[0], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
 	map(0x2000, 0x3fff).rw(m_tilegen[1], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
 
-	map(0x4000, 0x5fff).ram().w(FUNC(namcos86_state::spriteram_w)).share(m_spriteram);
+	map(0x4000, 0x57ff).ram().share("sharedram");
+	map(0x5800, 0x5fff).m(m_spritegen, FUNC(namcos1_sprite_device::spriteram_map));
 
-	map(0x4000, 0x43ff).rw(m_cus30, FUNC(namco_cus30_device::namcos1_cus30_r), FUNC(namco_cus30_device::namcos1_cus30_w)); // PSG device, shared RAM
+	map(0x4000, 0x43ff).m(m_cus30, FUNC(namco_cus30_device::amap)); // PSG device, shared RAM
 
 	// ROM & Voice expansion board - only some games have it
 	map(0x6000, 0x7fff).bankr(m_mainbank);
@@ -364,7 +365,8 @@ void namcos86_state::hopmappy_cpu2_map(address_map &map)
 
 void namcos86_state::roishtar_cpu2_map(address_map &map)
 {
-	map(0x0000, 0x1fff).ram().w(FUNC(namcos86_state::spriteram_w)).share(m_spriteram);
+	map(0x0000, 0x17ff).ram().share("sharedram");
+	map(0x1800, 0x1fff).rw(m_spritegen, FUNC(namcos1_sprite_device::spriteram_r), FUNC(namcos1_sprite_device::spriteram_w));
 	map(0x4000, 0x5fff).rw(m_tilegen[1], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
 	map(0x6000, 0x7fff).rw(m_tilegen[0], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
 	map(0x8000, 0xffff).rom();
@@ -376,7 +378,8 @@ void namcos86_state::genpeitd_cpu2_map(address_map &map)
 {
 	map(0x0000, 0x1fff).rw(m_tilegen[0], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
 	map(0x2000, 0x3fff).rw(m_tilegen[1], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
-	map(0x4000, 0x5fff).ram().w(FUNC(namcos86_state::spriteram_w)).share(m_spriteram);
+	map(0x4000, 0x57ff).ram().share("sharedram");
+	map(0x5800, 0x5fff).rw(m_spritegen, FUNC(namcos1_sprite_device::spriteram_r), FUNC(namcos1_sprite_device::spriteram_w));
 	map(0x8000, 0xffff).rom();
 	map(0x8800, 0x8800).w(FUNC(namcos86_state::int_ack2_w));   // IRQ acknowledge
 	map(0xb000, 0xb000).w(FUNC(namcos86_state::watchdog_w<1>));
@@ -384,7 +387,8 @@ void namcos86_state::genpeitd_cpu2_map(address_map &map)
 
 void namcos86_state::rthunder_cpu2_map(address_map &map)
 {
-	map(0x0000, 0x1fff).ram().w(FUNC(namcos86_state::spriteram_w)).share(m_spriteram);
+	map(0x0000, 0x17ff).ram().share("sharedram");
+	map(0x1800, 0x1fff).rw(m_spritegen, FUNC(namcos1_sprite_device::spriteram_r), FUNC(namcos1_sprite_device::spriteram_w));
 	map(0x2000, 0x3fff).rw(m_tilegen[0], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
 	map(0x4000, 0x5fff).rw(m_tilegen[1], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
 	map(0x6000, 0x7fff).bankr(m_subbank);
@@ -398,7 +402,8 @@ void namcos86_state::rthunder_cpu2_map(address_map &map)
 
 void namcos86_state::wndrmomo_cpu2_map(address_map &map)
 {
-	map(0x2000, 0x3fff).ram().w(FUNC(namcos86_state::spriteram_w)).share(m_spriteram);
+	map(0x2000, 0x37ff).ram().share("sharedram");
+	map(0x3800, 0x3fff).rw(m_spritegen, FUNC(namcos1_sprite_device::spriteram_r), FUNC(namcos1_sprite_device::spriteram_w));
 	map(0x4000, 0x5fff).rw(m_tilegen[0], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
 	map(0x6000, 0x7fff).rw(m_tilegen[1], FUNC(namco_cus4xtmap_device::vram_r), FUNC(namco_cus4xtmap_device::vram_w));
 	map(0x8000, 0xffff).rom();
@@ -409,7 +414,7 @@ void namcos86_state::wndrmomo_cpu2_map(address_map &map)
 
 void namcos86_state::common_mcu_map(address_map &map)
 {
-	map(0x1000, 0x13ff).rw(m_cus30, FUNC(namco_cus30_device::namcos1_cus30_r), FUNC(namco_cus30_device::namcos1_cus30_w));
+	map(0x1000, 0x13ff).m(m_cus30, FUNC(namco_cus30_device::amap));
 	map(0x1400, 0x1fff).ram();
 }
 
@@ -1008,7 +1013,7 @@ static const gfx_layout spritelayout =
 	32*32*4
 };
 
-static GFXDECODE_START( gfx_namcos86 )
+static GFXDECODE_START( gfx_namcos86_spr )
 	GFXDECODE_ENTRY( "sprites", 0, spritelayout, 2048*1, 128 )
 GFXDECODE_END
 
@@ -1041,7 +1046,7 @@ void namcos86_state::hopmappy(machine_config &config)
 	m_mcu->out_p2_cb().set(FUNC(namcos86_state::led_w));
 	m_mcu->set_vblank_int("screen", FUNC(namcos86_state::irq0_line_hold)); // ???
 
-	config.set_maximum_quantum(attotime::from_hz(48000)); // heavy interleaving needed to avoid hangs in rthunder
+	config.set_maximum_quantum(attotime::from_hz(m_cpu1->clock() / 4)); // heavy interleaving needed to avoid hangs in rthunder
 
 	WATCHDOG_TIMER(config, m_watchdog);
 
@@ -1052,15 +1057,19 @@ void namcos86_state::hopmappy(machine_config &config)
 	screen.screen_vblank().set(FUNC(namcos86_state::screen_vblank));
 	screen.set_palette(m_palette);
 
-	NAMCO_CUS4XTMAP(config, m_tilegen[0], 0, m_palette, gfx_namcos86_tile_0);
+	NAMCOS1_SPRITE(config, m_spritegen, 49.152_MHz_XTAL, m_palette, gfx_namcos86_spr);
+	m_spritegen->set_pri_callback(FUNC(namcos86_state::sprite_pri_cb));
+	m_spritegen->set_gfxbank_callback(FUNC(namcos86_state::sprite_bank_cb));
+	m_spritegen->flip_callback().set(FUNC(namcos86_state::flip_screen_set));
+
+	NAMCO_CUS4XTMAP(config, m_tilegen[0], m_palette, gfx_namcos86_tile_0);
 	m_tilegen[0]->set_offset(47, 422, -9, 9);
 	m_tilegen[0]->set_tile_callback(FUNC(namcos86_state::tile_cb_0));
 
-	NAMCO_CUS4XTMAP(config, m_tilegen[1], 0, m_palette, gfx_namcos86_tile_1);
+	NAMCO_CUS4XTMAP(config, m_tilegen[1], m_palette, gfx_namcos86_tile_1);
 	m_tilegen[1]->set_offset(46, 422, -9, 9);
 	m_tilegen[1]->set_tile_callback(FUNC(namcos86_state::tile_cb_1));
 
-	GFXDECODE(config, m_gfxdecode, m_palette, gfx_namcos86);
 	PALETTE(config, m_palette, FUNC(namcos86_state::namcos86_palette), 4096, 512);
 
 	// sound hardware
@@ -1070,7 +1079,6 @@ void namcos86_state::hopmappy(machine_config &config)
 	ymsnd.add_route(0, "mono", 0.0).add_route(1, "mono", 0.60); // only right channel is connected
 
 	NAMCO_CUS30(config, m_cus30, 49.152_MHz_XTAL/2048);
-	m_cus30->set_voices(8);
 	m_cus30->add_route(ALL_OUTPUTS, "mono", 0.50);
 }
 
@@ -1687,21 +1695,21 @@ ROM_END
 void namcos86_state::init_namco86()
 {
 	// shuffle tile ROMs so regular gfx unpack routines can be used
-	uint8_t *gfx = memregion("tiles_0")->base();
+	u8 *gfx = memregion("tiles_0")->base();
 	int size = memregion("tiles_0")->bytes() * 2 / 3;
 
 	{
-		std::vector<uint8_t> buffer(size);
-		uint8_t *dest1 = gfx;
-		uint8_t *dest2 = gfx + (size / 2);
-		uint8_t *mono = gfx + size;
+		std::vector<u8> buffer(size);
+		u8 *dest1 = gfx;
+		u8 *dest2 = gfx + (size / 2);
+		u8 *mono = gfx + size;
 
 		memcpy(&buffer[0], gfx, size);
 
 		for (int i = 0; i < size; i += 2)
 		{
-			uint8_t const data1 = buffer[i];
-			uint8_t const data2 = buffer[i+1];
+			u8 const data1 = buffer[i];
+			u8 const data2 = buffer[i+1];
 			*dest1++ = (data1 << 4) | (data2 & 0xf);
 			*dest2++ = (data1 & 0xf0) | (data2 >> 4);
 
@@ -1713,17 +1721,17 @@ void namcos86_state::init_namco86()
 	size = memregion("tiles_1")->bytes() * 2 / 3;
 
 	{
-		std::vector<uint8_t> buffer(size);
-		uint8_t *dest1 = gfx;
-		uint8_t *dest2 = gfx + (size / 2);
-		uint8_t *mono = gfx + size;
+		std::vector<u8> buffer(size);
+		u8 *dest1 = gfx;
+		u8 *dest2 = gfx + (size / 2);
+		u8 *mono = gfx + size;
 
 		memcpy(&buffer[0], gfx, size);
 
 		for (int i = 0; i < size; i += 2)
 		{
-			uint8_t const data1 = buffer[i];
-			uint8_t const data2 = buffer[i+1];
+			u8 const data1 = buffer[i];
+			u8 const data2 = buffer[i+1];
 			*dest1++ = (data1 << 4) | (data2 & 0xf);
 			*dest2++ = (data1 & 0xf0) | (data2 >> 4);
 

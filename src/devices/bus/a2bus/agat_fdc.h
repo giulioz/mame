@@ -56,11 +56,18 @@ protected:
 	virtual uint8_t read_c0nx(uint8_t offset) override;
 	virtual void write_c0nx(uint8_t offset, uint8_t data) override;
 	virtual uint8_t read_cnxx(uint8_t offset) override;
+	virtual void reset_from_bus() override;
 
 	required_device<i8255_device> m_d14;
 	required_device<i8255_device> m_d15;
 
 private:
+	struct live_info {
+		uint16_t shift_reg;
+		bool data_bit_context;
+		uint8_t data_reg;
+	};
+
 	required_device<floppy_connector> floppy0;
 	required_device<floppy_connector> floppy1;
 
@@ -69,6 +76,8 @@ private:
 
 	void lss_start();
 	TIMER_CALLBACK_MEMBER(lss_sync);
+	void live_write_raw(uint16_t raw);
+	void live_write_mfm(uint8_t mfm);
 
 	TIMER_CALLBACK_MEMBER(motor_off);
 
@@ -78,15 +87,21 @@ private:
 	uint16_t address;
 	uint64_t cycles;
 
-	u8 m_mxcs;
+	uint8_t m_mxcs;
 	int m_unit;
-	int m_state;
+
+	live_info cur_live;
+
+	uint8_t last_6502_write;
+	bool mode_write, write_desync;
+	attotime write_start_time;
+	attotime write_buffer[32];
+	int write_position;
 
 	int m_seektime;
 	int m_waittime;
 
 	emu_timer *m_timer_lss;
-	emu_timer *m_timer_seek;
 	emu_timer *m_timer_motor;
 
 	uint8_t *m_rom;

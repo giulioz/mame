@@ -126,7 +126,7 @@ public:
 private:
 	virtual void driver_start() override;
 
-	void render_w(int state);
+	u32 screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect);
 
 	required_device<gew7_device> m_maincpu;
 	optional_device<pwm_display_device> m_pwm;
@@ -200,11 +200,8 @@ void psr150_state::pwm_col_w(int state)
 		m_pwm->write_mx(m_pwm_col);
 }
 
-void psr150_state::render_w(int state)
+u32 psr150_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
-	if (!state)
-		return;
-
 	const u8* render = m_lcdc->render();
 	for (int x = 0; x != 64; x++) {
 		for (int y = 0; y != 8; y++) {
@@ -214,16 +211,13 @@ void psr150_state::render_w(int state)
 		}
 		render += 8;
 	}
+
+	return 0;
 }
 
 
 void psr150_state::driver_start()
 {
-	m_outputs.resolve();
-	m_led.resolve();
-	m_digit.resolve();
-	m_switch.resolve();
-
 	m_switch = 0x2; // "Voice Play" mode
 
 	save_item(NAME(m_key_sel));
@@ -434,7 +428,7 @@ void psr150_state::psr190_base(machine_config &config)
 	screen.set_refresh_hz(60);
 	screen.set_size(1000, 775);
 	screen.set_visarea_full();
-	screen.screen_vblank().set(FUNC(psr150_state::render_w));
+	screen.set_screen_update(FUNC(psr150_state::screen_update));
 }
 
 void psr150_state::psr190(machine_config &config)

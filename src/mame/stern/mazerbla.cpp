@@ -142,11 +142,11 @@ public:
 		, m_lamps(*this, "lamp%u", 0U)
 	{ }
 
-	void greatgun(machine_config &config);
-	void mazerbla(machine_config &config);
+	void greatgun(machine_config &config) ATTR_COLD;
+	void mazerbla(machine_config &config) ATTR_COLD;
 
-	void init_mazerbla();
-	void init_greatgun();
+	void init_mazerbla() ATTR_COLD;
+	void init_greatgun() ATTR_COLD;
 
 protected:
 	virtual void machine_start() override ATTR_COLD;
@@ -589,7 +589,7 @@ static INPUT_PORTS_START( mazerbla )
 	PORT_DIPSETTING(    0x0b, DEF_STR( 1C_5C ) )
 	PORT_DIPSETTING(    0x0a, DEF_STR( 1C_6C ) )
 	PORT_DIPSETTING(    0x09, DEF_STR( 1C_7C ) )
-	PORT_DIPSETTING(    0x08, "1 Coin/10 Credits" )
+	PORT_DIPSETTING(    0x08, DEF_STR( 1C_10C ) )
 	PORT_DIPSETTING(    0x07, "1 Coin/14 Credits" )
 
 	PORT_DIPNAME( 0xf0, 0xf0, DEF_STR( Coin_B ) )
@@ -607,7 +607,7 @@ static INPUT_PORTS_START( mazerbla )
 	PORT_DIPSETTING(    0xb0, DEF_STR( 1C_5C ) )
 	PORT_DIPSETTING(    0xa0, DEF_STR( 1C_6C ) )
 	PORT_DIPSETTING(    0x90, DEF_STR( 1C_7C ) )
-	PORT_DIPSETTING(    0x80, "1 Coin/10 Credits" )
+	PORT_DIPSETTING(    0x80, DEF_STR( 1C_10C ) )
 	PORT_DIPSETTING(    0x70, "1 Coin/14 Credits" )
 
 	PORT_START("DSW2")  /* Strobe 3: Dip Switches 12-19*/
@@ -756,7 +756,7 @@ static INPUT_PORTS_START( greatgun )
 	PORT_DIPSETTING(    0x0b, DEF_STR( 1C_5C ) )
 	PORT_DIPSETTING(    0x0a, DEF_STR( 1C_6C ) )
 	PORT_DIPSETTING(    0x09, DEF_STR( 1C_7C ) )
-	PORT_DIPSETTING(    0x08, "1 Coin/10 Credits" )
+	PORT_DIPSETTING(    0x08, DEF_STR( 1C_10C ) )
 	PORT_DIPSETTING(    0x07, "1 Coin/14 Credits" )
 
 	PORT_DIPNAME( 0xf0, 0xf0, DEF_STR( Coin_B ) )
@@ -774,7 +774,7 @@ static INPUT_PORTS_START( greatgun )
 	PORT_DIPSETTING(    0xb0, DEF_STR( 1C_5C ) )
 	PORT_DIPSETTING(    0xa0, DEF_STR( 1C_6C ) )
 	PORT_DIPSETTING(    0x90, DEF_STR( 1C_7C ) )
-	PORT_DIPSETTING(    0x80, "1 Coin/10 Credits" )
+	PORT_DIPSETTING(    0x80, DEF_STR( 1C_10C ) )
 	PORT_DIPSETTING(    0x70, "1 Coin/14 Credits" )
 
 	PORT_START("DSW2")  /* Strobe 3: Dip Switches 12-19*/
@@ -893,9 +893,6 @@ INTERRUPT_GEN_MEMBER(mazerbla_state::sound_interrupt)
 
 void mazerbla_state::machine_start()
 {
-	m_leds.resolve();
-	m_lamps.resolve();
-
 	m_gfx_bank->configure_entries(0, 256, memregion("sub2")->base() + 0x10000, 0x2000);
 
 	save_item(NAME(m_port02_status));

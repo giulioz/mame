@@ -511,7 +511,7 @@ void mc10_state::mc10_video(machine_config &config)
 	/* video hardware */
 	SCREEN(config, "screen", SCREEN_TYPE_RASTER);
 
-	mc6847_ntsc_device &vdg(MC6847_NTSC(config, "mc6847", XTAL(3'579'545)));
+	mc6847_device &vdg(MC6847(config, "mc6847", XTAL(3'579'545)));
 	vdg.set_screen("screen");
 	vdg.input_callback().set(FUNC(mc10_state::mc6847_videoram_r));
 }
@@ -559,7 +559,7 @@ void alice32_state::alice32(machine_config &config)
 	screen.set_visarea(00, 336-1, 00, 270-1);
 	PALETTE(config, "palette").set_entries(8);
 
-	EF9345(config, m_ef9345, 0);
+	EF9345(config, m_ef9345);
 	m_ef9345->set_screen("screen");
 	m_ef9345->set_palette_tag("palette");
 	TIMER(config, "alice32_sl").configure_scanline(FUNC(alice32_state::alice32_scanline), "screen", 0, 10);

@@ -51,12 +51,6 @@ if (_OPTIONS["targetos"] == "windows") then
 	}
 end
 
-if (_OPTIONS["osd"] == "sdl") then
-	defines {
-		"UI_SDL",
-	}
-end
-
 files {
 	MAME_DIR .. "src/frontend/mame/audit.cpp",
 	MAME_DIR .. "src/frontend/mame/audit.h",
@@ -93,10 +87,14 @@ files {
 	MAME_DIR .. "src/frontend/mame/ui/audioeffects.h",
 	MAME_DIR .. "src/frontend/mame/ui/audiomix.cpp",
 	MAME_DIR .. "src/frontend/mame/ui/audiomix.h",
+	MAME_DIR .. "src/frontend/mame/ui/audio_effect_compressor.cpp",
+	MAME_DIR .. "src/frontend/mame/ui/audio_effect_compressor.h",
 	MAME_DIR .. "src/frontend/mame/ui/audio_effect_eq.cpp",
 	MAME_DIR .. "src/frontend/mame/ui/audio_effect_eq.h",
 	MAME_DIR .. "src/frontend/mame/ui/audio_effect_filter.cpp",
 	MAME_DIR .. "src/frontend/mame/ui/audio_effect_filter.h",
+	MAME_DIR .. "src/frontend/mame/ui/audio_effect_reverb.cpp",
+	MAME_DIR .. "src/frontend/mame/ui/audio_effect_reverb.h",
 	MAME_DIR .. "src/frontend/mame/ui/auditmenu.cpp",
 	MAME_DIR .. "src/frontend/mame/ui/auditmenu.h",
 	MAME_DIR .. "src/frontend/mame/ui/barcode.cpp",

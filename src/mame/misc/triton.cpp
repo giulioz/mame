@@ -59,8 +59,8 @@ public:
 		, m_config(*this, "CONFIG")
 	{ }
 
-	void triton1(machine_config &config);
-	void triton2(machine_config &config);
+	void triton1(machine_config &config) ATTR_COLD;
+	void triton2(machine_config &config) ATTR_COLD;
 
 	DECLARE_INPUT_CHANGED_MEMBER(pushbutton_changed);
 	DECLARE_INPUT_CHANGED_MEMBER(charset_changed);
@@ -390,8 +390,6 @@ void triton_state::machine_start()
 
 	m_exp_ram = make_unique_clear<uint8_t[]>(0xe000);
 
-	m_led.resolve();
-
 	save_pointer(NAME(m_exp_ram), 0xe000);
 }
 
@@ -435,7 +433,6 @@ GFXDECODE_END
 
 static DEVICE_INPUT_DEFAULTS_START(printer)
 	DEVICE_INPUT_DEFAULTS("RS232_RXBAUD", 0xff, RS232_BAUD_110)
-	DEVICE_INPUT_DEFAULTS("RS232_TXBAUD", 0xff, RS232_BAUD_110)
 	DEVICE_INPUT_DEFAULTS("RS232_DATABITS", 0xff, RS232_DATABITS_8)
 	DEVICE_INPUT_DEFAULTS("RS232_PARITY", 0xff, RS232_PARITY_MARK)
 	DEVICE_INPUT_DEFAULTS("RS232_STOPBITS", 0xff, RS232_STOPBITS_2)

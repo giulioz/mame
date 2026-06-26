@@ -21,7 +21,7 @@
   internal RAM, among other advanced techniques, this game was remarkably ahead of its time
   for 1979.
 
-  The hardwarte is composed by six PCBs connected by a small custom backplane.
+  The hardware is composed by six PCBs connected by a small custom backplane.
 
   More info, schematics, and source code:
    https://www.recreativas.org/el-paracaidista-404-videogame-electrogame
@@ -120,10 +120,9 @@ public:
 
 	{ }
 
-	void paracaidista(machine_config &config);
+	void paracaidista(machine_config &config) ATTR_COLD;
 
 private:
-	virtual void machine_start() override { m_lamps.resolve(); }
 	void palette(palette_device &palette) const;
 	uint32_t screen_update(screen_device &screen, bitmap_ind16 &bitmap, const rectangle &cliprect);
 	void paraca_map(address_map &map) ATTR_COLD;

@@ -13,6 +13,7 @@
 #include "config.h"
 #include "emuopts.h"
 #include "fileio.h"
+#include "input.h"
 #include "inputdev.h"
 #include "main.h"
 #include "natkeyboard.h"
@@ -30,9 +31,12 @@
 #include "osdepend.h"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
+#include <cstdio>
 #include <ctime>
 #include <sstream>
+#include <type_traits>
 
 
 namespace {
@@ -111,7 +115,7 @@ inline u8 compute_shift(ioport_value mask)
 
 const struct
 {
-	u32 id;
+	input_string_index id;
 	const char *string;
 } input_port_default_strings[] =
 {
@@ -126,6 +130,7 @@ const struct
 	{ INPUT_STRING_Coinage, "Coinage" },
 	{ INPUT_STRING_Coin_A, "Coin A" },
 	{ INPUT_STRING_Coin_B, "Coin B" },
+	{ INPUT_STRING_10C_1C, "10 Coins/1 Credit" },
 	{ INPUT_STRING_9C_1C, "9 Coins/1 Credit" },
 	{ INPUT_STRING_8C_1C, "8 Coins/1 Credit" },
 	{ INPUT_STRING_7C_1C, "7 Coins/1 Credit" },
@@ -134,8 +139,8 @@ const struct
 	{ INPUT_STRING_4C_1C, "4 Coins/1 Credit" },
 	{ INPUT_STRING_3C_1C, "3 Coins/1 Credit" },
 	{ INPUT_STRING_8C_3C, "8 Coins/3 Credits" },
-	{ INPUT_STRING_4C_2C, "4 Coins/2 Credits" },
 	{ INPUT_STRING_5C_2C, "5 Coins/2 Credits" },
+	{ INPUT_STRING_4C_2C, "4 Coins/2 Credits" },
 	{ INPUT_STRING_2C_1C, "2 Coins/1 Credit" },
 	{ INPUT_STRING_5C_3C, "5 Coins/3 Credits" },
 	{ INPUT_STRING_3C_2C, "3 Coins/2 Credits" },
@@ -144,10 +149,10 @@ const struct
 	{ INPUT_STRING_3C_3C, "3 Coins/3 Credits" },
 	{ INPUT_STRING_2C_2C, "2 Coins/2 Credits" },
 	{ INPUT_STRING_1C_1C, "1 Coin/1 Credit" },
-	{ INPUT_STRING_3C_5C, "3 Coins/5 Credits" },
 	{ INPUT_STRING_4C_5C, "4 Coins/5 Credits" },
 	{ INPUT_STRING_3C_4C, "3 Coins/4 Credits" },
 	{ INPUT_STRING_2C_3C, "2 Coins/3 Credits" },
+	{ INPUT_STRING_3C_5C, "3 Coins/5 Credits" },
 	{ INPUT_STRING_4C_7C, "4 Coins/7 Credits" },
 	{ INPUT_STRING_2C_4C, "2 Coins/4 Credits" },
 	{ INPUT_STRING_1C_2C, "1 Coin/2 Credits" },
@@ -162,6 +167,11 @@ const struct
 	{ INPUT_STRING_1C_7C, "1 Coin/7 Credits" },
 	{ INPUT_STRING_1C_8C, "1 Coin/8 Credits" },
 	{ INPUT_STRING_1C_9C, "1 Coin/9 Credits" },
+	{ INPUT_STRING_1C_10C, "1 Coin/10 Credits" },
+	{ INPUT_STRING_1C_20C, "1 Coin/20 Credits" },
+	{ INPUT_STRING_1C_25C, "1 Coin/25 Credits" },
+	{ INPUT_STRING_1C_50C, "1 Coin/50 Credits" },
+	{ INPUT_STRING_1C_100C, "1 Coin/100 Credits" },
 	{ INPUT_STRING_Free_Play, "Free Play" },
 	{ INPUT_STRING_Cabinet, "Cabinet" },
 	{ INPUT_STRING_Upright, "Upright" },
@@ -396,7 +406,7 @@ private:
 const char *const ioport_manager::seqtypestrings[] = { "standard", "increment", "decrement" };
 
 
-u8 const inp_header::MAGIC[inp_header::OFFS_BASETIME - inp_header::OFFS_MAGIC] = { 'M', 'A', 'M', 'E', 'I', 'N', 'P', 0 };
+u8 const inp_header::MAGIC[] = { 'M', 'A', 'M', 'E', 'I', 'N', 'P', 0 };
 
 
 
@@ -1430,7 +1440,7 @@ void ioport_field::expand_diplocation(const char *location, std::ostream &errorb
 	}
 
 	// then verify the number of bits in the mask matches
-	int const bits = population_count_32(m_mask);
+	int const bits = std::popcount(m_mask);
 	if (bits > entries)
 		util::stream_format(errorbuf, "Switch location '%s' does not describe enough bits for mask %X\n", location, m_mask);
 	else if (bits < entries)
@@ -1490,7 +1500,7 @@ ioport_field_live::ioport_field_live(ioport_field &field, analog_field *analog) 
 	}
 
 	// Name keyboard key names
-	if (field.type_class() == INPUT_CLASS_KEYBOARD && field.specific_name() == nullptr)
+	if ((field.type_class() == INPUT_CLASS_KEYBOARD) && !field.specific_name())
 	{
 		// loop through each character on the field
 		for (int which = 0; which < (1 << (UCHAR_SHIFT_END - UCHAR_SHIFT_BEGIN + 1)); which++)
@@ -1864,18 +1874,6 @@ time_t ioport_manager::initialize()
 	init_autoselect_devices({ IPT_DIAL,        IPT_DIAL_V },                       OPTION_DIAL_DEVICE,       "dial");
 	init_autoselect_devices({ IPT_TRACKBALL_X, IPT_TRACKBALL_Y },                  OPTION_TRACKBALL_DEVICE,  "trackball");
 	init_autoselect_devices({ IPT_MOUSE_X,     IPT_MOUSE_Y },                      OPTION_MOUSE_DEVICE,      "mouse");
-
-	// look for 4-way diagonal joysticks and change the default map if we find any
-	const char *joystick_map_default = machine().options().joystick_map();
-	if (joystick_map_default[0] == 0 || strcmp(joystick_map_default, "auto") == 0)
-		for (auto &port : m_portlist)
-			for (ioport_field const &field : port.second->fields())
-				if (field.live().joystick != nullptr && field.rotated())
-				{
-					input_class_joystick &devclass = downcast<input_class_joystick &>(machine().input().device_class(DEVICE_CLASS_JOYSTICK));
-					devclass.set_global_joystick_map(input_class_joystick::map_4way_diagonal);
-					break;
-				}
 
 	// register callbacks for when we load configurations
 	machine().configuration().config_register(
@@ -2667,7 +2665,7 @@ void ioport_manager::load_system_config(
 					if (parent_device)
 					{
 						device_slot_interface const *slot;
-						if (parent_device->interface(slot) && (slot->option_list().find(std::string(child_tag)) != slot->option_list().end()))
+						if (parent_device->interface(slot) && (slot->option_list().find(child_tag) != slot->option_list().end()))
 						{
 							if (!m_deselected_card_config)
 								m_deselected_card_config = util::xml::file::create();
@@ -3015,7 +3013,7 @@ time_t ioport_manager::playback_init()
 
 	// return an explicit error if file isn't found in given path
 	if (filerr == std::errc::no_such_file_or_directory)
-		fatalerror("Input file %s not found\n",filename);
+		fatalerror("Input file %s not found\n", filename);
 
 	// TODO: bail out any other error laconically for now
 	if (filerr)
@@ -3310,27 +3308,21 @@ ioport_configurer& ioport_configurer::field_set_gm_note(u8 note)
 //  ioport_token to a default string
 //-------------------------------------------------
 
-const char *ioport_configurer::string_from_token(const char *string)
+const char *ioport_configurer::string_from_token(input_string_index string)
 {
-	// 0 is an invalid index
-	if (string == nullptr)
-		return nullptr;
-
-	// if the index is greater than the count, assume it to be a pointer
-	if (uintptr_t(string) >= INPUT_STRING_COUNT)
-		return string;
-
-#if false // Set true, If you want to take care missing-token or wrong-sorting
+#if 0 // Set true, If you want to take care missing-token or wrong-sorting
 
 	// otherwise, scan the list for a matching string and return it
 	for (int index = 0; index < std::size(input_port_default_strings); index++)
-		if (input_port_default_strings[index].id == uintptr_t(string))
+		if (input_port_default_strings[index].id == string)
 			return input_port_default_strings[index].string;
 	return "(Unknown Default)";
 
 #else
 
-	return input_port_default_strings[uintptr_t(string)-1].string;
+	auto const index = std::underlying_type_t<input_string_index>(string) - 1;
+	assert(input_port_default_strings[index].id == string);
+	return input_port_default_strings[index].string;
 
 #endif
 }
@@ -3390,12 +3382,17 @@ ioport_configurer& ioport_configurer::field_alloc(ioport_type type, ioport_value
 	// append the field
 	if (type != IPT_UNKNOWN && type != IPT_UNUSED)
 		m_curport->m_active |= mask;
-	m_curfield = &m_curport->m_fieldlist.append(*new ioport_field(*m_curport, type, defval, mask, string_from_token(name)));
+	m_curfield = &m_curport->m_fieldlist.append(*new ioport_field(*m_curport, type, defval, mask, name));
 
 	// reset the current setting
 	m_cursetting = nullptr;
 	m_curshift = 0;
 	return *this;
+}
+
+ioport_configurer& ioport_configurer::field_alloc(ioport_type type, ioport_value defval, ioport_value mask, input_string_index name)
+{
+	return field_alloc(type, defval, mask, string_from_token(name));
 }
 
 
@@ -3450,8 +3447,13 @@ ioport_configurer& ioport_configurer::setting_alloc(ioport_value value, const ch
 		throw emu_fatalerror("setting_alloc called with no active field (value=%X name=%s)\n", value, name);
 
 	// append a new setting
-	m_cursetting = &m_curfield->m_settinglist.emplace_back(*m_curfield, value & m_curfield->mask(), string_from_token(name));
+	m_cursetting = &m_curfield->m_settinglist.emplace_back(*m_curfield, value & m_curfield->mask(), name);
 	return *this;
+}
+
+ioport_configurer& ioport_configurer::setting_alloc(ioport_value value, input_string_index name)
+{
+	return setting_alloc(value, string_from_token(name));
 }
 
 
@@ -3487,6 +3489,11 @@ ioport_configurer& ioport_configurer::onoff_alloc(const char *name, ioport_value
 	// clear cursettings set by setting_alloc
 	m_cursetting = nullptr;
 	return *this;
+}
+
+ioport_configurer& ioport_configurer::onoff_alloc(input_string_index name, ioport_value defval, ioport_value mask, const char *diplocation)
+{
+	return onoff_alloc(string_from_token(name), defval, mask, diplocation);
 }
 
 

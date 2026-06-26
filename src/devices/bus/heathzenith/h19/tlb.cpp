@@ -888,7 +888,7 @@ static INPUT_PORTS_START( gp19 )
 	PORT_DIPSETTING(    0x01, "CR")
 	PORT_DIPSETTING(    0x02, DEF_STR( None ) )
 	PORT_DIPSETTING(    0x03, "CR,EOT")
-	PORT_DIPNAME( 0x04, 0x01, "Shift Key")                                   PORT_DIPLOCATION("SW1:3")
+	PORT_DIPNAME( 0x04, 0x00, "Shift Key")                                   PORT_DIPLOCATION("SW1:3")
 	PORT_DIPSETTING(    0x00, DEF_STR( Normal ) )
 	PORT_DIPSETTING(    0x04, "Shift key inverts CAPS LOCK")
 	PORT_DIPNAME( 0x08, 0x00, "Terminal Transmission Rate")                  PORT_DIPLOCATION("SW1:4")
@@ -1050,19 +1050,26 @@ ROM_END
 
 ROM_START( imaginator )
 	// Program code
-	ROM_REGION( 0x4000, "maincpu", ROMREGION_ERASEFF )
+	ROM_REGION( 0x6000, "maincpu", ROMREGION_ERASEFF )
+	ROM_DEFAULT_BIOS("rev12")
+
 	// Original terminal code
-	ROM_LOAD( "2732_444-46_h19code.u437",                     0x0000, 0x1000, CRC(f4447da0) SHA1(fb4093d5b763be21a9580a0defebed664b1f7a7b))
+	ROM_LOAD( "2732_444-46_h19code.u437",                      0x0000, 0x1000, CRC(f4447da0) SHA1(fb4093d5b763be21a9580a0defebed664b1f7a7b))
+
 	// Imaginator ROMs
-	ROM_LOAD( "2732_imaginator_gpc_rev_1.2_pn_9000_0002.u9a", 0x2000, 0x1000, CRC(507bb13f) SHA1(5b210f8d77e22fdf063f611eb5c29636cdb01250))
+	ROM_SYSTEM_BIOS(0, "rev12", "GPC Rev. 1.2 P/N 9000-0002")
+	ROMX_LOAD( "2732_imaginator_gpc_rev_1.2_pn_9000_0002.u9a", 0x2000, 0x1000, CRC(507bb13f) SHA1(5b210f8d77e22fdf063f611eb5c29636cdb01250), ROM_BIOS(0))
+
+	ROM_SYSTEM_BIOS(1, "unknown", "GPC Unknown revision")
+	ROMX_LOAD( "2764_imaginator_gpc_unknown.u9a",              0x2000, 0x2000, CRC(8eff78ae) SHA1(d571cc5ec2e062fafca34fcc80f015ff82e84283), ROM_BIOS(1))
 
 	// Original font
 	ROM_REGION( 0x0800, "chargen", 0 )
-	ROM_LOAD( "2716_444-29_h19font.u420",                     0x0000, 0x0800, CRC(d595ac1d) SHA1(130fb4ea8754106340c318592eec2d8a0deaf3d0))
+	ROM_LOAD( "2716_444-29_h19font.u420",                      0x0000, 0x0800, CRC(d595ac1d) SHA1(130fb4ea8754106340c318592eec2d8a0deaf3d0))
 
 	// Original keyboard
 	ROM_REGION( 0x0800, "keyboard", 0 )
-	ROM_LOAD( "2716_444-37_h19keyb.u445",                     0x0000, 0x0800, CRC(5c3e6972) SHA1(df49ce64ae48652346a91648c58178a34fb37d3c))
+	ROM_LOAD( "2716_444-37_h19keyb.u445",                      0x0000, 0x0800, CRC(5c3e6972) SHA1(df49ce64ae48652346a91648c58178a34fb37d3c))
 ROM_END
 
 

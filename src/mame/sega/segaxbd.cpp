@@ -319,13 +319,106 @@ segaxbd_state::segaxbd_state(const machine_config &mconfig, device_type type, co
 	palette_init();
 }
 
+//**************************************************************************
+//  VIDEO STARTUP
+//**************************************************************************
+
+void segaxbd_state::video_start()
+{
+	if(!m_segaic16vid->started())
+		throw device_missing_dependencies();
+
+	if(!m_segaic16road->started())
+		throw device_missing_dependencies();
+
+	// initialize the tile/text layers
+	m_segaic16vid->tilemap_init( 0, segaic16_video_device::TILEMAP_16B, 0x1c00, 0, 2);
+
+	// initialize the road
+	m_segaic16road->segaic16_road_init(0, segaic16_road_device::ROAD_XBOARD, 0x1700, 0x1720, 0x1780, -166);
+}
+
+//**************************************************************************
+//  VIDEO UPDATE
+//**************************************************************************
+
+uint32_t segaxbd_state::screen_update(screen_device &screen, bitmap_ind16 &bitmap, const rectangle &cliprect)
+{
+	// if no drawing is happening, fill with black and get out
+	if (!m_segaic16vid->m_display_enable)
+	{
+		bitmap.fill(m_palette->black_pen(), cliprect);
+		return 0;
+	}
+
+	// start the sprites drawing
+	m_sprites->draw_async(cliprect);
+
+	// reset priorities
+	screen.priority().fill(0, cliprect);
+
+	// draw the low priority road layer
+	m_segaic16road->segaic16_road_draw(0, bitmap, cliprect, segaic16_road_device::ROAD_BACKGROUND);
+	if (m_road_priority == 0)
+		m_segaic16road->segaic16_road_draw(0, bitmap, cliprect, segaic16_road_device::ROAD_FOREGROUND);
+
+	// draw background
+	m_segaic16vid->tilemap_draw( screen, bitmap, cliprect, 0, segaic16_video_device::TILEMAP_BACKGROUND, 0, 0x01);
+	m_segaic16vid->tilemap_draw( screen, bitmap, cliprect, 0, segaic16_video_device::TILEMAP_BACKGROUND, 1, 0x02);
+
+	// draw foreground
+	m_segaic16vid->tilemap_draw( screen, bitmap, cliprect, 0, segaic16_video_device::TILEMAP_FOREGROUND, 0, 0x02);
+	m_segaic16vid->tilemap_draw( screen, bitmap, cliprect, 0, segaic16_video_device::TILEMAP_FOREGROUND, 1, 0x04);
+
+	// draw the high priority road
+	if (m_road_priority == 1)
+		m_segaic16road->segaic16_road_draw(0, bitmap, cliprect, segaic16_road_device::ROAD_FOREGROUND);
+
+	// text layer
+	m_segaic16vid->tilemap_draw( screen, bitmap, cliprect, 0, segaic16_video_device::TILEMAP_TEXT, 0, 0x04);
+	m_segaic16vid->tilemap_draw( screen, bitmap, cliprect, 0, segaic16_video_device::TILEMAP_TEXT, 1, 0x08);
+
+	// mix in sprites
+	bitmap_ind16 &sprites = m_sprites->bitmap();
+	m_sprites->iterate_dirty_rects(
+			cliprect,
+			[this, &screen, &bitmap, &sprites] (rectangle const &rect)
+			{
+				for (int y = rect.min_y; y <= rect.max_y; y++)
+				{
+					uint16_t *const dest = &bitmap.pix(y);
+					uint16_t const *const src = &sprites.pix(y);
+					uint8_t const *const pri = &screen.priority().pix(y);
+					for (int x = rect.min_x; x <= rect.max_x; x++)
+					{
+						// only process written pixels
+						uint16_t const pix = src[x];
+						if (pix != 0xffff)
+						{
+							// compare sprite priority against tilemap priority
+							int const priority = (pix >> 12) & 3;
+							if ((1 << priority) > pri[x])
+							{
+								// if the shadow flag is set, this triggers shadow/hilight for pen 0xa
+								if ((pix & 0x400f) == 0x400a)
+									dest[x] += m_palette_entries;
+
+								// otherwise, just add in sprite palette base
+								else
+									dest[x] = pix & 0xfff;
+							}
+						}
+					}
+				}
+			});
+
+	return 0;
+}
 
 void segaxbd_state::device_start()
 {
 	if(!m_segaic16road->started())
 		throw device_missing_dependencies();
-
-	m_lamps.resolve();
 
 	video_start();
 
@@ -600,7 +693,7 @@ TIMER_CALLBACK_MEMBER(segaxbd_state::scanline_tick)
 	int next_scanline = (scanline + 1) % 262;
 
 	// clock the timer with V0
-	m_cmptimer_1->exck_w(scanline % 2);
+	m_cmptimer_1->exck_w(scanline & 1);
 
 	// set VBLANK on scanline 223
 	if (scanline == 223)
@@ -658,7 +751,7 @@ void segaxbd_state::generic_iochip0_lamps_w(uint8_t data)
 
 //-------------------------------------------------
 //  aburner2_motor_r - motor reads from port A
-//  of I/O chip 0 for Afterburner II
+//  of I/O chip 0 for After Burner II
 //-------------------------------------------------
 
 uint8_t segaxbd_state::aburner2_motor_r()
@@ -672,7 +765,7 @@ uint8_t segaxbd_state::aburner2_motor_r()
 
 //-------------------------------------------------
 //  aburner2_motor_w - motor writes to port B
-//  of I/O chip 0 for Afterburner II
+//  of I/O chip 0 for After Burner II
 //-------------------------------------------------
 
 void segaxbd_state::aburner2_motor_w(uint8_t data)
@@ -1147,7 +1240,7 @@ static INPUT_PORTS_START( aburner )
 	PORT_DIPSETTING(    0x04, DEF_STR( Off ) )
 	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
 	// According to the manual, SWB:4 sets 3 or 4 lives, but it doesn't actually do that.
-	// However, it does on Afterburner II.  Maybe there's another version of Afterburner
+	// However, it does on After Burner II.  Maybe there's another version of After Burner
 	// that behaves as the manual suggests.
 	// In the Japanese manual "DIP SW B:4 / NOT USED"
 	PORT_DIPNAME( 0x10, 0x00, DEF_STR( Lives ) ) PORT_DIPLOCATION("SWB:5")
@@ -1711,16 +1804,16 @@ void segaxbd_state::xboard_base_mconfig(machine_config &config)
 
 	MB3773(config, "watchdog");
 
-	SEGA_315_5248_MULTIPLIER(config, "multiplier_main", 0);
-	SEGA_315_5248_MULTIPLIER(config, "multiplier_subx", 0);
-	SEGA_315_5249_DIVIDER(config, "divider_main", 0);
-	SEGA_315_5249_DIVIDER(config, "divider_subx", 0);
+	SEGA_315_5248_MULTIPLIER(config, "multiplier_main");
+	SEGA_315_5248_MULTIPLIER(config, "multiplier_subx");
+	SEGA_315_5249_DIVIDER(config, "divider_main");
+	SEGA_315_5249_DIVIDER(config, "divider_subx");
 
-	SEGA_315_5250_COMPARE_TIMER(config, m_cmptimer_1, 0);
+	SEGA_315_5250_COMPARE_TIMER(config, m_cmptimer_1);
 	m_cmptimer_1->m68kint_callback().set(FUNC(segaxbd_state::timer_irq_w));
 	m_cmptimer_1->zint_callback().set_inputline(m_soundcpu, INPUT_LINE_NMI);
 
-	SEGA_315_5250_COMPARE_TIMER(config, "cmptimer_subx", 0);
+	SEGA_315_5250_COMPARE_TIMER(config, "cmptimer_subx");
 
 	CXD1095(config, m_iochip[0]); // IC160
 	m_iochip[0]->in_porta_cb().set_ioport("IO0PORTA");
@@ -1746,24 +1839,24 @@ void segaxbd_state::xboard_base_mconfig(machine_config &config)
 	m_screen->set_screen_update(FUNC(segaxbd_state::screen_update));
 	m_screen->set_palette(m_palette);
 
-	SEGA_XBOARD_SPRITES(config, m_sprites, 0);
-	SEGAIC16VID(config, m_segaic16vid, 0, "gfxdecode");
+	SEGA_XBOARD_SPRITES(config, m_sprites);
+	SEGAIC16VID(config, m_segaic16vid, "gfxdecode");
 	m_segaic16vid->set_screen(m_screen);
 
-	SEGAIC16_ROAD(config, m_segaic16road, 0);
+	SEGAIC16_ROAD(config, m_segaic16road);
 
 	// sound hardware
 	SPEAKER(config, "speaker", 2).front();
 
 	ym2151_device &ymsnd(YM2151(config, "ymsnd", SOUND_CLOCK/4));
 	ymsnd.irq_handler().set_inputline(m_soundcpu, 0);
-	ymsnd.add_route(0, "speaker", 0.43, 0);
-	ymsnd.add_route(1, "speaker", 0.43, 1);
+	ymsnd.add_route(0, "speaker", 0.15, 0);
+	ymsnd.add_route(1, "speaker", 0.15, 1);
 
 	segapcm_device &pcm(SEGAPCM(config, "pcm", SOUND_CLOCK/4));
 	pcm.set_bank(segapcm_device::BANK_512);
-	pcm.add_route(0, "speaker", 1.0, 0);
-	pcm.add_route(1, "speaker", 1.0, 1);
+	pcm.add_route(0, "speaker", 0.35, 0);
+	pcm.add_route(1, "speaker", 0.35, 1);
 }
 
 
@@ -1781,7 +1874,7 @@ void segaxbd_regular_state::device_add_mconfig(machine_config &config)
 
 void segaxbd_new_state::sega_xboard(machine_config &config)
 {
-	SEGA_XBD_REGULAR(config, "mainpcb", 0);
+	SEGA_XBD_REGULAR(config, "mainpcb");
 }
 
 
@@ -1804,13 +1897,13 @@ void segaxbd_fd1094_state::device_add_mconfig(machine_config &config)
 
 void segaxbd_new_state::sega_xboard_fd1094(machine_config &config)
 {
-	SEGA_XBD_FD1094(config, "mainpcb", 0);
+	SEGA_XBD_FD1094(config, "mainpcb");
 }
 
 void segaxbd_new_state_double::sega_xboard_fd1094_double(machine_config &config)
 {
-	SEGA_XBD_FD1094(config, "mainpcb", 0);
-	SEGA_XBD_FD1094(config, "subpcb", 0);
+	SEGA_XBD_FD1094(config, "mainpcb");
+	SEGA_XBD_FD1094(config, "subpcb");
 
 	//config.m_perfect_cpu_quantum = subtag("mainpcb:maincpu"); // doesn't help..
 }
@@ -1837,7 +1930,7 @@ void segaxbd_aburner2_state::device_add_mconfig(machine_config &config)
 
 void segaxbd_new_state::sega_aburner2(machine_config &config)
 {
-	SEGA_XBD_ABURNER2_DEVICE(config, "mainpcb", 0);
+	SEGA_XBD_ABURNER2_DEVICE(config, "mainpcb");
 }
 
 
@@ -1865,13 +1958,13 @@ void segaxbd_lastsurv_fd1094_state::device_add_mconfig(machine_config &config)
 
 	// sound hardware - ym2151 stereo is reversed
 	subdevice<ym2151_device>("ymsnd")->reset_routes();
-	subdevice<ym2151_device>("ymsnd")->add_route(0, "speaker", 0.43, 1);
-	subdevice<ym2151_device>("ymsnd")->add_route(1, "speaker", 0.43, 0);
+	subdevice<ym2151_device>("ymsnd")->add_route(0, "speaker", 0.15, 1);
+	subdevice<ym2151_device>("ymsnd")->add_route(1, "speaker", 0.15, 0);
 }
 
 void segaxbd_new_state::sega_lastsurv_fd1094(machine_config &config)
 {
-	SEGA_XBD_LASTSURV_FD1094(config, "mainpcb", 0);
+	SEGA_XBD_LASTSURV_FD1094(config, "mainpcb");
 }
 
 
@@ -1894,13 +1987,13 @@ void segaxbd_lastsurv_state::device_add_mconfig(machine_config &config)
 
 	// sound hardware - ym2151 stereo is reversed
 	subdevice<ym2151_device>("ymsnd")->reset_routes();
-	subdevice<ym2151_device>("ymsnd")->add_route(0, "speaker", 0.43, 1);
-	subdevice<ym2151_device>("ymsnd")->add_route(1, "speaker", 0.43, 0);
+	subdevice<ym2151_device>("ymsnd")->add_route(0, "speaker", 0.15, 1);
+	subdevice<ym2151_device>("ymsnd")->add_route(1, "speaker", 0.15, 0);
 }
 
 void segaxbd_new_state::sega_lastsurv(machine_config &config)
 {
-	SEGA_XBD_LASTSURV(config, "mainpcb", 0);
+	SEGA_XBD_LASTSURV(config, "mainpcb");
 }
 
 
@@ -1939,18 +2032,17 @@ void segaxbd_smgp_fd1094_state::device_add_mconfig(machine_config &config)
 	m_iochip[0]->out_portb_cb().set(FUNC(segaxbd_state::smgp_motor_w));
 
 	// sound hardware
-	SPEAKER(config, "rearleft").front_left();
-	SPEAKER(config, "rearright").front_right();
+	SPEAKER(config, "rear", 2).rear();
 
 	segapcm_device &pcm2(SEGAPCM(config, "pcm2", SOUND_CLOCK/4));
 	pcm2.set_bank(segapcm_device::BANK_512);
-	pcm2.add_route(0, "rearleft", 1.0);
-	pcm2.add_route(1, "rearright", 1.0);
+	pcm2.add_route(0, "rear", 0.35, 0);
+	pcm2.add_route(1, "rear", 0.35, 1);
 }
 
 void segaxbd_new_state::sega_smgp_fd1094(machine_config &config)
 {
-	SEGA_XBD_SMGP_FD1094(config, "mainpcb", 0);
+	SEGA_XBD_SMGP_FD1094(config, "mainpcb");
 }
 
 
@@ -1984,18 +2076,17 @@ void segaxbd_smgp_state::device_add_mconfig(machine_config &config)
 	m_iochip[0]->out_portb_cb().set(FUNC(segaxbd_state::smgp_motor_w));
 
 	// sound hardware
-	SPEAKER(config, "rearleft").front_left();
-	SPEAKER(config, "rearright").front_right();
+	SPEAKER(config, "rear", 2).rear();
 
 	segapcm_device &pcm2(SEGAPCM(config, "pcm2", SOUND_CLOCK/4));
 	pcm2.set_bank(segapcm_device::BANK_512);
-	pcm2.add_route(0, "rearleft", 1.0);
-	pcm2.add_route(1, "rearright", 1.0);
+	pcm2.add_route(0, "rear", 0.35, 0);
+	pcm2.add_route(1, "rear", 0.35, 1);
 }
 
 void segaxbd_new_state::sega_smgp(machine_config &config)
 {
-	SEGA_XBD_SMGP(config, "mainpcb", 0);
+	SEGA_XBD_SMGP(config, "mainpcb");
 }
 
 
@@ -2031,7 +2122,7 @@ void segaxbd_rascot_state::device_add_mconfig(machine_config &config)
 
 void segaxbd_new_state::sega_rascot(machine_config &config)
 {
-	SEGA_XBD_RASCOT(config, "mainpcb", 0);
+	SEGA_XBD_RASCOT(config, "mainpcb");
 }
 
 
@@ -2043,7 +2134,7 @@ void segaxbd_new_state::sega_rascot(machine_config &config)
 //*************************************************************************************************************************
 //*************************************************************************************************************************
 //*************************************************************************************************************************
-//  Afterburner, Sega X-board
+//  After Burner, Sega X-board
 //  CPU: 68000 (317-????)
 //
 //  Missing the Deluxe/Upright English (US?) version ROM set
@@ -2065,7 +2156,7 @@ void segaxbd_new_state::sega_rascot(machine_config &config)
 //     EPR-11100.101
 //     EPR-11101.105
 //     EPR-11094.92--
-//     EPR-11095.96  \ These 4 found in Afterburner II (German)??
+//     EPR-11095.96  \ These 4 found in After Burner II (German)??
 //     EPR-11096.100 /
 //     EPR-11097.104-
 //   Sound Data
@@ -2119,7 +2210,7 @@ ROM_END
 //*************************************************************************************************************************
 //*************************************************************************************************************************
 //*************************************************************************************************************************
-//  Afterburner II, Sega X-board
+//  After Burner II, Sega X-board
 //  CPU: 68000 (317-????)
 //
 ROM_START( aburner2 )
@@ -2167,7 +2258,7 @@ ROM_START( aburner2 )
 ROM_END
 
 //*************************************************************************************************************************
-//  Afterburner II (German), Sega X-board
+//  After Burner II (German), Sega X-board
 //  CPU: 68000 (317-????)
 //  Sega Game ID #: 834-6335-04 AFTER BURNER
 //

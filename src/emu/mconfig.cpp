@@ -83,11 +83,11 @@ machine_config::machine_config(const game_driver &gamedrv, emu_options &options)
 			{
 				// create the device
 				token const tok(begin_configuration(owner));
-				device_t *const new_dev = device_add(option->name(), option->devtype(), option->clock());
+				device_t *const new_dev = device_add(std::string(option->name()).c_str(), option->devtype(), option->clock()); // TODO: support string_view tags
 				slot.set_card_device(new_dev);
 
 				char const *const default_bios = option->default_bios();
-				if (default_bios != nullptr)
+				if (default_bios)
 					new_dev->set_default_bios_tag(default_bios);
 
 				auto additions = option->machine_config();

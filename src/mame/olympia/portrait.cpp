@@ -132,10 +132,9 @@ public:
 
 	static constexpr feature_type unemulated_features() { return feature::CAMERA; }
 
-	void portrait(machine_config &config);
+	void portrait(machine_config &config) ATTR_COLD;
 
 protected:
-	virtual void machine_start() override { m_lamps.resolve(); m_photo.resolve(); }
 	virtual void video_start() override ATTR_COLD;
 
 private:
@@ -468,21 +467,21 @@ static INPUT_PORTS_START( portrait )
 	PORT_DIPSETTING(    0x0b, DEF_STR( 1C_4C ) )
 	PORT_DIPSETTING(    0x0c, DEF_STR( 1C_5C ) )
 	PORT_DIPSETTING(    0x0d, DEF_STR( 1C_7C ) )
-	PORT_DIPSETTING(    0x0e, "1 Coin / 10 Credits" )
-	PORT_DIPSETTING(    0x0f, "1 Coin / 12 Credits" )
+	PORT_DIPSETTING(    0x0e, DEF_STR( 1C_10C ) )
+	PORT_DIPSETTING(    0x0f, "1 Coin/12 Credits" )
 	PORT_DIPSETTING(    0x00, DEF_STR( 3C_1C ) )
 	PORT_DIPSETTING(    0x04, DEF_STR( 2C_1C ) )
 	PORT_DIPSETTING(    0x05, DEF_STR( 2C_3C ) )
 	PORT_DIPSETTING(    0x06, DEF_STR( 2C_5C ) )
 	PORT_DIPSETTING(    0x07, DEF_STR( 2C_7C ) )
-	PORT_DIPSETTING(    0x01, "3 Coins / 5 Credits" )
-	PORT_DIPSETTING(    0x02, "3 Coins / 7 Credits" )
-	PORT_DIPSETTING(    0x03, "3 Coins / 10 Credits" )
+	PORT_DIPSETTING(    0x01, DEF_STR( 3C_5C ) )
+	PORT_DIPSETTING(    0x02, "3 Coins/7 Credits" )
+	PORT_DIPSETTING(    0x03, "3 Coins/10 Credits" )
 	PORT_DIPNAME( 0x70, 0x40, DEF_STR( Coin_B ) )
 	PORT_DIPSETTING(    0x40, DEF_STR( 1C_1C ) )
 	PORT_DIPSETTING(    0x50, DEF_STR( 1C_2C ) )
 	PORT_DIPSETTING(    0x60, DEF_STR( 1C_5C ) )
-	PORT_DIPSETTING(    0x70, "1 Coin / 10 Credits" )
+	PORT_DIPSETTING(    0x70, DEF_STR( 1C_10C ) )
 	PORT_DIPSETTING(    0x00, DEF_STR( 3C_1C ) )
 	PORT_DIPSETTING(    0x10, DEF_STR( 2C_1C ) )
 	PORT_DIPSETTING(    0x20, DEF_STR( 2C_3C ) )
@@ -569,9 +568,9 @@ void portrait_state::portrait(machine_config &config)
 	I8039(config, m_audiocpu, 3'120'000);  // ?
 	m_audiocpu->set_addrmap(AS_PROGRAM, &portrait_state::audio_program_map);
 
-	PIT8253(config, "pit0", 0); // TODO
+	PIT8253(config, "pit0"); // TODO
 
-	PIT8253(config, "pit1", 0); // TODO
+	PIT8253(config, "pit1"); // TODO
 
 	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);
 

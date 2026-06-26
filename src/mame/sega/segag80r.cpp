@@ -148,6 +148,226 @@ static constexpr int WAIT_STATES = 2;
 
 /*************************************
  *
+ *  005 sound hardware
+ *
+ *************************************/
+
+/*
+    005
+
+    The Sound Board consists of the following:
+
+    An 8255:
+        Port A controls the sounds that use discrete circuitry
+            A0 - Large Expl. Sound Trig
+            A1 - Small Expl. Sound Trig
+            A2 - Drop Sound Bomb Trig
+            A3 - Shoot Sound Pistol Trig
+            A4 - Missile Sound Trig
+            A5 - Helicopter Sound Trig
+            A6 - Whistle Sound Trig
+            A7 - <unused>
+
+      Port B controls the melody generator (described below)
+
+      Port C is apparently unused
+
+
+    Melody Generator:
+
+        555 timer frequency = 1.44/((R1 + 2R2)*C)
+        R1 = 15e3
+        R2 = 4.7e3
+        C=1.5e-6
+        Frequency = 39.344 Hz
+
+        Auto timer is enabled if port B & 0x20 == 1
+        Auto timer is reset if 2716 value & 0x20 == 0
+
+        Manual timer is enabled if port B & 0x20 == 0
+        Manual timer is clocked if port B & 0x40 goes from 0 to 1
+
+        Both auto and manual timers clock LS393 counter
+        Counter is held to 0 if port B & 0x10 == 1
+
+        Output of LS393 >> 1 selects low 7 bits of lookup in 2716.
+        High 4 bits come from port B bits 0-3.
+
+        Low 5 bits of output from 2716 look up value in 6331 PROM at U8 (32x8)
+
+        8-bit output of 6331 at U8 is loaded into pair of LS161 counters whenever they overflow.
+        LS161 counters are clocked somehow (not clear how)
+
+        Carry output from LS161 counters (overflowing 8 bits) goes to the B
+            input on the LS293 counter at U14.
+        Rising edge of B input clocks bit 1 of counter (effectively adding 2).
+        Output B (bit 1) is mixed with output D (bit 3) with different weights
+            through a small RC circuit and fed into the 4391 input at U32.
+
+        The 4391 output is the final output.
+*/
+
+static const char *const sega005_sample_names[] =
+{
+	"*005",
+	"lexplode",     /* 0 */
+	"sexplode",     /* 1 */
+	"dropbomb",     /* 2 */
+	"shoot",        /* 3 */
+	"missile",      /* 4 */
+	"helicopt",     /* 5 */
+	"whistle",      /* 6 */
+	nullptr
+};
+
+
+void segag80r_state::sega005_sound_board(machine_config &config)
+{
+	i8255_device &ppi(I8255A(config, "ppi8255"));
+	ppi.out_pa_callback().set(FUNC(segag80r_state::sega005_sound_a_w));
+	ppi.out_pb_callback().set("005", FUNC(sega005_sound_device::b_w));
+
+	SAMPLES(config, m_samples);
+	m_samples->set_channels(7);
+	m_samples->set_samples_names(sega005_sample_names);
+	m_samples->add_route(ALL_OUTPUTS, "speaker", 0.25);
+
+	auto &custom(SEGA005(config, "005"));
+	custom.set_sound_region("005");
+	custom.set_proms_region("proms");
+	custom.add_route(ALL_OUTPUTS, "speaker", 0.25);
+}
+
+
+/*************************************
+ *
+ *  005 sound triggers
+ *
+ *************************************/
+
+void segag80r_state::sega005_sound_a_w(uint8_t data)
+{
+	uint8_t diff = data ^ m_sound_state[0];
+	m_sound_state[0] = data;
+
+	/* LARGE EXPL: channel 0 */
+	if ((diff & 0x01) && !(data & 0x01)) m_samples->start(0, 0);
+
+	/* SMALL EXPL: channel 1 */
+	if ((diff & 0x02) && !(data & 0x02)) m_samples->start(1, 1);
+
+	/* DROP BOMB: channel 2 */
+	if ((diff & 0x04) && !(data & 0x04)) m_samples->start(2, 2);
+
+	/* SHOOT PISTOL: channel 3 */
+	if ((diff & 0x08) && !(data & 0x08)) m_samples->start(3, 3);
+
+	/* MISSILE: channel 4 */
+	if ((diff & 0x10) && !(data & 0x10)) m_samples->start(4, 4);
+
+	/* HELICOPTER: channel 5 */
+	if ((diff & 0x20) && !(data & 0x20) && !m_samples->playing(5)) m_samples->start(5, 5, true);
+	if ((diff & 0x20) &&  (data & 0x20)) m_samples->stop(5);
+
+	/* WHISTLE: channel 6 */
+	if ((diff & 0x40) && !(data & 0x40) && !m_samples->playing(6)) m_samples->start(6, 6, true);
+	if ((diff & 0x40) &&  (data & 0x40)) m_samples->stop(6);
+}
+
+
+
+/*************************************
+ *
+ *  Space Odyssey sound hardware
+ *
+ *************************************/
+
+static const char *const spaceod_sample_names[] =
+{
+	"*spaceod",
+	"fire",         /* 0 */
+	"bomb",         /* 1 */
+	"eexplode",     /* 2 */
+	"pexplode",     /* 3 */
+	"warp",         /* 4 */
+	"birth",        /* 5 */
+	"scoreup",      /* 6 */
+	"ssound",       /* 7 */
+	"accel",        /* 8 */
+	"damaged",      /* 9 */
+	"erocket",      /* 10 */
+	nullptr
+};
+
+
+void segag80r_state::spaceod_sound_board(machine_config &config)
+{
+	/* sound hardware */
+
+	SAMPLES(config, m_samples);
+	m_samples->set_channels(11);
+	m_samples->set_samples_names(spaceod_sample_names);
+	m_samples->add_route(ALL_OUTPUTS, "speaker", 0.25);
+}
+
+
+/*************************************
+ *
+ *  Space Odyssey sound triggers
+ *
+ *************************************/
+
+void segag80r_state::spaceod_sound_w(offs_t offset, uint8_t data)
+{
+	uint8_t diff = data ^ m_sound_state[offset];
+	m_sound_state[offset] = data;
+
+	switch (offset)
+	{
+		case 0:
+			/* BACK G: channel 0 */
+			if ((diff & 0x01) && !(data & 0x01) && !m_samples->playing(0)) m_samples->start(0, 7, true);
+			if ((diff & 0x01) &&  (data & 0x01)) m_samples->stop(0);
+
+			/* SHORT EXP: channel 1 */
+			if ((diff & 0x04) && !(data & 0x04)) m_samples->start(1, 2);
+
+			/* ACCELERATE: channel 2 */
+			if ((diff & 0x10) && !(data & 0x10)) m_samples->start(2, 8);
+
+			/* BATTLE STAR: channel 3 */
+			if ((diff & 0x20) && !(data & 0x20)) m_samples->start(3, 10);
+
+			/* D BOMB: channel 4 */
+			if ((diff & 0x40) && !(data & 0x40)) m_samples->start(4, 1);
+
+			/* LONG EXP: channel 5 */
+			if ((diff & 0x80) && !(data & 0x80)) m_samples->start(5, 3);
+			break;
+
+		case 1:
+			/* SHOT: channel 6 */
+			if ((diff & 0x01) && !(data & 0x01)) m_samples->start(6, 0);
+
+			/* BONUS UP: channel 7 */
+			if ((diff & 0x02) && !(data & 0x02)) m_samples->start(7, 6);
+
+			/* WARP: channel 8 */
+			if ((diff & 0x08) && !(data & 0x08)) m_samples->start(8, 4);
+
+			/* APPEARANCE UFO: channel 9 */
+			if ((diff & 0x40) && !(data & 0x40)) m_samples->start(9, 5);
+
+			/* BLACK HOLE: channel 10 */
+			if ((diff & 0x80) && !(data & 0x80)) m_samples->start(10, 9);
+			break;
+	}
+}
+
+
+
+/*************************************
+ *
  *  Machine setup and config
  *
  *************************************/
@@ -862,8 +1082,8 @@ void segag80r_state::astrob(machine_config &config)
 	SPEAKER(config, "speaker").front_center();
 
 	/* sound boards */
-	ASTRO_BLASTER_AUDIO(config, m_g80_audio, 0).add_route(ALL_OUTPUTS, "speech", 1.0, 1);
-	SEGA_SPEECH_BOARD(config, "speech", 0).add_route(ALL_OUTPUTS, "speaker", 0.5);
+	ASTRO_BLASTER_AUDIO(config, m_g80_audio).add_route(ALL_OUTPUTS, "speech", 1.0, 1);
+	SEGA_SPEECH_BOARD(config, "speech").add_route(ALL_OUTPUTS, "speaker", 0.5);
 }
 
 
@@ -944,7 +1164,7 @@ void segag80r_state::pignewt(machine_config &config)
 	SPEAKER(config, "speaker").front_center();
 
 	/* sound boards */
-	SEGAUSB(config, m_usbsnd, 0, m_maincpu).add_route(ALL_OUTPUTS, "speaker", 1.0);
+	SEGAUSB(config, m_usbsnd, m_maincpu).add_route(ALL_OUTPUTS, "speaker", 1.0);
 }
 
 
@@ -1293,6 +1513,36 @@ ROM_START( 005 )
 	ROM_LOAD( "6331.sound-u8",     0x0000, 0x0020, BAD_DUMP CRC(1d298cb0) SHA1(bb0bb62365402543e3154b9a77be9c75010e6abc) )  /* missing sound PROM! */
 ROM_END
 
+ROM_START( 005a )
+	ROM_REGION( 0xc000, "maincpu", 0 )
+	ROM_LOAD( "1346b.cpu-u25",       0x0000, 0x0800, BAD_DUMP CRC(8e68533e) SHA1(a257c556d31691068ed5c991f1fb2b51da4826db) ) // Not dumped
+	ROM_LOAD( "5092.prom-u1.bin",    0x0800, 0x0800, CRC(85e3f7b0) SHA1(ecad939305aaa214ba176cbde63f75d0f50f8105) )
+	ROM_LOAD( "5093.prom-u2.bin",    0x1000, 0x0800, CRC(494b1a75) SHA1(e4978f6907f9cffc1791b448efdc5428aea42d32) )
+	ROM_LOAD( "5094.prom-u3.bin",    0x1800, 0x0800, CRC(1dc90882) SHA1(2c9844a8d8b0af80620ec3abda9ecd4d9cf584a7) )
+	ROM_LOAD( "5095.prom-u4.bin",    0x2000, 0x0800, CRC(69c4e639) SHA1(aed8643258a1715786a42d89280af3552c43dfa0) )
+	ROM_LOAD( "5096.prom-u5.bin",    0x2800, 0x0800, CRC(635247ab) SHA1(caf7957bd7cdc8a1bd0b8b3b675d1bd43f6008c0) )
+	ROM_LOAD( "5097.prom-u6.bin",    0x3000, 0x0800, CRC(02dc5126) SHA1(907dde34e08de43dfc44f25eb2feda6e9efcdc78) )
+	ROM_LOAD( "5098.prom-u7.bin",    0x3800, 0x0800, CRC(dd07a7be) SHA1(860bd3c2c7567419103beb9b0665c1e261c06268) )
+	ROM_LOAD( "5099.prom-u8.bin",    0x4000, 0x0800, CRC(8ce68fef) SHA1(e8a7873353dece415f4f401046db3b89fdce8b15) )
+	ROM_LOAD( "5100.prom-u9.bin",    0x4800, 0x0800, CRC(ca52d905) SHA1(d05f3392b8e7bbfadec00f85ec2e705f459a5649) )
+	ROM_LOAD( "5101.prom-u10.bin",   0x5000, 0x0800, CRC(ad03fc04) SHA1(b2440bf262222a29c811c6c9ccf1ed855568a322) )
+	ROM_LOAD( "5102.prom-u11.bin",   0x5800, 0x0800, CRC(00b4c810) SHA1(77a284a0f1d5371a39e8ea64cdc39d89c858d70e) )
+	ROM_LOAD( "5103.prom-u12.bin",   0x6000, 0x0800, CRC(8f613070) SHA1(259827ec659f3386289b93554a01953a5f89bd67) )
+	ROM_LOAD( "5104.prom-u13.bin",   0x6800, 0x0800, CRC(cf2764a2) SHA1(d102776fd1140d134a54e3579499e72b53dbee7c) )
+	ROM_LOAD( "5105.prom-u14.bin",   0x7000, 0x0800, CRC(2fccfbe2) SHA1(b31a353512a1eef2b96230d4c9d99a0511658ae9) )
+	ROM_LOAD( "5106.prom-u15.bin",   0x7800, 0x0800, CRC(c6b0aca1) SHA1(b6394d42c889eb74f8bdcd385612894ba49cbabc) )
+	ROM_LOAD( "5107.prom-u16.bin",   0x8000, 0x0800, CRC(d5b4e12d) SHA1(8322a1edb30f9adb146b692c358a654d94875c7b) )
+	ROM_LOAD( "5108.prom-u17.bin",   0x8800, 0x0800, CRC(02d6f0e6) SHA1(4dfad2b5d07c2193db25e8f8663aa53795650cdb) )
+	ROM_LOAD( "5109.prom-u18.bin",   0x9000, 0x0800, CRC(37104272) SHA1(fc4d23bc5db6abf2c05a7d1de724d61b20512ea1) )
+	ROM_LOAD( "5110.prom-u19.bin",   0x9800, 0x0800, CRC(ea0a2104) SHA1(91562f0985f86c54fe0b993d95429752ecb4daad) )
+	ROM_LOAD( "5111.prom-u20.bin",   0xa000, 0x0800, CRC(126a9280) SHA1(14ad8c94d9ccf19a1f8360f4f292ea736108c590) )
+
+	ROM_REGION( 0x0800, "005", 0 )
+	ROM_LOAD( "epr-1286.sound-16", 0x0000, 0x0800, BAD_DUMP CRC(fbe0d501) SHA1(bfa277689790f835d8a43be4beee0581e1096bcc) ) // Not dumped
+
+	ROM_REGION( 0x0020, "proms", 0 )
+	ROM_LOAD( "6331.sound-u8",     0x0000, 0x0020, BAD_DUMP CRC(1d298cb0) SHA1(bb0bb62365402543e3154b9a77be9c75010e6abc) )  /* missing sound PROM! */
+ROM_END
 
 ROM_START( spaceod )
 	ROM_REGION( 0xc000, "maincpu", 0 )
@@ -1656,10 +1906,6 @@ void segag80r_state::init_005()
 	m_background_pcb = G80_BACKGROUND_NONE;
 
 	save_item(NAME(m_sound_state));
-	save_item(NAME(m_sound_addr));
-	save_item(NAME(m_sound_data));
-	save_item(NAME(m_square_state));
-	save_item(NAME(m_square_count));
 }
 
 
@@ -1708,7 +1954,6 @@ void segag80r_state::init_monsterb()
 	pgmspace.install_write_handler(0xe000, 0xffff, write8sm_delegate(*this, FUNC(segag80r_state::monsterb_vidram_w)));
 
 	save_item(NAME(m_sound_state));
-	save_item(NAME(m_sound_addr));
 }
 
 
@@ -1732,7 +1977,6 @@ void segag80r_state::init_monster2()
 	pgmspace.install_write_handler(0xe000, 0xffff, write8sm_delegate(*this, FUNC(segag80r_state::pignewt_vidram_w)));
 
 	save_item(NAME(m_sound_state));
-	save_item(NAME(m_sound_addr));
 }
 
 
@@ -1798,6 +2042,7 @@ GAME( 1981, astrob1,   astrob,   astrob,   astrob,   segag80r_state, init_astrob
 GAME( 1981, astrobf,   astrob,   astrob,   astrob,   segag80r_state, init_astrob,   ROT270, "Sega", "Astro Blaster (French)",        0 )
 GAME( 1981, astrobg,   astrob,   astrob,   astrob,   segag80r_state, init_astrob,   ROT270, "Sega", "Astro Blaster (German)",        0 )
 GAME( 1981, 005,       0,        sega005,  005,      segag80r_state, init_005,      ROT270, "Sega", "005",                           MACHINE_IMPERFECT_SOUND )
+GAME( 1981, 005a,      005,      sega005,  005,      segag80r_state, init_005,      ROT270, "Sega", "005 (earlier version?)",        MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND )
 
 // basic G-80 system with individual background boards
 GAME( 1981, spaceod,   0,        spaceod,  spaceod,  segag80r_state, init_spaceod,  ROT270, "Sega", "Space Odyssey (version 2)", MACHINE_IMPERFECT_SOUND )

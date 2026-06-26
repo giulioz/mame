@@ -159,9 +159,6 @@ private:
 	uint8_t fdc_r(offs_t offset);
 	void fdc_w(offs_t offset, uint8_t data);
 
-	uint8_t scc_r(offs_t offset);
-	void scc_w(offs_t offset, uint8_t data);
-
 	uint8_t scsi_r(offs_t offset);
 	void scsi_w(offs_t offset, uint8_t data);
 
@@ -237,7 +234,7 @@ macpdm_state::macpdm_state(const machine_config &mconfig, device_type type, cons
 	m_ram(*this, RAM_TAG),
 	m_scc(*this, "scc"),
 	m_scsibus(*this, "scsi"),
-	m_ncr53c94(*this, "scsi:7:ncr53c94"),
+	m_ncr53c94(*this, "ncr53c94"),
 	m_fdc(*this, "fdc"),
 	m_floppy(*this, "fdc:%d", 0U),
 	m_video(*this, "video"),
@@ -331,7 +328,7 @@ void macpdm_state::driver_reset()
 	m_dma_floppy_byte_count = 0;
 	m_floppy_drq = false;
 
-	m_video->set_vram_base((const u64 *)m_ram->pointer());
+	m_video->set_vram_base(m_ram->pointer<u64>());
 	m_video->set_vram_offset(0);
 
 	m_maincpu->set_input_line(INPUT_LINE_HALT, ASSERT_LINE);
@@ -538,16 +535,6 @@ void macpdm_state::via2_sifr_w(uint8_t data)
 	}
 }
 
-
-uint8_t macpdm_state::scc_r(offs_t offset)
-{
-	return m_scc->dc_ab_r(offset >> 1);
-}
-
-void macpdm_state::scc_w(offs_t offset, uint8_t data)
-{
-	m_scc->dc_ab_w(offset, data);
-}
 
 uint8_t macpdm_state::fdc_r(offs_t offset)
 {
@@ -1121,7 +1108,7 @@ void macpdm_state::pdm_map(address_map &map)
 	map(0x40000000, 0x403fffff).rom().region("bootrom", 0).mirror(0x0fc00000);
 
 	map(0x50f00000, 0x50f00000).rw(FUNC(macpdm_state::via1_r), FUNC(macpdm_state::via1_w)).select(0x1e00);
-	map(0x50f04000, 0x50f04000).rw(FUNC(macpdm_state::scc_r), FUNC(macpdm_state::scc_w)).select(0x000e);
+	map(0x50f04000, 0x50f04007).rw(m_scc, FUNC(z80scc_device::dc_ab_r), FUNC(z80scc_device::dc_ab_w)).umask64(0xff00ff00ff00ff00);
 	// 50f08000 = ethernet ID PROM
 	// 50f0a000 = MACE ethernet controller
 	map(0x50f10000, 0x50f10000).rw(FUNC(macpdm_state::scsi_r), FUNC(macpdm_state::scsi_w)).select(0xf0);
@@ -1206,15 +1193,12 @@ void macpdm_state::macpdm(machine_config &config)
 	NSCSI_CONNECTOR(config, "scsi:4", default_scsi_devices, nullptr);
 	NSCSI_CONNECTOR(config, "scsi:5", default_scsi_devices, nullptr);
 	NSCSI_CONNECTOR(config, "scsi:6", default_scsi_devices, nullptr);
-	NSCSI_CONNECTOR(config, "scsi:7").option_set("ncr53c94", NCR53C94).machine_config(
-		[this] (device_t *device)
-		{
-			auto &ctrl = downcast<ncr53c94_device &>(*device);
-			ctrl.set_clock(ENET_CLOCK/2);
-			ctrl.set_busmd(ncr53c94_device::BUSMD_3);
-			ctrl.drq_handler_cb().set(*this, FUNC(macpdm_state::scsi_drq));
-			ctrl.irq_handler_cb().set(*this, FUNC(macpdm_state::scsi_irq));
-		});
+
+	NCR53C94(config, m_ncr53c94, ENET_CLOCK/2);
+	m_scsibus->set_external_device(7, m_ncr53c94);
+	m_ncr53c94->set_busmd(ncr53c94_device::BUSMD_3);
+	m_ncr53c94->drq_handler_cb().set(DEVICE_SELF, FUNC(macpdm_state::scsi_drq));
+	m_ncr53c94->irq_handler_cb().set(DEVICE_SELF, FUNC(macpdm_state::scsi_irq));
 
 	SOFTWARE_LIST(config, "flop_mac35_orig").set_original("mac_flop_orig");
 	SOFTWARE_LIST(config, "flop_mac35_clean").set_original("mac_flop_clcracked");
@@ -1238,15 +1222,15 @@ void macpdm_state::macpdm(machine_config &config)
 	SCC85C30(config, m_scc, 60000000/4);
 	m_scc->configure_channels(3'686'400, 3'686'400, 3'686'400, 3'686'400);
 	m_scc->out_int_callback().set(FUNC(macpdm_state::scc_irq));
-	m_scc->out_txda_callback().set("printer", FUNC(rs232_port_device::write_txd));
-	m_scc->out_txdb_callback().set("modem", FUNC(rs232_port_device::write_txd));
+	m_scc->out_txda_callback().set("modem", FUNC(rs232_port_device::write_txd));
+	m_scc->out_txdb_callback().set("printer", FUNC(rs232_port_device::write_txd));
 
-	rs232_port_device &rs232a(RS232_PORT(config, "printer", default_rs232_devices, nullptr));
+	rs232_port_device &rs232a(RS232_PORT(config, "modem", default_rs232_devices, nullptr));
 	rs232a.rxd_handler().set(m_scc, FUNC(z80scc_device::rxa_w));
 	rs232a.dcd_handler().set(m_scc, FUNC(z80scc_device::dcda_w));
 	rs232a.cts_handler().set(m_scc, FUNC(z80scc_device::ctsa_w));
 
-	rs232_port_device &rs232b(RS232_PORT(config, "modem", default_rs232_devices, nullptr));
+	rs232_port_device &rs232b(RS232_PORT(config, "printer", default_rs232_devices, nullptr));
 	rs232b.rxd_handler().set(m_scc, FUNC(z80scc_device::rxb_w));
 	rs232b.dcd_handler().set(m_scc, FUNC(z80scc_device::dcdb_w));
 	rs232b.cts_handler().set(m_scc, FUNC(z80scc_device::ctsb_w));
@@ -1263,7 +1247,7 @@ void macpdm_state::macpdm(machine_config &config)
 	m_ram->set_default_size("8M");
 	m_ram->set_extra_options("12M,24M,72M,264M");
 
-	nubus_device &nubus(NUBUS(config, "nubus", 0));
+	nubus_device &nubus(NUBUS(config, "nubus"));
 	nubus.set_space(m_maincpu, AS_PROGRAM);
 	nubus.out_irqc_callback().set(FUNC(macpdm_state::slot0_irq_w));
 	nubus.out_irqd_callback().set(FUNC(macpdm_state::slot1_irq_w));

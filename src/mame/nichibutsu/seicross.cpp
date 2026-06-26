@@ -156,7 +156,7 @@ void seicross_state::machine_start()
 	// install MCU waitstates
 	address_space &space = m_mcu->space(AS_PROGRAM);
 
-	// MR is asserted when it does an access with A15 is high,
+	// MR is asserted when it does an access with A15 high,
 	// this makes DAC sound pitch the same as PCB recordings.
 	space.install_read_tap(
 			0x8000, 0xffff,
@@ -467,7 +467,7 @@ static INPUT_PORTS_START( radrad )
 	PORT_DIPSETTING(    0x0f, "7 Coins/2 Credits" )
 	PORT_DIPSETTING(    0x0e, "6 Coins/2 Credits" )
 	PORT_DIPSETTING(    0x03, DEF_STR( 3C_1C ) )
-	PORT_DIPSETTING(    0x0d, "5 Coins/2 Credits" )
+	PORT_DIPSETTING(    0x0d, DEF_STR( 5C_2C ) )
 	PORT_DIPSETTING(    0x0c, DEF_STR( 4C_2C ) )
 	PORT_DIPSETTING(    0x02, DEF_STR( 2C_1C ) )
 	PORT_DIPSETTING(    0x0b, DEF_STR( 3C_2C ) )

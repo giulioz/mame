@@ -39,6 +39,8 @@ ToDo:
 #include "machine/6821pia.h"
 #include "machine/timer.h"
 
+#include "input.h" // FIXME: use inputs properly and remove this, reading keyboard directly is bad pracice
+
 #include "by17.lh"
 #include "by17_pwerplay.lh"
 #include "by17_matahari.lh"
@@ -72,9 +74,9 @@ public:
 		, m_solenoids(*this, "solenoid%u", 0U)
 	{ }
 
-	void init_by17();
-	void init_matahari();
-	void init_pwerplay();
+	void init_by17() ATTR_COLD;
+	void init_matahari() ATTR_COLD;
+	void init_pwerplay() ATTR_COLD;
 
 	DECLARE_INPUT_CHANGED_MEMBER(activity_button);
 	DECLARE_INPUT_CHANGED_MEMBER(self_test);
@@ -82,7 +84,7 @@ public:
 	template <int Param> int saucer_x3();
 	template <int Param> int drop_target_x2();
 
-	void by17(machine_config &config);
+	void by17(machine_config &config) ATTR_COLD;
 
 protected:
 	virtual void machine_start() override ATTR_COLD;
@@ -180,7 +182,7 @@ static INPUT_PORTS_START( by17 )
 	PORT_DIPSETTING(    0x11, DEF_STR( 2C_8C ))
 	PORT_DIPSETTING(    0x12, DEF_STR( 1C_9C ))
 	PORT_DIPSETTING(    0x13, "2 Coins/9 Credits")
-	PORT_DIPSETTING(    0x14, "1 Coin/10 Credits")
+	PORT_DIPSETTING(    0x14, DEF_STR( 1C_10C ))
 	PORT_DIPSETTING(    0x15, "2 Coins/10 Credits")
 	PORT_DIPSETTING(    0x16, "1 Coin/11 Credits")
 	PORT_DIPSETTING(    0x17, "2 Coins/11 Credits")
@@ -223,7 +225,7 @@ static INPUT_PORTS_START( by17 )
 	PORT_DIPSETTING(    0x11, DEF_STR( 2C_8C ))
 	PORT_DIPSETTING(    0x12, DEF_STR( 1C_9C ))
 	PORT_DIPSETTING(    0x13, "2 Coins/9 Credits")
-	PORT_DIPSETTING(    0x14, "1 Coin/10 Credits")
+	PORT_DIPSETTING(    0x14, DEF_STR( 1C_10C ))
 	PORT_DIPSETTING(    0x15, "2 Coins/10 Credits")
 	PORT_DIPSETTING(    0x16, "1 Coin/11 Credits")
 	PORT_DIPSETTING(    0x17, "2 Coins/11 Credits")
@@ -284,7 +286,7 @@ static INPUT_PORTS_START( by17 )
 	PORT_DIPSETTING(    0x07, DEF_STR( 1C_7C ))
 	PORT_DIPSETTING(    0x08, DEF_STR( 1C_8C ))
 	PORT_DIPSETTING(    0x09, DEF_STR( 1C_9C ))
-	PORT_DIPSETTING(    0x0a, "1 Coin/10 Credits")
+	PORT_DIPSETTING(    0x0a, DEF_STR( 1C_10C ))
 	PORT_DIPSETTING(    0x0b, "1 Coin/11 Credits")
 	PORT_DIPSETTING(    0x0c, "1 Coin/12 Credits")
 	PORT_DIPSETTING(    0x0d, "1 Coin/13 Credits")
@@ -324,7 +326,7 @@ static INPUT_PORTS_START( by17 )
 	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_QUOTE) PORT_NAME("INP13")
 	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_COLON) PORT_NAME("INP14")
 	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_KEYPAD ) PORT_CODE(KEYCODE_L) PORT_NAME("INP15")
-	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_TILT2 ) PORT_NAME("Slam Tilt") PORT_CODE(KEYCODE_EQUALS)
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_TILT )   PORT_NAME("Slam Tilt") PORT_CODE(KEYCODE_EQUALS)
 
 	// custom
 	PORT_START("X2")
@@ -958,10 +960,6 @@ void by17_state::init_pwerplay()
 void by17_state::machine_start()
 {
 	genpin_class::machine_start();
-
-	m_lamps.resolve();
-	m_digits.resolve();
-	m_solenoids.resolve();
 
 	save_item(NAME(m_u10a));
 	save_item(NAME(m_u10b));

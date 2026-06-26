@@ -66,7 +66,7 @@ ToDo:
 #include "genpin.h"
 #include "cpu/m6502/w65c02.h"
 #include "cpu/m6809/m6809.h"
-#include "cpu/mcs51/mcs51.h"
+#include "cpu/mcs51/i8051.h"
 #include "machine/6522via.h"
 #include "machine/clock.h"
 #include "machine/i8255.h"
@@ -106,21 +106,21 @@ public:
 		, m_vram(*this, "vram")
 	{ }
 
-	void alvg(machine_config &config);
-	void group1(machine_config &config);
-	void group2(machine_config &config);
-	void group3(machine_config &config);
-	void pca002(machine_config &config);  // Gen 1 sound board
-	void pca003(machine_config &config);  // Alphanumeric display
-	void pca008(machine_config &config);  // Gen 2 sound board
-	void pca020(machine_config &config);  // DMD controller
+	void alvg(machine_config &config) ATTR_COLD;
+	void group1(machine_config &config) ATTR_COLD;
+	void group2(machine_config &config) ATTR_COLD;
+	void group3(machine_config &config) ATTR_COLD;
+	void pca002(machine_config &config) ATTR_COLD;  // Gen 1 sound board
+	void pca003(machine_config &config) ATTR_COLD;  // Alphanumeric display
+	void pca008(machine_config &config) ATTR_COLD;  // Gen 2 sound board
+	void pca020(machine_config &config) ATTR_COLD;  // DMD controller
 
 private:
 	void main_map(address_map &map) ATTR_COLD;
 	void pca002_map(address_map &map) ATTR_COLD;
 	void pca003_map(address_map &map) ATTR_COLD;
 	void pca008_map(address_map &map) ATTR_COLD;
-	void pca020_io_map(address_map &map) ATTR_COLD;
+	void pca020_data_map(address_map &map) ATTR_COLD;
 	void pca020_mem_map(address_map &map) ATTR_COLD;
 	void machine_start() override ATTR_COLD;
 	void machine_reset() override ATTR_COLD;
@@ -242,7 +242,7 @@ void alvg_state::pca020_mem_map(address_map &map)
 	map(0x8000, 0xffff).bankr("dmd");
 }
 
-void alvg_state::pca020_io_map(address_map &map)
+void alvg_state::pca020_data_map(address_map &map)
 {
 	map.unmap_value_high();
 	map(0x0000, 0x7fff).ram().share("vram");
@@ -487,9 +487,6 @@ void alvg_state::machine_start()
 {
 	genpin_class::machine_start();
 
-	m_digits.resolve();
-	m_io_outputs.resolve();
-
 	save_item(NAME(m_row));
 	save_item(NAME(m_lamp_data));
 	save_item(NAME(m_strobe));
@@ -574,7 +571,7 @@ void alvg_state::pca020(machine_config &config)
 	/* basic machine hardware */
 	I8031(config, m_dmdcpu, XTAL(12'000'000));
 	m_dmdcpu->set_addrmap(AS_PROGRAM, &alvg_state::pca020_mem_map);
-	m_dmdcpu->set_addrmap(AS_IO, &alvg_state::pca020_io_map);
+	m_dmdcpu->set_addrmap(AS_DATA, &alvg_state::pca020_data_map);
 	m_dmdcpu->port_out_cb<1>().set(FUNC(alvg_state::dmd_port1_w));
 	m_dmdcpu->port_in_cb<1>().set(FUNC(alvg_state::dmd_port1_r));
 	m_dmdcpu->port_out_cb<3>().set(FUNC(alvg_state::dmd_port3_w));

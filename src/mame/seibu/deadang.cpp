@@ -3,7 +3,7 @@
 
 /***************************************************************************
 
-    Pop'N Run                       (c) 1987 Seibu Kaihatsu & Yukai Tsukai
+    Pop'N Run (aka Yukai Tsukai)    (c) 1987 Seibu Kaihatsu
     Dead Angle                      (c) 1988 Seibu Kaihatsu
     Gang Hunter                     (c) 1988 Seibu Kaihatsu
 
@@ -11,12 +11,11 @@
 
 /*
 
-    TODO:
-
-    - ghunter trackball input is broken
-    - coin lockouts
-    - popnrun: inputs, can't coin it up, needs gfxs dumped and sorted out
-      (SIP modules like airraid);
+TODO:
+- ghunter trackball input is broken
+- coin lockouts
+- popnrun: inputs, can't coin it up, needs gfxs dumped and sorted out
+  (SIP modules like airraid);
 
 
 Lead Angle
@@ -46,6 +45,7 @@ Dip locations and factory settings verified with US manual
 
 #include "emu.h"
 
+#include "sei80bu.h"
 #include "seibusound.h"
 
 #include "cpu/nec/nec.h"
@@ -799,9 +799,7 @@ void deadang_state::deadang(machine_config &config)
 	m_audiocpu->set_addrmap(AS_OPCODES, &deadang_state::sound_decrypted_opcodes_map);
 	m_audiocpu->set_irq_acknowledge_callback("seibu_sound", FUNC(seibu_sound_device::im0_vector_cb));
 
-	SEI80BU(config, "sei80bu", 0).set_device_rom_tag("audiocpu");
-
-	config.set_maximum_quantum(attotime::from_hz(60)); // the game stops working with higher interleave rates..
+	SEI80BU(config, "sei80bu", XTAL(14'318'181) / 4).set_device_rom_tag("audiocpu");
 
 	WATCHDOG_TIMER(config, "watchdog");
 
@@ -820,7 +818,7 @@ void deadang_state::deadang(machine_config &config)
 	// sound hardware
 	SPEAKER(config, "mono").front_center();
 
-	SEIBU_SOUND(config, m_seibu_sound, 0);
+	SEIBU_SOUND(config, m_seibu_sound);
 	m_seibu_sound->int_callback().set_inputline(m_audiocpu, 0);
 	m_seibu_sound->coin_io_callback().set_ioport("COIN");
 	m_seibu_sound->set_rom_tag("audiocpu");
@@ -860,6 +858,7 @@ void popnrun_state::popnrun(machine_config &config)
 {
 	deadang(config);
 
+	// basic machine hardware
 	m_maincpu->set_addrmap(AS_PROGRAM, &popnrun_state::main_map);
 
 	m_subcpu->set_addrmap(AS_PROGRAM, &popnrun_state::sub_map);
@@ -867,12 +866,14 @@ void popnrun_state::popnrun(machine_config &config)
 	m_audiocpu->set_addrmap(AS_PROGRAM, &popnrun_state::sound_map);
 	m_audiocpu->set_addrmap(AS_OPCODES, &popnrun_state::sound_decrypted_opcodes_map);
 
-	m_screen->set_screen_update(FUNC(popnrun_state::screen_update));
-
 	config.device_remove("watchdog");
+
+	// video hardware
+	m_screen->set_screen_update(FUNC(popnrun_state::screen_update));
 
 	m_gfxdecode->set_info(gfx_popnrun);
 
+	// sound hardware
 	config.device_remove("ym1");
 	config.device_remove("ym2");
 	config.device_remove("msm1");
@@ -1178,10 +1179,10 @@ void deadang_state::init_adpcm()
 
 // Game Drivers
 
-GAME( 1987, popnrun,  0,       popnrun, deadang, popnrun_state, empty_init, ROT0, "Seibu Kaihatsu / Yukai Tsukai",           "Pop'n Run - The Videogame (set 1)", MACHINE_NOT_WORKING | MACHINE_SUPPORTS_SAVE )
-GAME( 1987, popnruna, popnrun, popnrun, deadang, popnrun_state, empty_init, ROT0, "Seibu Kaihatsu / Yukai Tsukai",           "Pop'n Run - The Videogame (set 2)", MACHINE_NOT_WORKING | MACHINE_SUPPORTS_SAVE )
+GAME( 1987, popnrun,  0,       popnrun, deadang, popnrun_state, empty_init, ROT0, "Seibu Kaihatsu", "Pop'n Run: The Video Game (set 1)", MACHINE_NOT_WORKING | MACHINE_SUPPORTS_SAVE )
+GAME( 1987, popnruna, popnrun, popnrun, deadang, popnrun_state, empty_init, ROT0, "Seibu Kaihatsu", "Pop'n Run: The Video Game (set 2)", MACHINE_NOT_WORKING | MACHINE_SUPPORTS_SAVE )
 
-GAME( 1988, deadang,  0,       deadang, deadang, deadang_state, init_adpcm, ROT0, "Seibu Kaihatsu",                          "Dead Angle",                        MACHINE_SUPPORTS_SAVE )
-GAME( 1988, leadang,  deadang, deadang, deadang, deadang_state, init_adpcm, ROT0, "Seibu Kaihatsu",                          "Lead Angle (Japan)",                MACHINE_SUPPORTS_SAVE )
-GAME( 1988, ghunter,  deadang, ghunter, ghunter, deadang_state, init_adpcm, ROT0, "Seibu Kaihatsu",                          "Gang Hunter / Dead Angle",          MACHINE_SUPPORTS_SAVE ) // Title is 'Gang Hunter' or 'Dead Angle' depending on control method dipswitch
-GAME( 1988, ghunters, deadang, ghunter, ghunter, deadang_state, init_adpcm, ROT0, "Seibu Kaihatsu (SegaSA / Sonic license)", "Gang Hunter / Dead Angle (Spain)",  MACHINE_SUPPORTS_SAVE )
+GAME( 1988, deadang,  0,       deadang, deadang, deadang_state, init_adpcm, ROT0, "Seibu Kaihatsu", "Dead Angle",                         MACHINE_SUPPORTS_SAVE )
+GAME( 1988, leadang,  deadang, deadang, deadang, deadang_state, init_adpcm, ROT0, "Seibu Kaihatsu", "Lead Angle (Japan)",                 MACHINE_SUPPORTS_SAVE )
+GAME( 1988, ghunter,  deadang, ghunter, ghunter, deadang_state, init_adpcm, ROT0, "Seibu Kaihatsu", "Gang Hunter / Dead Angle",           MACHINE_SUPPORTS_SAVE ) // Title is 'Gang Hunter' or 'Dead Angle' depending on control method dipswitch
+GAME( 1988, ghunters, deadang, ghunter, ghunter, deadang_state, init_adpcm, ROT0, "Seibu Kaihatsu (SegaSA / Sonic license)", "Gang Hunter / Dead Angle (Spain)", MACHINE_SUPPORTS_SAVE )

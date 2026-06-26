@@ -47,6 +47,8 @@ protected:
 	virtual void write_c0nx(uint8_t offset, uint8_t data) override;
 	virtual uint8_t read_cnxx(uint8_t offset) override;
 	virtual uint8_t read_c800(uint16_t offset) override;
+	virtual bool take_c800() const override { return true; }
+	virtual void reset_from_bus() override;
 
 	required_ioport m_dsw1, m_dsw2;
 	required_ioport m_dswx;
@@ -269,7 +271,7 @@ ioport_constructor apricorn_ssi_device::device_input_ports() const
 
 void a2bus_ssc_device::device_add_mconfig(machine_config &config)
 {
-	MOS6551(config, m_acia, 0);
+	MOS6551(config, m_acia);
 	m_acia->set_xtal(1.8432_MHz_XTAL);
 	m_acia->irq_handler().set(FUNC(a2bus_ssc_device::acia_irq_w));
 	m_acia->txd_handler().set("rs232", FUNC(rs232_port_device::write_txd));
@@ -338,6 +340,11 @@ void apricorn_ssi_device::device_start()
 
 void a2bus_ssc_device::device_reset()
 {
+}
+
+void a2bus_ssc_device::reset_from_bus()
+{
+	m_acia->reset();
 }
 
 /*-------------------------------------------------

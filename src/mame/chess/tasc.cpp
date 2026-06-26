@@ -135,8 +135,6 @@ private:
 
 void tasc_state::machine_start()
 {
-	m_out_leds.resolve();
-
 	m_boot_timer = timer_alloc(FUNC(tasc_state::disable_bootrom), this);
 	m_boot_view[1].install_ram(0, m_ram->size() - 1, m_ram->pointer());
 
@@ -195,7 +193,7 @@ void tasc_state::control_w(offs_t offset, u32 data, u32 mem_mask)
 {
 	if (ACCESSING_BITS_24_31)
 	{
-		if (BIT(data, 27))
+		if (BIT(~m_control & data, 27))
 			m_lcd->write(BIT(data, 26), data & 0xff);
 
 		m_smartboard->data0_w(BIT(data, 30));
@@ -314,7 +312,7 @@ void tasc_state::tasc(machine_config &config)
 	subdevice<sensorboard_device>("smartboard:board")->set_nvram_enable(true);
 
 	// video hardware
-	LM24014H(config, m_lcd, 0);
+	LM24014H(config, m_lcd);
 	m_lcd->set_fs(1); // font size 6x8
 
 	config.set_default_layout(layout_tascr30);

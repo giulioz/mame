@@ -262,7 +262,7 @@ void informer_207_376_state::informer_207_376(machine_config &config)
 	nmi_clk.set_stages(14);
 	nmi_clk.count_out_cb().set_inputline(m_maincpu, INPUT_LINE_NMI).bit(13); // Q14
 
-	SCC85C30(config, m_scc, 0); // externally clocked?
+	SCC85C30(config, m_scc); // externally clocked?
 	m_scc->out_txda_callback().set("com1", FUNC(rs232_port_device::write_txd));
 	m_scc->out_dtra_callback().set("com1", FUNC(rs232_port_device::write_dtr));
 	m_scc->out_rtsa_callback().set("com1", FUNC(rs232_port_device::write_rts));
@@ -343,5 +343,4 @@ ROM_END
 //  SYSTEM DRIVERS
 //**************************************************************************
 
-//    YEAR  NAME      PARENT   COMPAT  MACHINE           INPUT             CLASS                   INIT        COMPANY     FULLNAME            FLAGS
-COMP( 1986, in207376, 0,       0,      informer_207_376, informer_207_376, informer_207_376_state, empty_init, "Informer", "Informer 207/376", MACHINE_NOT_WORKING | MACHINE_SUPPORTS_SAVE )
+COMP( 1986, in207376, 0, 0, informer_207_376, informer_207_376, informer_207_376_state, empty_init, "Informer Computer Terminals", "Informer 207/376", MACHINE_NOT_WORKING | MACHINE_SUPPORTS_SAVE )

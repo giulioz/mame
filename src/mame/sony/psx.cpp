@@ -11,13 +11,14 @@
 
 #include "emu.h"
 
+#include "psxcd.h"
+
 #include "bus/psx/ctlrport.h"
 #include "bus/psx/parallel.h"
 #include "cpu/m6805/hd6305.h"
 #include "cpu/psx/psx.h"
 #include "imagedev/cdromimg.h"
 #include "imagedev/snapquik.h"
-#include "psxcd.h"
 #include "machine/ram.h"
 #include "sound/spu.h"
 #include "video/psx.h"
@@ -27,6 +28,7 @@
 #include "softlist.h"
 #include "speaker.h"
 
+#include "endianness.h"
 #include "multibyte.h"
 
 #include <zlib.h>
@@ -504,7 +506,7 @@ void psx1_state::psx_base(machine_config &config)
 	m_maincpu->cd_write().set(m_psxcd, FUNC(psxcd_device::write));
 	m_maincpu->subdevice<ram_device>("ram")->set_default_size("2M");
 
-	psxcontrollerports_device &controllers(PSXCONTROLLERPORTS(config, "controllers", 0));
+	psxcontrollerports_device &controllers(PSXCONTROLLERPORTS(config, "controllers"));
 	controllers.rxd().set("maincpu:sio0", FUNC(psxsio0_device::write_rxd));
 	controllers.dsr().set("maincpu:sio0", FUNC(psxsio0_device::write_dsr));
 	PSX_CONTROLLER_PORT(config, "port1", psx_controllers, "digital_pad");

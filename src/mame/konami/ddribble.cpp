@@ -2,14 +2,19 @@
 // copyright-holders: Manuel Abadia
 /***************************************************************************
 
-    Double Dribble (GX690) (c) Konami 1986
+Double Dribble (GX690) (c) Konami 1986
+Driver by Manuel Abadia <emumanu+mame@gmail.com>
 
-    Driver by Manuel Abadia <emumanu+mame@gmail.com>
+XTAL: 18.43200MHz, 3.579545MHz
+CPU: 3*MC68B09EP
+Sound: Yamaha YM2203C, Sanyo LM5030
+Konami custom: 2*005885, 007452, 007327
 
-    2008-08
-    Dip locations and suggested settings verified with US manual.
+2008-08
+Dip locations and suggested settings verified with US manual.
 
-    TODO: using a debug build, the cmd prompt is filled with sound_assert: u32(start) < samples()
+TODO:
+- using a debug build, the cmd prompt is filled with sound_assert: u32(start) < samples()
 
 ***************************************************************************/
 
@@ -276,8 +281,7 @@ void ddribble_state::draw_sprites(bitmap_ind16 &bitmap, const rectangle &cliprec
 					int const ex = flipx ? (width - 1 - x) : x;
 					int const ey = flipy ? (height - 1 - y) : y;
 
-
-						gfx->transpen(bitmap, cliprect,
+					gfx->transpen(bitmap, cliprect,
 						(number) + x_offset[ex] + y_offset[ey],
 						color,
 						flipx, flipy,
@@ -345,8 +349,7 @@ uint8_t ddribble_state::vlm5030_busy_r()
 	return machine().rand(); // patch
 	// FIXME: remove ?
 #if 0
-	if (m_vlm->bsy()) return 1;
-	else return 0;
+	return m_vlm->bsy_r();
 #endif
 }
 
@@ -355,13 +358,13 @@ void ddribble_state::vlm5030_ctrl_w(uint8_t data)
 	// b7 : vlm data bus OE
 
 	// b6 : VLM5030-RST
-	m_vlm->rst(BIT(data, 6));
+	m_vlm->rst_w(BIT(data, 6));
 
 	// b5 : VLM5030-ST
-	m_vlm->st(BIT(data, 5));
+	m_vlm->st_w(BIT(data, 5));
 
 	// b4 : VLM5300-VCU
-	m_vlm->vcu(BIT(data, 4));
+	m_vlm->vcu_w(BIT(data, 4));
 
 	// b3 : ROM bank select
 	m_vlmbank->set_entry(BIT(data, 3));
@@ -572,9 +575,7 @@ void ddribble_state::ddribble(machine_config &config)
 	m_vlm->set_addrmap(0, &ddribble_state::vlm_map);
 
 	FILTER_RC(config, m_filter[0]).add_route(ALL_OUTPUTS, "mono", 1.0);
-
 	FILTER_RC(config, m_filter[1]).add_route(ALL_OUTPUTS, "mono", 1.0);
-
 	FILTER_RC(config, m_filter[2]).add_route(ALL_OUTPUTS, "mono", 1.0);
 }
 

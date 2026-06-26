@@ -717,7 +717,7 @@ void kinst_state::kinst(machine_config &config)
 	// sound hardware
 	SPEAKER(config, "mono").front_center();
 
-	DCS_AUDIO_2K(config, m_dcs, 0);
+	DCS_AUDIO_2K(config, m_dcs);
 	m_dcs->set_maincpu_tag(m_maincpu);
 	m_dcs->add_route(0, "mono", 1.0);
 }
@@ -862,6 +862,6 @@ void kinst_state::init_kinst2()
 // versions selectable by changing bioses
 
 //    YEAR  NAME      PARENT  MACHINE   INPUT   CLASS           INIT         SCREEN  COMPANY                  FULLNAME           FLAGS
-GAME( 1994, kinst,    0,      kinst,    kinst,  kinst_state,    init_kinst,  ROT0,   "Rare (Midway license)", "Killer Instinct", MACHINE_SUPPORTS_SAVE )
-GAME( 1996, kinst2,   0,      kinst2,   kinst2, kinst_state,    init_kinst2, ROT0,   "Rare (Midway license)", "Killer Instinct 2", MACHINE_SUPPORTS_SAVE )
-GAME( 1996, kinst2uk, kinst2, kinst2uk, kinst2, kinst2uk_state, init_kinst2, ROT0,   "Rare (Midway license)", "Killer Instinct 2 (upgrade kit)", MACHINE_SUPPORTS_SAVE )
+GAME( 1994, kinst,    0,      kinst,    kinst,  kinst_state,    init_kinst,  ROT0,   "Rare / Nintendo (Midway license)", "Killer Instinct", MACHINE_SUPPORTS_SAVE )
+GAME( 1996, kinst2,   0,      kinst2,   kinst2, kinst_state,    init_kinst2, ROT0,   "Rare / Nintendo (Midway license)", "Killer Instinct 2", MACHINE_SUPPORTS_SAVE )
+GAME( 1996, kinst2uk, kinst2, kinst2uk, kinst2, kinst2uk_state, init_kinst2, ROT0,   "Rare / Nintendo (Midway license)", "Killer Instinct 2 (upgrade kit)", MACHINE_SUPPORTS_SAVE )

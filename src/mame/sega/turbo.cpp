@@ -189,9 +189,6 @@
 
 void turbo_base_state::machine_start()
 {
-	m_digits.resolve();
-	m_lamp.resolve();
-
 	save_item(NAME(m_i8279_scanlines));
 	save_item(NAME(m_sound_state));
 }
@@ -217,8 +214,6 @@ void subroc3d_state::machine_start()
 {
 	turbo_base_state::machine_start();
 
-	m_shutter.resolve();
-
 	save_item(NAME(m_col));
 	save_item(NAME(m_ply));
 	save_item(NAME(m_flip));
@@ -235,9 +230,6 @@ void subroc3d_state::machine_start()
 void turbo_state::machine_start()
 {
 	turbo_base_state::machine_start();
-
-	m_tachometer.resolve();
-	m_speed.resolve();
 
 	save_item(NAME(m_osel));
 	save_item(NAME(m_bsel));
@@ -1562,8 +1554,8 @@ ROM_END
 
 ROM_START( buckrogn )
 	ROM_REGION( 0xc000, "maincpu", 0 )
-	ROM_LOAD( "cpu-ic3.bin", 0x0000, 0x4000, CRC(7f1910af) SHA1(22d37750282676d8fd1f602e928c174f823245c9) )
-	ROM_LOAD( "cpu-ic4.bin", 0x4000, 0x4000, CRC(5ecd393b) SHA1(d069f12326644f2c685e516d91d33b97ec162c56) )
+	ROM_LOAD( "epr-5257.cpu-ic3", 0x0000, 0x4000, CRC(7f1910af) SHA1(22d37750282676d8fd1f602e928c174f823245c9) )
+	ROM_LOAD( "epr-5258.cpu-ic4", 0x4000, 0x4000, CRC(5ecd393b) SHA1(d069f12326644f2c685e516d91d33b97ec162c56) )
 
 	ROM_REGION( 0x2000, "subcpu", 0 )
 	ROM_LOAD( "epr-5200.cpu-ic66", 0x0000, 0x1000, CRC(0d58b154) SHA1(9f3951eb7ea1fa9ff914738462e4b4f755d60802) )

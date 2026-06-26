@@ -195,13 +195,16 @@ uint8_t pic8259_device::read(offs_t offset)
 				{
 					data = 0x80 | m_current_level;
 
-					if (!m_level_trig_mode && (!m_master || !BIT(m_slave, m_current_level)))
-						m_irr &= ~(1 << m_current_level);
+					if (!machine().side_effects_disabled())
+					{
+						if (!m_level_trig_mode && (!m_master || !BIT(m_slave, m_current_level)))
+							m_irr &= ~(1 << m_current_level);
 
-					if (!m_auto_eoi)
-						m_isr |= 1 << m_current_level;
+						if (!m_auto_eoi)
+							m_isr |= 1 << m_current_level;
 
-					m_irq_timer->adjust(attotime::zero);
+						m_irq_timer->adjust(attotime::zero);
+					}
 				}
 			}
 			else
@@ -241,7 +244,6 @@ void pic8259_device::write(offs_t offset, uint8_t data)
 
 				m_imr                = 0x00;
 				m_isr                = 0x00;
-				m_irr                = 0x00;
 				m_slave              = 0x00;
 				m_level_trig_mode    = (data & 0x08) ? 1 : 0;
 				m_vector_size        = (data & 0x04) ? 1 : 0;
@@ -251,6 +253,7 @@ void pic8259_device::write(offs_t offset, uint8_t data)
 				m_state              = state_t::ICW2;
 				m_current_level      = -1;
 				m_inta_sequence      = 0;
+				m_irr                = m_level_trig_mode ? m_irq_lines : 0;
 				m_out_int_func(0);
 			}
 			else if (m_state == state_t::READY)

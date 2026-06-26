@@ -641,17 +641,6 @@ void intellec4_state::driver_start()
 {
 	m_reset_timer = timer_alloc(FUNC(intellec4_state::reset_expired), this);
 
-	m_led_address.resolve();
-	m_led_instruction.resolve();
-	m_led_active_bank.resolve();
-	m_led_execution.resolve();
-	m_led_last_ptr.resolve();
-	m_led_status_ptr_valid.resolve();
-	m_led_status_search.resolve();
-	m_led_mode_mon.resolve();
-	m_led_mode_ram.resolve();
-	m_led_mode_prom.resolve();
-
 	save_item(NAME(m_ram_page));
 	save_item(NAME(m_ram_data));
 	save_item(NAME(m_ram_write));
@@ -822,37 +811,47 @@ void intellec4_state::intellec4_program_memory(address_map &map)
   Common machine configuration
 ----------------------------------*/
 
-DEVICE_INPUT_DEFAULTS_START(tty)
+DEVICE_INPUT_DEFAULTS_START(terminal)
 	DEVICE_INPUT_DEFAULTS("RS232_TXBAUD",    0x00ff, RS232_BAUD_110)
 	DEVICE_INPUT_DEFAULTS("RS232_RXBAUD",    0x00ff, RS232_BAUD_110)
 	DEVICE_INPUT_DEFAULTS("RS232_DATABITS",  0x00ff, RS232_DATABITS_8)
 	DEVICE_INPUT_DEFAULTS("RS232_PARITY",    0x00ff, RS232_PARITY_NONE)
 	DEVICE_INPUT_DEFAULTS("RS232_STOPBITS",  0x00ff, RS232_STOPBITS_2)
-	DEVICE_INPUT_DEFAULTS("TERM_CONF",       0x01c0, 0x0000)
-	DEVICE_INPUT_DEFAULTS("FLOW_CONTROL",    0x0001, 0x0000)
+	DEVICE_INPUT_DEFAULTS("TERM_CONF",       0x0040, 0x0000) // auto CR on LF off
+	DEVICE_INPUT_DEFAULTS("TERM_CONF",       0x0080, 0x0000) // auto LF on CR off
+	DEVICE_INPUT_DEFAULTS("TERM_CONF",       0x0100, 0x0000) // local echo off
+DEVICE_INPUT_DEFAULTS_END
+
+DEVICE_INPUT_DEFAULTS_START(null_modem)
+	DEVICE_INPUT_DEFAULTS("RS232_TXBAUD",    0x00ff, RS232_BAUD_110)
+	DEVICE_INPUT_DEFAULTS("RS232_RXBAUD",    0x00ff, RS232_BAUD_110)
+	DEVICE_INPUT_DEFAULTS("RS232_DATABITS",  0x00ff, RS232_DATABITS_8)
+	DEVICE_INPUT_DEFAULTS("RS232_PARITY",    0x00ff, RS232_PARITY_NONE)
+	DEVICE_INPUT_DEFAULTS("RS232_STOPBITS",  0x00ff, RS232_STOPBITS_2)
+	DEVICE_INPUT_DEFAULTS("FLOW_CONTROL",    0x0007, 0x0000) // no flow control
 DEVICE_INPUT_DEFAULTS_END
 
 void intellec4_state::intellec4(machine_config &config)
 {
-	ADDRESS_MAP_BANK(config, m_program_banks, 0);
+	ADDRESS_MAP_BANK(config, m_program_banks);
 	m_program_banks->set_map(&intellec4_state::intellec4_program_banks);
 	m_program_banks->set_endianness(ENDIANNESS_LITTLE);
 	m_program_banks->set_data_width(8);
 	m_program_banks->set_addr_width(14);
 	m_program_banks->set_stride(0x1000);
 
-	ADDRESS_MAP_BANK(config, m_rom_port_banks, 0);
+	ADDRESS_MAP_BANK(config, m_rom_port_banks);
 	m_rom_port_banks->set_map(&intellec4_state::intellec4_rom_port_banks);
 	m_rom_port_banks->set_endianness(ENDIANNESS_LITTLE);
 	m_rom_port_banks->set_data_width(8);
 	m_rom_port_banks->set_addr_width(14);
 	m_rom_port_banks->set_stride(0x1000);
 
-	INTEL_IMM6_76(config, m_prom_programmer, 0);
+	INTEL_IMM6_76(config, m_prom_programmer);
 
 	RS232_PORT(config, m_tty, default_rs232_devices, "terminal");
-	m_tty->set_option_device_input_defaults("terminal",   DEVICE_INPUT_DEFAULTS_NAME(tty));
-	m_tty->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(tty));
+	m_tty->set_option_device_input_defaults("terminal",   DEVICE_INPUT_DEFAULTS_NAME(terminal));
+	m_tty->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(null_modem));
 
 	INTELLEC4_UNIV_BUS(config, m_bus, 518000. / 7);
 	m_bus->set_rom_space(m_program_banks, AS_PROGRAM);
@@ -1168,8 +1167,6 @@ void mod4_state::driver_start()
 {
 	intellec4_state::driver_start();
 
-	m_led_status_cpu.resolve();
-
 	m_one_shot_timer = timer_alloc(FUNC(mod4_state::one_shot_expired), this);
 
 	save_item(NAME(m_one_shot));
@@ -1397,8 +1394,6 @@ void mod40_state::mod40(machine_config &config)
 void mod40_state::driver_start()
 {
 	intellec4_state::driver_start();
-
-	m_led_status_run.resolve();
 
 	m_single_step_timer = timer_alloc(FUNC(mod40_state::single_step_expired), this);
 

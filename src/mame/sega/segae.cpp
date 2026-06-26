@@ -460,7 +460,6 @@ void systeme_state::coin_counters_write(uint8_t data)
 
 void systeme_state::machine_start()
 {
-	m_lamp.resolve();
 	membank("vdp1_bank")->configure_entries(0, 2, m_vram[0], 0x4000);
 	membank("vdp2_bank")->configure_entries(0, 2, m_vram[1], 0x4000);
 	m_bank1->configure_entries(0, 16, m_maincpu_region->base() + 0x10000, 0x4000);
@@ -999,6 +998,8 @@ void systeme_state::init_fantzn2()
 
 //*************************************************************************************************************************
 //  Fantasy Zone II - The Tears of Opa-Opa (MC-8123, 317-0057), Sega System E
+//   Game ID# 833-6591-01 FANTAZY ZONE 2 (also stickered as 833-6591-01 FANTSAY ZONE II)  [The spelling mistakes are as found on actual labels]
+//   ROM BD # 834-6592-01
 //
 ROM_START( fantzn2 )
 	ROM_REGION( 0x50000, "maincpu", 0 )

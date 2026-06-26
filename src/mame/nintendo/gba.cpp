@@ -713,6 +713,11 @@ uint32_t gba_state::gba_io_r(offs_t offset, uint32_t mem_mask)
 		case 0x0200/4:
 			retval = IE | (IF << 16);
 			break;
+		case 0x0204/4:
+			// TODO: bit 15 is CGB mode (from cart IN35, read only)
+			// not being writeable fixes hang in dkkswing later stages
+			retval = WAITCNT & 0x5fff;
+			break;
 		default:
 			if( ACCESSING_BITS_0_15 )
 			{
@@ -1448,7 +1453,7 @@ void gba_state::gbadv(machine_config &config)
 	ARM7(config, m_maincpu, 4.194304_MHz_XTAL * 4);
 	m_maincpu->set_addrmap(AS_PROGRAM, &gba_state::gba_map);
 
-	gba_lcd_device &lcd(GBA_LCD(config, "lcd", 0));
+	gba_lcd_device &lcd(GBA_LCD(config, "lcd"));
 	lcd.int_hblank_callback().set(FUNC(gba_state::int_hblank_callback));
 	lcd.int_vblank_callback().set(FUNC(gba_state::int_vblank_callback));
 	lcd.int_vcount_callback().set(FUNC(gba_state::int_vcount_callback));

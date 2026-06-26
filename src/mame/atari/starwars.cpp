@@ -191,12 +191,12 @@ static INPUT_PORTS_START( starwars )
 	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_CUSTOM ) PORT_READ_LINE_MEMBER(FUNC(starwars_state::matrix_flag_r))
 
 	PORT_START("DSW0")
-	PORT_DIPNAME( 0x03, 0x02, "Starting Shields" )  PORT_DIPLOCATION("10D:1,2")
+	PORT_DIPNAME( 0x03, 0x00, "Starting Shields" )  PORT_DIPLOCATION("10D:1,2")
 	PORT_DIPSETTING(    0x00, "6" )
 	PORT_DIPSETTING(    0x01, "7" )
 	PORT_DIPSETTING(    0x02, "8" )
 	PORT_DIPSETTING(    0x03, "9" )
-	PORT_DIPNAME( 0x0c, 0x04, DEF_STR( Difficulty ) ) PORT_DIPLOCATION("10D:3,4")
+	PORT_DIPNAME( 0x0c, 0x08, DEF_STR( Difficulty ) ) PORT_DIPLOCATION("10D:3,4")
 	PORT_DIPSETTING(    0x00, DEF_STR( Easy ) )
 	PORT_DIPSETTING(    0x04, "Moderate" )
 	PORT_DIPSETTING(    0x08, DEF_STR( Hard ) )
@@ -255,11 +255,19 @@ static INPUT_PORTS_START( esb )
 	PORT_DIPSETTING(    0x00, "3" )
 	PORT_DIPSETTING(    0x03, "4" )
 	PORT_DIPSETTING(    0x02, "5" )
+	PORT_DIPNAME( 0x0c, 0x00, DEF_STR( Difficulty ) ) PORT_DIPLOCATION("10D:3,4")
+	PORT_DIPSETTING(    0x08, DEF_STR( Easy ) )
+	PORT_DIPSETTING(    0x0c, "Moderate" )
+	PORT_DIPSETTING(    0x00, DEF_STR( Hard ) )
+	PORT_DIPSETTING(    0x04, DEF_STR( Hardest ) )
 	PORT_DIPNAME( 0x30, 0x30, "Jedi-Letter Mode" )  PORT_DIPLOCATION("10D:5,6")
 	PORT_DIPSETTING(    0x00, "Level Only" )
 	PORT_DIPSETTING(    0x10, "Level" )
 	PORT_DIPSETTING(    0x20, "Increment Only" )
 	PORT_DIPSETTING(    0x30, "Increment" )
+	PORT_DIPNAME( 0x40, 0x40, DEF_STR( Demo_Sounds ) ) PORT_DIPLOCATION("10D:7")
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) ) // "No Music In Attract Mode" switch 'on'
+	PORT_DIPSETTING(    0x40, DEF_STR( On ) ) // "Music In Attract Mode" switch 'off'
 INPUT_PORTS_END
 
 
@@ -311,14 +319,14 @@ void starwars_state::starwars(machine_config &config)
 	outlatch.q_out_cb<7>().set(FUNC(starwars_state::recall_w)); // NVRAM array recall
 
 	/* video hardware */
-	VECTOR(config, "vector", 0);
+	VECTOR(config, "vector");
 	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_VECTOR));
 	screen.set_refresh_hz(CLOCK_3KHZ / 12 / 6);
 	screen.set_size(400, 300);
 	screen.set_visarea(0, 250, 0, 280);
 	screen.set_screen_update("vector", FUNC(vector_device::screen_update));
 
-	avg_device &avg(AVG_STARWARS(config, "avg", 0));
+	avg_device &avg(AVG_STARWARS(config, "avg"));
 	avg.set_vector("vector");
 	avg.set_memory(m_maincpu, AS_PROGRAM, 0x0000);
 

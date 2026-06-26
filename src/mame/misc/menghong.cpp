@@ -7,6 +7,7 @@
     driver by Angelo Salese, based off original crystal.cpp by ElSemi
 
     TODO:
+    - Move flash memory implementation into machine/intelfsh.cpp
     - HY04 protection (controls tile RNG, 8bpp colors, a few program flow bits)
     - 8bpp colors are washed, data from flash ROMs is XORed with contents
       of NVRAM area 0x1400070b-80f in menghong, might be shared with
@@ -46,7 +47,7 @@ Notes:
                      Video Clock Input Pin 103 - 28.63636MHz
                      Another identical PCB has this chip marked "ADC Amazon-LF EISC" so these are 100% compatible.
            0260F8A - Renesas M30260F8AGP (TQFP44) (M16C/26A based microcontroller with internal 64K + 4K Flash ROM).
-                     Clock Input 8.000MHz.
+                     Clock Input 8.000MHz. (**)
               HY04 - rebadged DIP8 PIC - type unknown (*). PCB marked "SAM1"
                      Some chips are marked "SL01". Chip data is unique to each game but different
                      versions of the same game work ok with swapped HY04 or swapped main program EPROM.
@@ -80,6 +81,7 @@ Notes:
   7 High
   8 VCC
 
+** On some similar PCBs (f.e. wakeng) it's an M30262F8GP (LQFP48) with 12 MHz XTAL
 ****************************************************************************/
 
 #include "emu.h"
@@ -92,6 +94,7 @@ Notes:
 #include "machine/vrender0.h"
 
 #include "emupal.h"
+#include "speaker.h"
 
 #include <algorithm>
 
@@ -108,7 +111,7 @@ public:
 		m_mainbank(*this, "mainbank"),
 		m_maincpu(*this, "maincpu"),
 		m_vr0soc(*this, "vr0soc"),
-//      m_nvram(*this, "nvram"),
+		//m_nvram(*this, "nvram"),
 		m_ds1302(*this, "rtc"),
 		m_eeprom(*this, "eeprom"),
 		m_prot_data(*this, "pic_data"),
@@ -125,8 +128,8 @@ protected:
 
 private:
 	// memory pointers
-	required_shared_ptr<uint32_t> m_workram;
-	required_region_ptr<uint32_t> m_flash;
+	required_shared_ptr<u32> m_workram;
+	required_region_ptr<u32> m_flash;
 	required_memory_bank m_mainbank;
 
 	// devices
@@ -135,53 +138,54 @@ private:
 //  required_device<nvram_device> m_nvram;
 	required_device<ds1302_device> m_ds1302;
 	required_device<eeprom_serial_93cxx_device> m_eeprom;
-	required_region_ptr <uint8_t> m_prot_data;
+	required_region_ptr<u8> m_prot_data;
 
 	// inputs
 	required_ioport_array<5> m_keys;
 
-	uint32_t m_bank;
-	uint32_t m_maxbank;
-	uint32_t m_flashcmd;
+	u32 m_bank = 0;
+	u32 m_maxbank = 0;
+	u32 m_flashcmd = 0xff;
+	u32 m_pio = 0;
+	u8 m_prot = 0;
 
-	void banksw_w(uint32_t data);
-	uint32_t flashcmd_r();
-	void flashcmd_w(uint32_t data);
+	std::unique_ptr<u8 []> m_sharedram;
 
-	uint32_t key_r();
+	void banksw_w(u32 data);
+	u32 flashcmd_r();
+	void flashcmd_w(u32 data);
+
+	u32 key_r();
+
+	// pio
+	u32 pioldat_r();
+	void pioldat_w(offs_t offset, u32 data, u32 mem_mask = ~0);
+	u32 pioedat_r();
+
+	u8 menghong_shared_r(offs_t offset);
+	void menghong_shared_w(offs_t offset, u8 data);
+	u8 crzyddz2_shared_r(offs_t offset);
+	void crzyddz2_shared_w(offs_t offset, u8 data);
 
 	void menghong_mem(address_map &map) ATTR_COLD;
 	void crzyddz2_mem(address_map &map) ATTR_COLD;
-
-	// pio
-	uint32_t pioldat_r();
-	uint32_t m_pio;
-	void pioldat_w(offs_t offset, uint32_t data, uint32_t mem_mask = ~0);
-	uint32_t pioedat_r();
-	uint8_t m_prot;
-
-	uint8_t menghong_shared_r(offs_t offset);
-	void menghong_shared_w(offs_t offset, uint8_t data);
-	uint8_t crzyddz2_shared_r(offs_t offset);
-	void crzyddz2_shared_w(offs_t offset, uint8_t data);
-	std::unique_ptr<uint8_t []> m_sharedram;
 };
 
 
 
-void menghong_state::banksw_w(uint32_t data)
+void menghong_state::banksw_w(u32 data)
 {
 	m_bank = (data >> 1) & 7;
 	m_mainbank->set_entry(m_bank);
 }
 
-uint32_t menghong_state::flashcmd_r()
+u32 menghong_state::flashcmd_r()
 {
 	if ((m_flashcmd & 0xff) == 0xff)
 	{
 		if (m_bank < m_maxbank)
 		{
-			uint32_t *ptr = (uint32_t*)(m_mainbank->base());
+			u32 *ptr = (u32 *)(m_mainbank->base());
 			return ptr[0];
 		}
 		else
@@ -197,7 +201,7 @@ uint32_t menghong_state::flashcmd_r()
 	return 0;
 }
 
-void menghong_state::flashcmd_w(uint32_t data)
+void menghong_state::flashcmd_w(u32 data)
 {
 	m_flashcmd = data;
 }
@@ -207,12 +211,12 @@ void menghong_state::flashcmd_w(uint32_t data)
 // Crazy Dou Di Zhu II
 // To do: HY04 (pic?) protection, 93C46 hookup
 
-uint8_t menghong_state::menghong_shared_r(offs_t offset)
+u8 menghong_state::menghong_shared_r(offs_t offset)
 {
 	return m_sharedram[offset];
 }
 
-void menghong_state::menghong_shared_w(offs_t offset, uint8_t data)
+void menghong_state::menghong_shared_w(offs_t offset, u8 data)
 {
 	m_sharedram[offset] = data;
 
@@ -227,8 +231,8 @@ void menghong_state::menghong_shared_w(offs_t offset, uint8_t data)
 			// we conveniently use an handcrafted ROM here, created by guessing colors from
 			// transparencies and shading.
 			// This will be useful for comparison when the actual PIC data will be extracted.
-			for (int i=0;i<0x100;i++)
-				m_sharedram[i+0x70c] = m_prot_data[i];
+			for (int i = 0; i < 0x100; i++)
+				m_sharedram[i + 0x70c] = m_prot_data[i];
 
 			// MCU also has a part in providing RNG
 			// hold service1 while selecting makes the user select "a set" (location in NVRAM tbd)
@@ -241,19 +245,19 @@ void menghong_state::menghong_shared_w(offs_t offset, uint8_t data)
 	}
 }
 
-uint8_t menghong_state::crzyddz2_shared_r(offs_t offset)
+u8 menghong_state::crzyddz2_shared_r(offs_t offset)
 {
 	return m_sharedram[offset];
 }
 
-void menghong_state::crzyddz2_shared_w(offs_t offset, uint8_t data)
+void menghong_state::crzyddz2_shared_w(offs_t offset, u8 data)
 {
 	m_sharedram[offset] = data;
 
 	// State machine is unconfirmed
 	if (offset == 0x7e3)
 	{
-		switch(data)
+		switch (data)
 		{
 			case 0x00:
 				m_sharedram[0x650] = 0x00; // prints 93c46 error otherwise
@@ -264,8 +268,8 @@ void menghong_state::crzyddz2_shared_w(offs_t offset, uint8_t data)
 				// at PC=0x2011f9a, expecting a value of 0x7ebe otherwise locks up
 				// after Sealy logo. Every single value is added to the routine and left
 				// shifted by 1 (including the two values above)
-				for(int i=0;i<0x3f;i++)
-					m_sharedram[i+0x652] = 0xff;
+				for (int i = 0; i < 0x3f; i++)
+					m_sharedram[i + 0x652] = 0xff;
 				m_sharedram[0x691] = 0x9b;
 				break;
 			// additional locking protection is also applied with RNG feature
@@ -274,25 +278,25 @@ void menghong_state::crzyddz2_shared_w(offs_t offset, uint8_t data)
 	}
 }
 
-uint32_t menghong_state::pioldat_r()
+u32 menghong_state::pioldat_r()
 {
 	return m_pio;
 }
 
-void menghong_state::pioldat_w(offs_t offset, uint32_t data, uint32_t mem_mask)
+void menghong_state::pioldat_w(offs_t offset, u32 data, u32 mem_mask)
 {
 	COMBINE_DATA(&m_pio);
-	//uint32_t RST = data & 0x01000000;
-	//uint32_t CLK = data & 0x02000000;
-	//uint32_t DAT = data & 0x10000000;
+	//const u32 rst = BIT(data, 24);
+	//const u32 clk = BIT(data, 25);
+	//const u32 dat = BIT(data, 28);
 
-//  m_eeprom->cs_write(RST ? 1 : 0);
-//  m_eeprom->di_write(DAT ? 1 : 0);
-//  m_eeprom->clk_write(CLK ? 1 : 0);
+//  m_eeprom->cs_write(rst);
+//  m_eeprom->di_write(dat);
+//  m_eeprom->clk_write(clk);
 
 	if (ACCESSING_BITS_8_15)
 	{
-		int mux = (m_pio >> 8) & 0x1f;
+		const int mux = (m_pio >> 8) & 0x1f;
 		if (mux == 0x1f)
 		{
 			m_prot = ((m_pio >> 8) & 0xc0) ^ 0x40;
@@ -301,19 +305,21 @@ void menghong_state::pioldat_w(offs_t offset, uint32_t data, uint32_t mem_mask)
 	}
 }
 
-uint32_t menghong_state::pioedat_r()
+u32 menghong_state::pioedat_r()
 {
 	return 0;//m_eeprom->do_read();
 }
 
-uint32_t menghong_state::key_r()
+u32 menghong_state::key_r()
 {
-	int mux = (m_pio >> 8) & 0x1f;
+	const int mux = (m_pio >> 8) & 0x1f;
 
-	uint8_t data = 0x3f;
+	u8 data = 0x3f;
 	for (int i = 0; i < m_keys.size(); ++i)
-		if (!BIT(mux,i))
+	{
+		if (!BIT(mux, i))
 			data = m_keys[i]->read();
+	}
 
 /*
 crzyddz2    in      out
@@ -322,8 +328,9 @@ crzyddz2    in      out
             c0      80
 */
 // menghong Sealy logo pal offset is at 0x3ea7400, relevant code is at 2086034
-//  m_prot = (m_pio >> 8) & 0xc0) ^ 0x40;
-	m_prot = (machine().rand() & 0xc0);
+	if (!machine().side_effects_disabled())
+	//  m_prot = (m_pio >> 8) & 0xc0) ^ 0x40;
+		m_prot = (machine().rand() & 0xc0);
 
 	return 0xffffff00 | data | m_prot;
 }
@@ -359,12 +366,12 @@ void menghong_state::crzyddz2_mem(address_map &map)
 
 void menghong_state::machine_start()
 {
-	m_sharedram = make_unique_clear<uint8_t []>(0x10000);
+	m_sharedram = make_unique_clear<u8 []>(0x10000);
 
 	m_maxbank = (m_flash) ? m_flash.bytes() / 0x1000000 : 0;
-	std::unique_ptr<uint8_t[]> dummy_region = std::make_unique<uint8_t[]>(0x1000000);
+	std::unique_ptr<u8[]> dummy_region = std::make_unique<u8[]>(0x1000000);
 	std::fill_n(&dummy_region[0], 0x1000000, 0xff); // 0xff Filled at Unmapped area
-	uint8_t *rom = (m_flash) ? (uint8_t *)&m_flash[0] : dummy_region.get();
+	u8 *rom = (m_flash) ? (u8 *)&m_flash[0] : dummy_region.get();
 	for (int i = 0; i < 8; i++)
 	{
 		if (i < m_maxbank)
@@ -482,7 +489,7 @@ INPUT_PORTS_END
 
 void menghong_state::menghong(machine_config &config)
 {
-	SE3208(config, m_maincpu, 14318180 * 3); // TODO : different between each PCBs
+	SE3208(config, m_maincpu, 14318180 * 3); // TODO : dynamic via PLL
 	m_maincpu->set_addrmap(AS_PROGRAM, &menghong_state::menghong_mem);
 	m_maincpu->iackx_cb().set(m_vr0soc, FUNC(vrender0soc_device::irq_callback));
 
@@ -490,12 +497,17 @@ void menghong_state::menghong(machine_config &config)
 
 //  NVRAM(config, m_nvram, nvram_device::DEFAULT_ALL_0);
 
-	VRENDER0_SOC(config, m_vr0soc, 14318180 * 3);
-	m_vr0soc->set_host_cpu_tag(m_maincpu);
+	VRENDER0_SOC(config, m_vr0soc, 14318180 * 6); // TODO : dynamic via PLL
+	m_vr0soc->set_host_space_tag(m_maincpu, AS_PROGRAM);
+	m_vr0soc->int_callback().set_inputline(m_maincpu, se3208_device::SE3208_INT);
 	m_vr0soc->set_external_vclk(28636360); // Assumed from the only available XTal on PCB
 
 	DS1302(config, m_ds1302, 32.768_kHz_XTAL);
 	EEPROM_93C46_16BIT(config, m_eeprom);
+
+	SPEAKER(config, "speaker", 2).front();
+	m_vr0soc->add_route(0, "speaker", 1.0, 0);
+	m_vr0soc->add_route(1, "speaker", 1.0, 1);
 }
 
 void menghong_state::crzyddz2(machine_config &config)
@@ -613,6 +625,38 @@ ROM_START( sandayi )
 	ROM_REGION( 0x0100, "pic_data", ROMREGION_ERASEFF )
 ROM_END
 
+// 漂亮金花2 (Piàoliang Jīnhuā 2)
+ROM_START( pljh2 ) // this PCB has an Amazon-LF
+	ROM_REGION32_LE( 0x1000000, "flash", ROMREGION_ERASEFF )
+	ROM_LOAD( "igsm2403.u19", 0x000000, 0x400000, CRC(2538f872) SHA1(14f9a48fc77bdea077a9d5974ad2b8c7ff4b87b2) )
+	ROM_LOAD( "igss2402.u18", 0x400000, 0x400000, CRC(a16c85f6) SHA1(4587cc9d3933fa34cb8728451812760cad2c1d36) )
+	ROM_LOAD( "igsm2401.u17", 0x800000, 0x400000, CRC(20ca030b) SHA1(791a27e19566662231c3e197e171e1e1272e7d57) )
+
+	ROM_REGION( 0x0400000, "maincpu", 0 )
+	ROM_LOAD( "igsl2404.u13", 0x000000, 0x0400000, CRC(03164a2b) SHA1(68b7479911f0cafab24bf1d58738fdaf8f939d9c) ) // 1ST AND 2ND HALF IDENTICAL
+
+	ROM_REGION( 0x4280, "pic", 0 )
+	ROM_LOAD("sl-01", 0x000000, 0x4280, NO_DUMP )
+
+	ROM_REGION( 0x0100, "pic_data", ROMREGION_ERASEFF )
+ROM_END
+
+// 挖坑 (Wākēng)
+ROM_START( wakeng )
+	ROM_REGION32_LE( 0x1000000, "flash", ROMREGION_ERASEFF )
+	ROM_LOAD( "rom.u19", 0x000000, 0x400000, CRC(87dd8b60) SHA1(1bd2c2cd644242c0f876f313db6779f3dc465f1d) )
+	ROM_LOAD( "rom.u18", 0x400000, 0x400000, CRC(d5d6b3af) SHA1(a260259c0d86a73bf53291fd5e41b66e96c75b0c) )
+	ROM_LOAD( "rom.u17", 0x800000, 0x400000, CRC(2fe34e5a) SHA1(cd9874292432007b4d47aee7bd6f871d05645719) )
+
+	ROM_REGION( 0x0400000, "maincpu", ROMREGION_ERASEFF )
+	ROM_LOAD( "rom.u13", 0x000000, 0x0200000, CRC(96654161) SHA1(882c8ce446f302ac3de9d38edfc9c2beb9751775) ) // 1xxxxxxxxxxxxxxxxxxxx = 0xFF
+
+	ROM_REGION( 0x4280, "pic", 0 )
+	ROM_LOAD("key-02", 0x000000, 0x4280, NO_DUMP )
+
+	ROM_REGION( 0x0100, "pic_data", ROMREGION_ERASEFF )
+ROM_END
+
 } // anonymous namespace
 
 
@@ -623,3 +667,5 @@ GAME( 2006,  fkddz2,    0,        crzyddz2, crzyddz2, menghong_state, empty_init
 GAME( 2005,  jpddz,     0,        crzyddz2, crzyddz2, menghong_state, empty_init,    ROT0, "Sealy", "Jipin Dou Dizhu (set 1)",  MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // this one boots
 GAME( 2005,  jpddza,    jpddz,    crzyddz2, crzyddz2, menghong_state, empty_init,    ROT0, "Sealy", "Jipin Dou Dizhu (set 2)",  MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION ) // this one doesn't
 GAME( 2005,  sandayi,   0,        crzyddz2, crzyddz2, menghong_state, empty_init,    ROT0, "Sealy", "San Da Yi",                MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION )
+GAME( 200?,  pljh2,     0,        crzyddz2, crzyddz2, menghong_state, empty_init,    ROT0, "Sealy", "Piaoliang Jinhua 2",       MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION )
+GAME( 2006,  wakeng,    0,        crzyddz2, crzyddz2, menghong_state, empty_init,    ROT0, "Sealy", "Wakeng",                   MACHINE_NOT_WORKING | MACHINE_UNEMULATED_PROTECTION )

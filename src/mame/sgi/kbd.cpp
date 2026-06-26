@@ -131,7 +131,7 @@ void sgi_kbd_device::device_add_mconfig(machine_config &config)
 
 	I8031(config, m_mcu, 11.0592_MHz_XTAL);
 	m_mcu->set_addrmap(AS_PROGRAM, &sgi_kbd_device::map_mem);
-	m_mcu->set_addrmap(AS_IO, &sgi_kbd_device::map_pio);
+	m_mcu->set_addrmap(AS_DATA, &sgi_kbd_device::map_pio);
 	m_mcu->port_out_cb<1>().append(FUNC(sgi_kbd_device::scan_matrix)).bit(0);
 	m_mcu->port_out_cb<1>().append(beeper, FUNC(beep_device::set_state)).bit(3);
 	m_mcu->port_out_cb<3>().append(FUNC(sgi_kbd_device::write_rxd)).bit(1);
@@ -161,8 +161,6 @@ void sgi_kbd_device::device_start()
 	save_item(NAME(m_col));
 	save_item(NAME(m_row));
 	save_item(NAME(m_p3));
-
-	m_led.resolve();
 }
 
 void sgi_kbd_device::scan_matrix(int state)

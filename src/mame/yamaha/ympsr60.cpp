@@ -324,7 +324,6 @@ void psr60_state::machine_start()
 {
 	m_bbd_timer = timer_alloc(FUNC(psr60_state::bbd_tick), this);
 
-	m_drvif_out.resolve();
 	m_rom2bank->configure_entries(0, 2, memregion("rom2")->base(), 0x4000);
 	m_rom2bank->set_entry(0);
 	m_acia_irq = 0;
@@ -672,8 +671,7 @@ void psr60_state::psr_common(machine_config &config)
 	m_bbd_mixer->add_route(0, m_postbbd_rc, 1.0);
 
 	MN3204P(config, m_bbd);
-	m_bbd->add_route(0, m_bbd_mixer, 0.5);
-	m_bbd->add_route(1, m_bbd_mixer, 0.5);
+	m_bbd->add_route(0, m_bbd_mixer, 1.0);
 
 	FILTER_BIQUAD(config, m_ic204b);
 	m_ic204b->opamp_sk_lowpass_setup(RES_K(22), RES_K(22), RES_M(999.9), RES_R(0.001), CAP_U(0.0068), CAP_P(82));

@@ -80,7 +80,6 @@ FS 0 to F
 #include "machine/clock.h"
 #include "machine/timer.h"
 #include "video/pwm.h"
-#include "sound/wave.h"
 #include "speaker.h"
 #include "bus/rs232/rs232.h"
 #include "machine/terminal.h"
@@ -484,7 +483,7 @@ void mekd5_state::mekd5(machine_config &config)
 
 	// IRQ is NC. RX and TX clk are wired together. RTS is available.
 	// /DCD and /CTS and wired low.
-	ACIA6850(config, m_acia, 0);
+	ACIA6850(config, m_acia);
 	m_acia->txd_handler().set("rs232", FUNC(rs232_port_device::write_txd));
 
 	MC14411(config, m_brg, XTAL(1'843'200));

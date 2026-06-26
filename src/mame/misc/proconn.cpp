@@ -26,15 +26,14 @@
 
 #include "emu.h"
 
-#include "awpvid.h"
 
 #include "cpu/z80/z80.h"
 #include "machine/meters.h"
-#include "machine/roc10937.h"
 #include "machine/z80ctc.h"
 #include "machine/z80sio.h"
 #include "machine/z80pio.h"
 #include "sound/ay8910.h"
+#include "video/roc10937.h"
 
 #include "speaker.h"
 
@@ -337,7 +336,7 @@ void proconn_state::proconn(machine_config &config)
 	m_ay->port_b_write_callback().set(FUNC(proconn_state::meter_w));
 	m_ay->add_route(ALL_OUTPUTS, "speaker", 0.33, 1);
 
-	METERS(config, m_meters, 0);
+	METERS(config, m_meters);
 	m_meters->set_number(8);
 }
 

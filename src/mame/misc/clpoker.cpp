@@ -164,9 +164,9 @@ static INPUT_PORTS_START( clpoker )
 	PORT_DIPSETTING(    0x00, "3" )
 	PORT_DIPNAME( 0x0c, 0x0c, DEF_STR( Coinage ) ) // $E014
 	PORT_DIPSETTING(    0x0c, DEF_STR( 1C_1C ) )
-	PORT_DIPSETTING(    0x08, "1 Coin/10 Credits" )
-	PORT_DIPSETTING(    0x04, "1 Coin/20 Credits" )
-	PORT_DIPSETTING(    0x00, "1 Coin/50 Credits" )
+	PORT_DIPSETTING(    0x08, DEF_STR( 1C_10C ) )
+	PORT_DIPSETTING(    0x04, DEF_STR( 1C_20C ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( 1C_50C ) )
 	PORT_DIPNAME( 0x30, 0x30, "Key In/Out" ) // $E015
 	PORT_DIPSETTING(    0x30, "50 Credits" )
 	PORT_DIPSETTING(    0x20, "100 Credits" )
@@ -280,7 +280,7 @@ void clpoker_state::clpoker(machine_config &config)
 	screen.screen_vblank().set(FUNC(clpoker_state::vblank_w));
 
 	PALETTE(config, "palette").set_entries(0x100);
-	ramdac_device &ramdac(RAMDAC(config, "ramdac", 0, "palette")); // HM86171
+	ramdac_device &ramdac(RAMDAC(config, "ramdac", "palette")); // HM86171
 	ramdac.set_addrmap(0, &clpoker_state::ramdac_map);
 
 	GFXDECODE(config, m_gfxdecode, "palette", gfx_clpoker);

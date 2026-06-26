@@ -636,7 +636,7 @@ static INPUT_PORTS_START( threeds )
 	PORT_DIPSETTING (     0xc0, DEF_STR( 1C_1C ) )
 	PORT_DIPSETTING (     0x80, DEF_STR( 1C_2C ) )
 	PORT_DIPSETTING (     0x40, DEF_STR( 1C_5C ) )
-	PORT_DIPSETTING (     0x00, "1 Coin/10 Credits" )
+	PORT_DIPSETTING (     0x00, DEF_STR( 1C_10C ) )
 
 	PORT_START("DSWB")
 	PORT_DIPNAME( 0x01,   0x01, DEF_STR( Flip_Screen ) )  PORT_DIPLOCATION("DSWB:1")
@@ -829,7 +829,7 @@ void threeds_state::threeds(machine_config &config)
 	m_maincpu->set_addrmap(AS_IO, &threeds_state::io_map);
 	m_maincpu->set_vblank_int("screen", FUNC(threeds_state::irq0_line_assert));
 
-	NB1413M3(config, m_nb1413m3, 0);
+	NB1413M3(config, m_nb1413m3);
 	m_nb1413m3->set_blitter_rom_tag("blitter");
 
 	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);

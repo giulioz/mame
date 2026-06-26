@@ -5,6 +5,8 @@
 
 #include "raizing.h"
 
+#include "endianness.h"
+
 /*
 
 Name        Board No      Maker         Game name
@@ -239,7 +241,7 @@ void batrider_state::batrider_tx_gfxram_w(offs_t offset, u16 data, u16 mem_mask)
 	if (oldword != data)
 	{
 		COMBINE_DATA(&m_tx_gfxram[offset]);
-		m_gfxdecode->gfx(0)->mark_dirty(offset/16);
+		m_tx_tilemap->gfx(0)->mark_dirty(offset/16);
 	}
 }
 
@@ -286,15 +288,10 @@ void batrider_state::video_start()
 {
 	raizing_base_state::video_start();
 
-	m_screen->register_screen_bitmap(m_custom_priority_bitmap);
-	m_vdp->custom_priority_bitmap = &m_custom_priority_bitmap;
-
 	m_vdp->disable_sprite_buffer(); // disable buffering on this game
 
 	// Create the Text tilemap for this game
-	m_gfxdecode->gfx(0)->set_source(reinterpret_cast<u8 *>(m_tx_gfxram.target()));
-
-	create_tx_tilemap(0x1d4, 0x16b);
+	m_tx_tilemap->gfx(0)->set_source(reinterpret_cast<u8 *>(m_tx_gfxram.target()));
 
 	// Has special banking
 	save_item(NAME(m_gfxrom_bank));
@@ -310,8 +307,8 @@ u16 batrider_state::batrider_z80_busack_r()
 
 void batrider_state::batrider_z80_busreq_w(u8 data)
 {
-	// bit 0x01 sets Z80 BUSRQ, when the 68K wants to read the Z80 ROM code
-	m_audiocpu->set_input_line(Z80_INPUT_LINE_BUSRQ, (data & 0x01) ? ASSERT_LINE : CLEAR_LINE);
+	// bit 0x01 sets Z80 BUSREQ, when the 68K wants to read the Z80 ROM code
+	m_audiocpu->set_input_line(Z80_INPUT_LINE_BUSREQ, (data & 0x01) ? ASSERT_LINE : CLEAR_LINE);
 	machine().scheduler().perfect_quantum(attotime::from_usec(10));
 }
 
@@ -376,8 +373,8 @@ void bbakraid_state::bbakraid_eeprom_w(u8 data)
 
 	m_eepromout->write(data, 0xff);
 
-	// bit 0x10 sets Z80 BUSRQ, when the 68K wants to read the Z80 ROM code
-	m_audiocpu->set_input_line(Z80_INPUT_LINE_BUSRQ, (data & 0x10) ? ASSERT_LINE : CLEAR_LINE);
+	// bit 0x10 sets Z80 BUSREQ, when the 68K wants to read the Z80 ROM code
+	m_audiocpu->set_input_line(Z80_INPUT_LINE_BUSREQ, (data & 0x10) ? ASSERT_LINE : CLEAR_LINE);
 	machine().scheduler().perfect_quantum(attotime::from_usec(10));
 }
 
@@ -620,10 +617,10 @@ INPUT_PORTS_END
 
 void batrider_state::batrider_dma_mem(address_map &map)
 {
-	map(0x0000, 0x1fff).ram().w(FUNC(batrider_state::tx_videoram_w)).share(m_tx_videoram);
+	map(0x0000, 0x1fff).rw(m_tx_tilemap, FUNC(toaplan_txtilemap_device::videoram_r), FUNC(toaplan_txtilemap_device::videoram_w));
 	map(0x2000, 0x2fff).ram().w(m_palette, FUNC(palette_device::write16)).share("palette");
-	map(0x3000, 0x31ff).ram().share(m_tx_lineselect);
-	map(0x3200, 0x33ff).ram().w(FUNC(batrider_state::tx_linescroll_w)).share(m_tx_linescroll);
+	map(0x3000, 0x31ff).rw(m_tx_tilemap, FUNC(toaplan_txtilemap_device::lineselect_r), FUNC(toaplan_txtilemap_device::lineselect_w));
+	map(0x3200, 0x33ff).rw(m_tx_tilemap, FUNC(toaplan_txtilemap_device::linescroll_r), FUNC(toaplan_txtilemap_device::linescroll_w));
 	map(0x3400, 0x7fff).ram();
 	map(0x8000, 0xffff).ram().w(FUNC(batrider_state::batrider_tx_gfxram_w)).share(m_tx_gfxram);
 }
@@ -783,11 +780,11 @@ void batrider_state::batrider(machine_config &config)
 	m_audiocpu->set_addrmap(AS_PROGRAM, &batrider_state::batrider_sound_z80_mem);
 	m_audiocpu->set_addrmap(AS_IO, &batrider_state::batrider_sound_z80_port);
 
-	TOAPLAN_COINCOUNTER(config, m_coincounter, 0);
+	TOAPLAN_COINCOUNTER(config, m_coincounter);
 
 	config.set_maximum_quantum(attotime::from_hz(6000));
 
-	ADDRESS_MAP_BANK(config, m_dma_space, 0);
+	ADDRESS_MAP_BANK(config, m_dma_space);
 	m_dma_space->set_addrmap(0, &batrider_state::batrider_dma_mem);
 	m_dma_space->set_endianness(ENDIANNESS_BIG);
 	m_dma_space->set_data_width(16);
@@ -802,13 +799,15 @@ void batrider_state::batrider(machine_config &config)
 	m_screen->screen_vblank().set(FUNC(batrider_state::screen_vblank));
 	m_screen->set_palette(m_palette);
 
-	GFXDECODE(config, m_gfxdecode, m_palette, gfx_batrider);
 	PALETTE(config, m_palette).set_format(palette_device::xBGR_555, gp9001vdp_device::VDP_PALETTE_LENGTH);
 
 	GP9001_VDP(config, m_vdp, 27_MHz_XTAL);
 	m_vdp->set_palette(m_palette);
 	m_vdp->set_tile_callback(FUNC(batrider_state::batrider_bank_cb));
 	m_vdp->vint_out_cb().set_inputline(m_maincpu, M68K_IRQ_2);
+
+	TOAPLAN_TXTILEMAP(config, m_tx_tilemap, 27_MHz_XTAL, m_palette, gfx_batrider);
+	m_tx_tilemap->set_offset(0x1d4, 0, 0x16b, 0);
 
 	// sound hardware
 	SPEAKER(config, "mono").front_center();
@@ -845,13 +844,13 @@ void bbakraid_state::bbakraid(machine_config &config)
 	attotime snd_irq_period = attotime::from_hz(32_MHz_XTAL / 6 / 12000); // from sound CPU clock? (divider unverified)
 	m_audiocpu->set_periodic_int(FUNC(bbakraid_state::bbakraid_snd_interrupt), snd_irq_period);
 
-	TOAPLAN_COINCOUNTER(config, m_coincounter, 0);
+	TOAPLAN_COINCOUNTER(config, m_coincounter);
 
 	config.set_maximum_quantum(attotime::from_hz(6000));
 
 	EEPROM_93C66_8BIT(config, m_eeprom);
 
-	ADDRESS_MAP_BANK(config, m_dma_space, 0);
+	ADDRESS_MAP_BANK(config, m_dma_space);
 	m_dma_space->set_addrmap(0, &bbakraid_state::batrider_dma_mem);
 	m_dma_space->set_endianness(ENDIANNESS_BIG);
 	m_dma_space->set_data_width(16);
@@ -866,13 +865,15 @@ void bbakraid_state::bbakraid(machine_config &config)
 	m_screen->screen_vblank().set(FUNC(bbakraid_state::screen_vblank));
 	m_screen->set_palette(m_palette);
 
-	GFXDECODE(config, m_gfxdecode, m_palette, gfx_batrider);
 	PALETTE(config, m_palette).set_format(palette_device::xBGR_555, gp9001vdp_device::VDP_PALETTE_LENGTH);
 
 	GP9001_VDP(config, m_vdp, 27_MHz_XTAL);
 	m_vdp->set_palette(m_palette);
 	m_vdp->set_tile_callback(FUNC(bbakraid_state::batrider_bank_cb));
 	m_vdp->vint_out_cb().set_inputline(m_maincpu, M68K_IRQ_1);
+
+	TOAPLAN_TXTILEMAP(config, m_tx_tilemap, 27_MHz_XTAL, m_palette, gfx_batrider);
+	m_tx_tilemap->set_offset(0x1d4, 0, 0x16b, 0);
 
 	// sound hardware
 	SPEAKER(config, "mono").front_center();
@@ -895,14 +896,14 @@ void nprobowl_state::nprobowl(machine_config &config)
 	m_maincpu->set_addrmap(AS_PROGRAM, &nprobowl_state::nprobowl_68k_mem);
 	m_maincpu->reset_cb().set(FUNC(nprobowl_state::reset_audiocpu));
 
-	ADDRESS_MAP_BANK(config, m_dma_space, 0);
+	ADDRESS_MAP_BANK(config, m_dma_space);
 	m_dma_space->set_addrmap(0, &nprobowl_state::batrider_dma_mem);
 	m_dma_space->set_endianness(ENDIANNESS_BIG);
 	m_dma_space->set_data_width(16);
 	m_dma_space->set_addr_width(16);
 	m_dma_space->set_stride(0x8000);
 
-	TOAPLAN_COINCOUNTER(config, m_coincounter, 0);
+	TOAPLAN_COINCOUNTER(config, m_coincounter);
 
 	// video hardware
 	SCREEN(config, m_screen, SCREEN_TYPE_RASTER);
@@ -912,12 +913,14 @@ void nprobowl_state::nprobowl(machine_config &config)
 	m_screen->screen_vblank().set(FUNC(nprobowl_state::screen_vblank));
 	m_screen->set_palette(m_palette);
 
-	GFXDECODE(config, m_gfxdecode, m_palette, gfx_batrider);
 	PALETTE(config, m_palette).set_format(palette_device::xBGR_555, gp9001vdp_device::VDP_PALETTE_LENGTH);
 
 	GP9001_VDP(config, m_vdp, 27_MHz_XTAL);
 	m_vdp->set_palette(m_palette);
 	m_vdp->vint_out_cb().set_inputline(m_maincpu, M68K_IRQ_2);
+
+	TOAPLAN_TXTILEMAP(config, m_tx_tilemap, 27_MHz_XTAL, m_palette, gfx_batrider);
+	m_tx_tilemap->set_offset(0x1d4, 0, 0x16b, 0);
 
 	// sound hardware
 	SPEAKER(config, "mono").front_center();
@@ -1402,6 +1405,7 @@ GAME( 1999, bbakraid,   0,        bbakraid, bbakraid,  bbakraid_state, empty_ini
 GAME( 1999, bbakraidc,  bbakraid, bbakraid, bbakraid,  bbakraid_state, empty_init,    ROT270, "Eighting", "Battle Bakraid - Unlimited Version (China) (Tue Jun 8 1999)", MACHINE_SUPPORTS_SAVE )
 GAME( 1999, bbakraidj,  bbakraid, bbakraid, bbakraid,  bbakraid_state, empty_init,    ROT270, "Eighting", "Battle Bakraid - Unlimited Version (Japan) (Tue Jun 8 1999)", MACHINE_SUPPORTS_SAVE )
 // older revision of the code
+// A Hong Kong version (Tue May 25 1999), presumably based on the older revision of the code (non unlimited), is known to exist. Video: https://www.youtube.com/watch?v=1Fm6kpPTZkM
 GAME( 1999, bbakraidja, bbakraid, bbakraid, bbakraid,  bbakraid_state, empty_init,    ROT270, "Eighting", "Battle Bakraid (Japan) (Wed Apr 7 1999)", MACHINE_SUPPORTS_SAVE )
 
 // dedicated PCB
