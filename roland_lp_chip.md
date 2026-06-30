@@ -37,7 +37,7 @@ There are 32 voices. Each voice holds:
 | `loop` | 16-bit | Sample loop address, high word (address bits [17:2]). |
 | `volume_cur` | 26-bit | Current envelope level (internal linear scale). |
 | `volume_dest` | 8-bit | Envelope destination level (index into `env_limit_table`). |
-| `volume_incr` | 8-bit | Envelope rate. Bit 7: 0 = attack (rising), 1 = decay (falling). Lower 7 bits index `env_incr_table`. |
+| `volume_incr` | 8-bit | Envelope rate code indexing `env_incr_table`; direction follows the current and target levels. D-70 firmware uses `0xff` as an immediate key-on preset. |
 | `play_dir` | int8 | Current loop direction state (used by ping-pong logic). |
 | `enable` | bool | Voice active flag. |
 | `irq` | bool | Interrupt pending (envelope still moving). |
@@ -155,22 +155,81 @@ Configured via two flag bits in `bank_loopmode`:
 | 1 | 0 | Ping-pong: alternate direction between `loop` and `end` |
 | 1 | 1 | Ping-pong reversed (start direction backwards) |
 
-The `play_dir` / `altLoopState` field tracks the current direction during ping-pong playback.
+The `play_dir` field tracks the current direction during ping-pong playback.
 
-**Address comparison** at each step: the integer address is compared against `loop` or `end` (depending on current direction). On a match, the address wraps/bounces accordingly.
+At an alternate-loop endpoint the address is held for the direction transition,
+matching the gate-level-derived Roland GP-family address generator.  The stored
+deltas retain their encoded sign on the return leg; negating them or immediately
+skipping to the adjacent address changes both the loop waveform and its perceived
+pitch. Forward loops restore the accumulator state captured on the first pass
+through `loop` before decoding that point again.
 
 ---
 
-## DPCM Accumulator
+## DPCM accumulator
 
-The decoded sample bytes are **deltas**, not absolute PCM values. Each voice maintains a running accumulator `tempReference` (18-bit signed):
+The decoded sample bytes are **deltas**, not absolute PCM values. Each voice
+maintains a signed 18-bit accumulator. Many musical loops satisfy:
 
 ```
-for each whole sample crossed (sub_phase_of times):
-    tempReference = clamp(tempReference + decode_sample(rom_byte), -262144, +262143)
+sum(decode(loop + 1) ... decode(end)) == 0
 ```
 
-The final `tempReference` is the raw audio value before interpolation and volume.
+The loop byte establishes the predictor anchor and is not part of that
+repeating sum. It is consumed on the initial pass, then the resulting reference
+is restored whenever the address generator revisits the loop point. Alternate
+loops retain each stored delta's encoded sign while changing direction.
+
+The bundled offline decompression WAV follows a smoother exponential curve and
+an apparent 0.97 predictor leak, but this is converter behavior rather than
+evidence of MB87419 silicon behavior. It is therefore not used by the core.
+
+### D-70 Differential Loop Modulation
+
+DLM deliberately programs a very short loop whose decoded repeating delta sum
+is not zero and starts the voice directly at its loop point. The byte at
+`loop` establishes the predictor anchor on the initial pass; repetitions resume
+at `loop + 1`, just as ordinary PCM loops do. For a forward loop the remaining
+decoded deltas accumulate in a wrapping signed 12-bit provisional lane. Thus
+the wrap rate, not the short-loop carrier, is the musical fundamental:
+
+```
+repeat_length = end - loop
+repeat_sum = sum(decode(loop + 1) ... decode(end))
+frequency = 32000 * step / 0x4000 * abs(repeat_sum) / (repeat_length * 4096)
+```
+
+Factory `DLMoogBs 1` demonstrates this directly: its four-byte repeating sum is
+-113, so its note-36 steps `0x04b8/0x04b9` and `0x096d/0x097e` produce
+approximately 16.27/16.29 Hz and 32.50/32.73 Hz. Replaying the anchor byte
+changes the sum to -144 over five bytes and makes the patch 25--35 cents sharp.
+`Schizoid!` DLM 1 has repeating sum -78 and step `0x0dae`, producing 32.56 Hz below
+the C2 acoustic-piano partial. Saturating the ordinary 18-bit PCM predictor or
+adding an invented phase-rate correction instead produces unrelated carriers.
+
+Alternate DLM uses its full eight-bit encoded loop sum to advance the expanded
+baseline over two complete forward-and-return traversals. The returned loop
+point toggles the half-cycle phase; the baseline advances on every second
+return. Updating at each return doubles the pitch, while failing to update lets
+the predictor accumulate DC and clip. In `Schizoid!`, DLM 2's encoded sum is 87
+and step `0x21c0`, yielding approximately 16.6 Hz.
+
+The emulator selects this path when a voice begins exactly at a loop no longer
+than 512 bytes and `loop+1..end` has a non-zero linear delta sum. Ordinary PCM
+loops use the wide predictor and saved loop anchor described above.
+
+Factory performance `I:55 Schizoid!` must be selected with the Bank 5 and
+Number 5 panel buttons. `F5` is a soft key, not the number button. The earlier
+regression used `F5` and actually captured `Sax Octave`: its three LP contexts
+were `Sax 2`, `Sax 3`, and `TrumpBone3`. Consequently, the old files labelled
+`DLM 1`, `DLM 2`, and `A.Piano f1` and the inferred 2:1 same-wave relationship
+were invalid.
+
+The correctly selected `Schizoid!` performance allocates `DLM 1`, `DLM 2`, and
+`A.Piano f1`. For MIDI note 36 at velocity 110 their LP modes are respectively
+`0x0c`, `0x9c`, and `0x00`; the DLM voices use distinct short-loop descriptors,
+while the piano uses CM-32P sample-table entry 19
+(`f5 bf 00 e7 7f bc 3c 40 32 48`, the high-velocity `A.PIANO 4` C2 zone).
 
 ---
 
@@ -199,8 +258,14 @@ Each voice has an independent volume envelope with a single segment: move from `
 
 - `volume_dest` → looked up in `env_limit_table[256]` to produce a 26-bit target level.
 - `volume_incr` → looked up in `env_incr_table[256]` to produce a per-sample increment.
-  Bit 7 of `volume_incr` selects direction: 0 = increasing (attack), 1 = decreasing (decay).
-- Each sample, if `volume_cur` has not yet reached `volume_dest`, it is moved by the increment and clamped on overshoot.
+- Direction is determined by comparing `volume_cur` with the decoded target:
+  the same rate code can move upward or downward. Treating bit 7 as a direction
+  flag prevents the D-70's `0xff/0xff` key-on program from ever leaving zero.
+- D-70 traces establish two useful special cases: `0xff` loads the destination
+  immediately without a completion callback, while `0x00` is the zero-rate
+  hold used after the initial key-on level has been established.
+- For an ordinary nonzero segment, each sample moves toward the destination
+  and clamps on overshoot.
 - The envelope rate ranges from extremely slow (~128 seconds) to nearly instant (<1 ms).
 
 ### Volume Scaling
@@ -215,24 +280,38 @@ output_sample = (pcm_value * (volume_cur >> 10)) >> 12
 
 ## Interrupts
 
-The chip asserts its interrupt line (`/INT`) while **any voice** has an envelope still moving (i.e., `volume_cur != volume_dest`). The register at read offset `0x00` reports which voice last triggered the interrupt. The host CPU polls this to react to envelope completions (e.g. to silence a voice or start the next segment).
+The current model asserts the callback when an ordinary envelope segment
+reaches its destination. Read offset `0x00` reports and acknowledges the
+completed voice; simultaneous completions are queued so none are lost. On the
+D-70 this logical callback drives the active-low `EINT` signal sampled at CPU
+port P0.7. The precise electrical pulse/level behavior and hardware queue
+depth are not yet proven, so this should be regarded as firmware-compatible
+rather than bit-accurate interrupt timing.
 
 ---
 
 ## Output
 
-The U-220 schematic shows one digital `DA` connection from the MB87420 to the
-RCC effect IC. This is not an already-summed mono signal: it is a serial,
-time-division stream whose voice slots remain distinct. The RCC program assigns
-those slots to MIX L/R and DIRECT 1/2 L/R, applies panning/effects, and drives
-the shared DAC and analogue output multiplexer.
+The U-220 schematic shows a wide parallel digital connection from the MB87420
+to the TC23SC140AF-007 effect IC.  It is not an already-summed mono or stereo
+signal: the samples are time-multiplexed and their voice slots remain distinct.
+The effect program assigns those slots to MIX L/R and DIRECT 1/2 L/R, applies
+panning/effects, and drives the shared DAC and analogue output multiplexer.
 
 MAME therefore exposes the LP's 32 slots as separate sound-stream outputs. The
-U-220 driver feeds them through a temporary dry RCC mixer. Its per-voice L/R
-coefficient locations and `0x40` unity scale were identified with Sound Tests
-(1) and (2), so firmware pan and level changes already produce stereo output.
-The temporary mixer does not execute the RCC program: effects are bypassed and
-MIX/DIRECT output assignments are folded into the same stereo pair.
+U-220 feeds them through a shared dry RCC model. Its per-voice L/R coefficient
+locations and `0x40` unity scale were identified with Sound Tests (1) and (2),
+so firmware pan and level changes produce stereo output. The model preserves
+the RCC host program/state memories but does not execute its effect program:
+effects are bypassed and MIX/DIRECT assignments are folded into one stereo
+pair.
+
+The D-70 feeds the slots through corresponding contexts in its provisional TVF
+state-variable filter/VCA model, then into the same RCC device. Its 30 musical
+contexts are `1-23` and `25-31`; the circular RCC phase maps context `N` to
+dry-program voice `(N + 4) & 31`. The downstream dry coefficients supply
+firmware level and pan instead of a forced centered pair; RCC chorus, reverb,
+delay, and external DRAM remain unimplemented.
 
 ---
 

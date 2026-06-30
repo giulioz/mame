@@ -125,8 +125,8 @@ const char *const upd78k3_disassembler::s_bcond[8] =
 	"BC",
 	"BNV",
 	"BV",
-	"BN",
-	"BP"
+	"BP",
+	"BN"
 };
 
 const char *const upd78k3_disassembler::s_bcond_07f8[6] =
@@ -433,15 +433,16 @@ offs_t upd78k3_disassembler::dasm_09xx(std::ostream &stream, u8 op2, offs_t pc, 
 {
 	if ((op2 & 0xe8) == 0x80)
 	{
+		unsigned const rp = ((op2 & 0x06) >> 1) | ((op2 & 0x01) << 2);
 		util::stream_format(stream, "%-8s", "MOVW");
 		if (BIT(op2, 4))
 		{
 			format_abs16(stream, opcodes.r16(pc + 2));
-			util::stream_format(stream, ",%s", (op2 & 0x06) >> 1 | (op2 & 0x01) << 2);
+			util::stream_format(stream, ",%s", s_rp_names[rp]);
 		}
 		else
 		{
-			util::stream_format(stream, "%s,", (op2 & 0x06) >> 1 | (op2 & 0x01) << 2);
+			util::stream_format(stream, "%s,", s_rp_names[rp]);
 			format_abs16(stream, opcodes.r16(pc + 2));
 		}
 		return 4 | SUPPORTED;

@@ -185,6 +185,8 @@ class OpcodeList:
         else:
             print("\tcase 0x200: fetch_full(); break;", file=f)
         print("\tcase 0x201: fetch_noirq_full(); break;", file=f)
+        if self.is_196:
+            print("\tdefault: unimplemented_opcode(); break;", file=f)
         print("\t}", file=f)
         print("}", file=f)
 
@@ -215,4 +217,3 @@ def main(argv):
 # ======================================================================
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
-

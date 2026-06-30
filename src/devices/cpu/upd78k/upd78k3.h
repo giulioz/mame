@@ -65,9 +65,26 @@ protected:
 	virtual void state_string_export(const device_state_entry &entry, std::string &str) const override;
 
 	virtual void state_add_psw();
+	virtual void write_protected_sfr(u8 address, u8 data);
+	virtual u8 device_sfr_r(u8 address);
+	virtual void device_sfr_w(u8 address, u8 data);
 	virtual void execute_peripherals(int cycles) { }
+	virtual int pending_nonmaskable_interrupt() const { return -1; }
+	virtual bool internal_nmi_precedes_external() const { return false; }
 	virtual int pending_internal_interrupt() const { return -1; }
+	virtual bool execute_internal_service(int vector) { return false; }
 	virtual void acknowledge_internal_interrupt(int vector) { }
+	virtual bool external_interrupt_masked(int line) const { return false; }
+	virtual int interrupt_priority(int vector) const { return vector; }
+	virtual int interrupt_default_order(int vector) const { return vector; }
+	virtual bool interrupt_eligible(int vector) const { return true; }
+	virtual bool interrupt_context_switch(int vector) const { return false; }
+	virtual void begin_interrupt(int vector) { }
+	virtual void end_interrupt() { }
+	bool interrupt_pending(int line) const { return BIT(m_irq_state, line); }
+	void clear_interrupt_pending(int line) { m_irq_state &= ~(1U << line); }
+	bool suppress_interrupt_end() const { return m_ccw & 0x01; }
+	bool perform_macro_service(u8 control);
 
 private:
 	// internal memory map
@@ -155,6 +172,9 @@ public:
 
 	template <unsigned N> auto port_in_cb() { return m_port_in_cb[N].bind(); }
 	template <unsigned N> auto port_out_cb() { return m_port_out_cb[N].bind(); }
+	template <unsigned N> auto analog_in_cb() { return m_analog_in_cb[N].bind(); }
+	auto serial_tx_cb() { return m_serial_tx_cb.bind(); }
+	void serial_rx(u8 data);
 
 protected:
 	upd78312_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock, address_map_constructor map);
@@ -162,6 +182,7 @@ protected:
 	// device-level overrides
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
+	virtual void execute_set_input(int inputnum, int state) override;
 
 	// device_disasm_interface overrides
 	virtual std::unique_ptr<util::disasm_interface> create_disassembler() override;
@@ -171,9 +192,22 @@ protected:
 
 	// upd78k3_device overrides
 	virtual void state_add_psw() override;
+	virtual void write_protected_sfr(u8 address, u8 data) override;
+	virtual u8 device_sfr_r(u8 address) override;
+	virtual void device_sfr_w(u8 address, u8 data) override;
 	virtual void execute_peripherals(int cycles) override;
+	virtual int pending_nonmaskable_interrupt() const override;
+	virtual bool internal_nmi_precedes_external() const override;
 	virtual int pending_internal_interrupt() const override;
+	virtual bool execute_internal_service(int vector) override;
 	virtual void acknowledge_internal_interrupt(int vector) override;
+	virtual bool external_interrupt_masked(int line) const override;
+	virtual int interrupt_priority(int vector) const override;
+	virtual int interrupt_default_order(int vector) const override;
+	virtual bool interrupt_eligible(int vector) const override;
+	virtual bool interrupt_context_switch(int vector) const override;
+	virtual void begin_interrupt(int vector) override;
+	virtual void end_interrupt() override;
 
 private:
 	// type-specific internal memory maps
@@ -186,17 +220,87 @@ private:
 	void update_port_output(unsigned port);
 	u8 timer0_control_r();
 	void timer0_control_w(u8 data);
+	u8 timer1_control_r();
+	void timer1_control_w(u8 data);
+	u16 timer0_count_r(offs_t offset);
+	void timer0_count_w(offs_t offset, u16 data, u16 mem_mask = ~0);
+	u16 timer1_count_r(offs_t offset);
+	void timer1_count_w(offs_t offset, u16 data, u16 mem_mask = ~0);
+	u16 timer0_modulo_r(offs_t offset);
+	void timer0_modulo_w(offs_t offset, u16 data, u16 mem_mask = ~0);
 	u8 timer0_interrupt_r();
 	void timer0_interrupt_w(u8 data);
+	u8 timer1_interrupt_r();
+	void timer1_interrupt_w(u8 data);
+	u8 in_service_priority_r();
+	u8 adc_mode_r();
+	void adc_mode_w(u8 data);
+	u8 adc_result_r();
+	u8 serial_mode_r();
+	void serial_mode_w(u8 data);
+	u8 serial_control_r();
+	void serial_control_w(u8 data);
+	u8 serial_baud_r();
+	void serial_baud_w(u8 data);
+	u8 serial_rx_buffer_r();
+	void serial_tx_buffer_w(u8 data);
+	u8 serial_rx_interrupt_r();
+	void serial_rx_interrupt_w(u8 data);
+	u8 serial_tx_interrupt_r();
+	void serial_tx_interrupt_w(u8 data);
+	u8 external_interrupt_r(offs_t offset);
+	void external_interrupt_w(offs_t offset, u8 data);
+	u8 external_macro_r(offs_t offset);
+	void external_macro_w(offs_t offset, u8 data);
+	void start_serial_tx();
+	TIMER_CALLBACK_MEMBER(serial_tx_tick);
+	u8 misc_sfr_read(u8 address) const;
+	void misc_sfr_write(u8 address, u8 data);
+	template <u8 Base> u8 misc_sfr_r(offs_t offset) { return misc_sfr_read(Base + offset); }
+	template <u8 Base> void misc_sfr_w(offs_t offset, u8 data) { misc_sfr_write(Base + offset, data); }
 
 	devcb_read8::array<6> m_port_in_cb;
 	devcb_write8::array<6> m_port_out_cb;
+	devcb_read8::array<4> m_analog_in_cb;
+	devcb_write_line m_serial_tx_cb;
 	u8 m_port_latch[6];
 	u8 m_port_mode[6];
 	u8 m_timer0_control;
+	u8 m_timer1_control;
 	u8 m_timer0_interrupt;
-	s32 m_timer0_countdown;
+	u8 m_timer1_interrupt;
+	u16 m_timer0_count;
+	u16 m_timer1_count;
+	s32 m_timer0_prescaler;
+	s32 m_timer1_prescaler;
+	s32 m_timer0_modulo_prescaler;
+	s32 m_count_prescaler[2];
 	bool m_timer0_pending;
+	bool m_timer1_pending;
+	u8 m_adc_mode;
+	u8 m_adc_result;
+	u8 m_adc_channel;
+	s32 m_adc_cycles;
+	bool m_adc_triggered;
+	u32 m_time_base_counter;
+	u32 m_watchdog_cycles;
+	bool m_watchdog_pending;
+	u8 m_serial_mode;
+	u8 m_serial_control;
+	u8 m_serial_baud;
+	u8 m_serial_rx_buffer;
+	u8 m_serial_tx_buffer;
+	u8 m_serial_rx_interrupt;
+	u8 m_serial_tx_interrupt;
+	bool m_serial_rx_pending;
+	bool m_serial_tx_pending;
+	bool m_serial_tx_buffer_full;
+	bool m_serial_tx_busy;
+	u16 m_serial_tx_shift;
+	u8 m_serial_tx_bits;
+	emu_timer *m_serial_tx_timer;
+	u8 m_external_interrupt[3];
+	u8 m_misc_sfr[0x100];
 };
 
 // ======================> upd78310_device

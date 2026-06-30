@@ -41,6 +41,13 @@
 !/*.md
 !/*.bdf
 !/LICENSE
+
+# Keep local JV-1080 ROMs/captures ignored, but track reproducible reverse-
+# engineering scripts and documentation.
+!/jv1080/
+/jv1080/*
+!/jv1080/re/
+!/jv1080/re/**
 /.idea
 .vscode
 docs/build

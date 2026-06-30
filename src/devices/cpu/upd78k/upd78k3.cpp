@@ -173,7 +173,7 @@ u8 upd78k3_device::read_sfr(u8 address)
 		return m_psw;
 	if (address == 0xff)
 		return m_psw >> 8;
-	return m_sfr_space.read_byte(address);
+	return device_sfr_r(address);
 }
 
 void upd78k3_device::write_sfr(u8 address, u8 data)
@@ -185,7 +185,22 @@ void upd78k3_device::write_sfr(u8 address, u8 data)
 	else if (address == 0xff)
 		m_psw = (m_psw & 0x00ff) | u16(data & 0x72) << 8;
 	else
-		m_sfr_space.write_byte(address, data);
+		device_sfr_w(address, data);
+}
+
+u8 upd78k3_device::device_sfr_r(u8 address)
+{
+	return m_sfr_space.read_byte(address);
+}
+
+void upd78k3_device::device_sfr_w(u8 address, u8 data)
+{
+	m_sfr_space.write_byte(address, data);
+}
+
+void upd78k3_device::write_protected_sfr(u8 address, u8 data)
+{
+	m_sfr_space.write_byte(address, data);
 }
 
 u16 upd78k3_device::read_sfrp(u8 address)
@@ -565,7 +580,7 @@ void upd78k3_device::execute_05(u8 op2)
 		{
 			m_psw = (m_psw & ~(PSW_RBS | PSW_RSS)) | u16(op2 & 7) << 12;
 			if (BIT(op2, 4)) m_psw |= PSW_RSS;
-			m_icount -= 3;
+			m_icount -= 4;
 		}
 		else
 		{
@@ -755,7 +770,7 @@ void upd78k3_device::execute_09(u8 op2)
 		u8 const negative = fetch();
 		u8 const positive = fetch();
 		if (u8(~negative) == positive)
-			write_sfr(op2, positive);
+			write_protected_sfr(op2, positive);
 		m_icount -= 6;
 	}
 	else if ((op2 & 0xe8) == 0x80)
@@ -763,7 +778,7 @@ void upd78k3_device::execute_09(u8 op2)
 		unsigned const index = ((op2 & 6) >> 1) | ((op2 & 1) << 2);
 		u16 const address = fetch_word();
 		if (BIT(op2, 4)) write_word(address, get_rp(index)); else set_rp(index, read_word(address));
-		m_icount -= BIT(op2, 4) ? 4 : 10;
+		m_icount -= BIT(op2, 4) ? 8 : 10;
 	}
 	else if ((op2 & 0xfe) == 0xf0)
 	{
@@ -945,19 +960,32 @@ void upd78k3_device::execute_one()
 		case 0x04:
 		{
 			u8 a = get_r(a_index());
-			bool carry = BIT(m_psw, 0);
+			bool const input_carry = BIT(m_psw, 0);
+			bool const input_auxiliary = BIT(m_psw, 4);
 			bool const subtract = BIT(m_psw, 1);
+			u8 adjustment = 0;
+			bool carry = input_carry;
+			bool auxiliary;
 			if (!subtract)
 			{
-				u8 adjust = ((a & 0x0f) > 9 || BIT(m_psw, 4)) ? 0x06 : 0;
-				if (a > 0x99 || carry) { adjust |= 0x60; carry = true; }
-				a += adjust;
+				bool const low_adjust = (a & 0x0f) > 9 || input_auxiliary;
+				bool const high_adjust = input_carry || (a >> 4) > 9
+					|| (!input_auxiliary && (a & 0x0f) > 9 && (a >> 4) == 9);
+				adjustment = (low_adjust ? 0x06 : 0) | (high_adjust ? 0x60 : 0);
+				auxiliary = (a & 0x0f) + (adjustment & 0x0f) > 0x0f;
+				carry = high_adjust;
+				a += adjustment;
 			}
 			else
-				a -= (BIT(m_psw, 4) ? 0x06 : 0) | (carry ? 0x60 : 0);
+			{
+				adjustment = (input_auxiliary ? 0x06 : 0) | (input_carry ? 0x60 : 0);
+				auxiliary = (a & 0x0f) < (adjustment & 0x0f);
+				a -= adjustment;
+			}
 			set_r(a_index(), a);
 			set_logic_flags(a);
 			if (subtract) m_psw |= PSW_SUB;
+			if (auxiliary) m_psw |= PSW_AC; else m_psw &= ~PSW_AC;
 			if (carry) m_psw |= PSW_CY; else m_psw &= ~PSW_CY;
 			m_icount -= 3;
 			break;
@@ -1144,6 +1172,7 @@ void upd78k3_device::execute_one()
 			u16 const psw = get_rp(3);
 			set_rp(2, replacement);
 			m_psw = psw & 0x72ff;
+			end_interrupt();
 			m_ccw &= ~0x01;
 			m_pc = destination;
 			m_icount -= 6;
@@ -1216,6 +1245,7 @@ void upd78k3_device::execute_one()
 			u8 const post = fetch();
 			unsigned const count = (post >> 3) & 7;
 			bool const word = post >= 0xc0;
+			bool const shift = (post >> 6) >= 2;
 			unsigned const index = word ? ((post & 6) >> 1) | ((post & 1) << 2) : post & 7;
 			u16 data = word ? get_rp(index) : get_r(index);
 			unsigned const width = word ? 16 : 8;
@@ -1232,18 +1262,28 @@ void upd78k3_device::execute_one()
 			if (word)
 			{
 				set_rp(index, data);
-				if (count)
-				{
-					m_psw &= ~(PSW_S | PSW_Z | PSW_PV | PSW_SUB);
-					if (BIT(data, 15)) m_psw |= PSW_S;
-					if (!data) m_psw |= PSW_Z;
-					if (!(std::popcount(u8(data)) & 1)) m_psw |= PSW_PV;
-				}
+				// SHRW/SHLW update S and Z from the 16-bit result, while
+				// parity is always calculated from its low-order byte.
+				m_psw &= ~(PSW_S | PSW_Z | PSW_AC | PSW_PV | PSW_SUB);
+				if (BIT(data, 15)) m_psw |= PSW_S;
+				if (!data) m_psw |= PSW_Z;
+				if (!(std::popcount(u8(data)) & 1)) m_psw |= PSW_PV;
 			}
 			else
 			{
 				set_r(index, data);
-				if (count) set_logic_flags(data);
+				if (shift)
+				{
+					set_logic_flags(data);
+					m_psw &= ~PSW_AC;
+				}
+				else
+				{
+					// ROR/ROL/RORC/ROLC preserve S, Z and AC.  Only P/V
+					// (as parity), SUB and CY are affected (manual 10-147/148).
+					m_psw &= ~(PSW_PV | PSW_SUB);
+					if (!(std::popcount(u8(data)) & 1)) m_psw |= PSW_PV;
+				}
 			}
 			m_icount -= 4 + 3 * count;
 		}
@@ -1316,7 +1356,7 @@ void upd78k3_device::execute_one()
 		if ((op & 6) == 6)
 		{
 			if (op == 0x56) { m_pc = pop_word(); m_icount -= 8; }
-			else if (op == 0x57) { m_pc = pop_word(); m_psw = pop_word() & 0x72ff; m_ccw &= ~0x01; m_icount -= 14; }
+			else if (op == 0x57) { m_pc = pop_word(); m_psw = pop_word() & 0x72ff; end_interrupt(); m_ccw &= ~0x01; m_icount -= 14; }
 			else if (op == 0x5e)
 			{
 				push_word(m_psw);
@@ -1332,7 +1372,7 @@ void upd78k3_device::execute_one()
 		{
 			unsigned const index = BIT(op, 0) ? 7 : 6;
 			u16 const address = get_rp(index);
-			if (BIT(op, 3)) write_byte(address, get_r(a_index())); else set_r(a_index(), read_byte(address));
+			if (BIT(op, 3)) set_r(a_index(), read_byte(address)); else write_byte(address, get_r(a_index()));
 			if (!BIT(op, 2)) set_rp(index, address + (BIT(op, 1) ? -1 : 1));
 			m_icount -= 5;
 		}
@@ -1384,8 +1424,8 @@ void upd78k3_device::execute_one()
 		case 3: branch = BIT(m_psw, 0); break;
 		case 4: branch = !BIT(m_psw, 2); break;
 		case 5: branch = BIT(m_psw, 2); break;
-		case 6: branch = BIT(m_psw, 7); break;
-		case 7: branch = !BIT(m_psw, 7); break;
+		case 6: branch = !BIT(m_psw, 7); break;
+		case 7: branch = BIT(m_psw, 7); break;
 		}
 		if (branch) m_pc += displacement;
 		m_icount -= branch ? 7 : 3;
@@ -1523,7 +1563,7 @@ void upd78k3_device::device_start()
 	state_add(STATE_GENPCBASE, "GENPCBASE", m_ppc).noshow();
 	state_add_psw();
 	state_add<u8>(UPD78K3_RBS, "RBS",
-		[this]() { return (m_psw & 7000) >> 12; },
+		[this]() { return (m_psw & 0x7000) >> 12; },
 		[this](u8 data) { m_psw = (m_psw & 0x8fff) | u16(data) << 12; }
 	).mask(7).noshow();
 	state_add(UPD78K3_SP, "SP", m_sp);
@@ -1596,17 +1636,14 @@ void upd78k3_device::execute_run()
 {
 	while (m_icount > 0)
 	{
+		int const previous_icount = m_icount;
 		if (take_interrupt())
+		{
+			execute_peripherals(previous_icount - m_icount);
 			continue;
+		}
 		m_ppc = m_pc;
 		debugger_instruction_hook(m_pc);
-		if (m_pc == 0x2411 || m_pc == 0x5b07 || m_pc == 0x393d || m_pc == 0x39ec)
-		{
-			static int firmware_trace_count;
-			if (firmware_trace_count++ < 40)
-				logerror("firmware reached %04X\n", m_pc);
-		}
-		int const previous_icount = m_icount;
 		execute_one();
 		execute_peripherals(previous_icount - m_icount);
 	}
@@ -1627,36 +1664,125 @@ bool upd78k3_device::take_interrupt()
 {
 	int line = -1;
 	int vector = -1;
-	if (BIT(m_irq_state, NMI_LINE))
+	int const internal_nmi = pending_nonmaskable_interrupt();
+	if (BIT(m_irq_state, NMI_LINE) && (internal_nmi < 0 || !internal_nmi_precedes_external()))
 		line = NMI_LINE;
-	else if ((m_psw & PSW_IE) && (m_irq_state & 0x0e))
-		line = std::countr_zero(unsigned(m_irq_state & 0x0e));
+	else if (internal_nmi >= 0)
+		vector = internal_nmi;
 	else if (m_psw & PSW_IE)
-		vector = pending_internal_interrupt();
+	{
+		int priority = 0x7fffffff;
+		int default_order = 0x7fffffff;
+		for (int candidate = INT0_LINE; candidate <= INT2_LINE; candidate++)
+		{
+			int const candidate_vector = 2 + candidate * 2;
+			int const candidate_priority = interrupt_priority(candidate_vector);
+			int const candidate_order = interrupt_default_order(candidate_vector);
+			if (BIT(m_irq_state, candidate) && !external_interrupt_masked(candidate)
+				&& interrupt_eligible(candidate_vector)
+				&& (candidate_priority < priority || (candidate_priority == priority && candidate_order < default_order)))
+			{
+				line = candidate;
+				vector = candidate_vector;
+				priority = candidate_priority;
+				default_order = candidate_order;
+			}
+		}
+		int const internal_vector = pending_internal_interrupt();
+		if (internal_vector >= 0 && interrupt_eligible(internal_vector))
+		{
+			int const internal_priority = interrupt_priority(internal_vector);
+			int const internal_order = interrupt_default_order(internal_vector);
+			if (internal_priority < priority || (internal_priority == priority && internal_order < default_order))
+			{
+				line = -1;
+				vector = internal_vector;
+			}
+		}
+	}
 	if (line < 0 && vector < 0)
 		return false;
+	if (line < 0 && execute_internal_service(vector))
+		return true;
 
 	if (line >= 0)
 	{
-		if (line == NMI_LINE)
-			m_irq_state &= ~(1U << NMI_LINE);
+		m_irq_state &= ~(1U << line);
 		standard_irq_callback(line, m_pc);
-		vector = 2 + line * 2;
+		if (vector < 0)
+			vector = 2 + line * 2;
 	}
 	else
 	{
-		static int internal_irq_trace_count;
-		if (internal_irq_trace_count++ < 20)
-			logerror("internal interrupt %02X at %04X\n", vector, m_pc);
 		acknowledge_internal_interrupt(vector);
+	}
+	begin_interrupt(vector);
+	if (interrupt_context_switch(vector))
+	{
+		u16 const old_psw = m_psw;
+		u16 const old_pc = m_pc;
+		m_psw = (m_psw & ~PSW_RBS) | u16(interrupt_priority(vector)) << 12;
+		u16 const destination = get_rp(2);
+		set_rp(2, old_pc);
+		set_rp(3, old_psw);
+		m_psw &= ~(PSW_RSS | PSW_IE);
+		m_pc = destination;
+		m_icount -= 12;
+		return true;
 	}
 	push_word(m_psw);
 	push_word(m_pc);
 	m_psw &= ~PSW_IE;
 	u16 const table = BIT(m_ccw, 1) ? 0x8000 : 0;
 	m_pc = read_word(table | vector);
-	m_icount -= 12;
+	// Vectored interrupt automatic save takes 16 states when the stack and
+	// vector table are in internal memory (uPD78312 manual, table 5-1).
+	m_icount -= 16;
 	return true;
+}
+
+bool upd78k3_device::perform_macro_service(u8 control)
+{
+	u8 const mode = control >> 5;
+	if (mode != 0 && mode != 1 && mode != 4 && mode != 5)
+	{
+		logerror("%s: invalid macro service mode %u at %04X\n", machine().describe_context(), mode, m_pc);
+		m_icount -= 3;
+		return true;
+	}
+
+	u8 const channel = control & 0x07;
+	u16 const descriptor = 0xfe00 | (channel < 4 ? 0xf0 + channel * 4 : 0xe0 + (channel - 4) * 4);
+	u16 pointer = read_word(descriptor);
+	u8 count = read_byte(descriptor + 2);
+	u8 const sfr = read_byte(descriptor + 3);
+	bool const word = BIT(mode, 0);
+	bool const increment = !BIT(mode, 2);
+	bool const sfr_to_memory = BIT(control, 4);
+
+	if (word)
+	{
+		if (sfr_to_memory)
+			write_word(pointer, read_sfrp(sfr));
+		else
+			write_sfrp(sfr, read_word(pointer));
+	}
+	else
+	{
+		if (sfr_to_memory)
+			write_byte(pointer, read_sfr(sfr));
+		else
+			write_sfr(sfr, read_byte(pointer));
+	}
+
+	if (increment)
+	{
+		pointer += word ? 2 : 1;
+		write_word(descriptor, pointer);
+	}
+	write_byte(descriptor + 2, --count);
+	m_icount -= word ? (increment ? 16 : 15) : (increment ? 12 : 11);
+	return count == 0;
 }
 
 
@@ -1718,12 +1844,46 @@ upd78312_device::upd78312_device(const machine_config &mconfig, device_type type
 						address_map_constructor(FUNC(upd78312_device::sfr_map), this))
 	, m_port_in_cb(*this, 0xff)
 	, m_port_out_cb(*this)
+	, m_analog_in_cb(*this, 0xff)
+	, m_serial_tx_cb(*this)
 	, m_port_latch{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }
 	, m_port_mode{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }
 	, m_timer0_control(0)
+	, m_timer1_control(0)
 	, m_timer0_interrupt(0x47)
-	, m_timer0_countdown(0)
+	, m_timer1_interrupt(0x47)
+	, m_timer0_count(0)
+	, m_timer1_count(0)
+	, m_timer0_prescaler(0)
+	, m_timer1_prescaler(0)
+	, m_timer0_modulo_prescaler(0)
+	, m_count_prescaler{ 0, 0 }
 	, m_timer0_pending(false)
+	, m_timer1_pending(false)
+	, m_adc_mode(0)
+	, m_adc_result(0)
+	, m_adc_channel(0)
+	, m_adc_cycles(0)
+	, m_adc_triggered(false)
+	, m_time_base_counter(0)
+	, m_watchdog_cycles(0)
+	, m_watchdog_pending(false)
+	, m_serial_mode(0)
+	, m_serial_control(0)
+	, m_serial_baud(0)
+	, m_serial_rx_buffer(0)
+	, m_serial_tx_buffer(0)
+	, m_serial_rx_interrupt(0x40)
+	, m_serial_tx_interrupt(0x40)
+	, m_serial_rx_pending(false)
+	, m_serial_tx_pending(false)
+	, m_serial_tx_buffer_full(false)
+	, m_serial_tx_busy(false)
+	, m_serial_tx_shift(0)
+	, m_serial_tx_bits(0)
+	, m_serial_tx_timer(nullptr)
+	, m_external_interrupt{ 0x47, 0x40, 0x40 }
+	, m_misc_sfr{}
 {
 }
 
@@ -1735,13 +1895,45 @@ upd78312_device::upd78312_device(const machine_config &mconfig, device_type type
 void upd78312_device::device_start()
 {
 	upd78k3_device::device_start();
+	m_serial_tx_timer = timer_alloc(FUNC(upd78312_device::serial_tx_tick), this);
 
 	save_item(NAME(m_port_latch));
 	save_item(NAME(m_port_mode));
 	save_item(NAME(m_timer0_control));
+	save_item(NAME(m_timer1_control));
 	save_item(NAME(m_timer0_interrupt));
-	save_item(NAME(m_timer0_countdown));
+	save_item(NAME(m_timer1_interrupt));
+	save_item(NAME(m_timer0_count));
+	save_item(NAME(m_timer1_count));
+	save_item(NAME(m_timer0_prescaler));
+	save_item(NAME(m_timer1_prescaler));
+	save_item(NAME(m_timer0_modulo_prescaler));
+	save_item(NAME(m_count_prescaler));
 	save_item(NAME(m_timer0_pending));
+	save_item(NAME(m_timer1_pending));
+	save_item(NAME(m_adc_mode));
+	save_item(NAME(m_adc_result));
+	save_item(NAME(m_adc_channel));
+	save_item(NAME(m_adc_cycles));
+	save_item(NAME(m_adc_triggered));
+	save_item(NAME(m_time_base_counter));
+	save_item(NAME(m_watchdog_cycles));
+	save_item(NAME(m_watchdog_pending));
+	save_item(NAME(m_serial_mode));
+	save_item(NAME(m_serial_control));
+	save_item(NAME(m_serial_baud));
+	save_item(NAME(m_serial_rx_buffer));
+	save_item(NAME(m_serial_tx_buffer));
+	save_item(NAME(m_serial_rx_interrupt));
+	save_item(NAME(m_serial_tx_interrupt));
+	save_item(NAME(m_serial_rx_pending));
+	save_item(NAME(m_serial_tx_pending));
+	save_item(NAME(m_serial_tx_buffer_full));
+	save_item(NAME(m_serial_tx_busy));
+	save_item(NAME(m_serial_tx_shift));
+	save_item(NAME(m_serial_tx_bits));
+	save_item(NAME(m_external_interrupt));
+	save_item(NAME(m_misc_sfr));
 }
 
 
@@ -1759,9 +1951,65 @@ void upd78312_device::device_reset()
 		update_port_output(port);
 	}
 	m_timer0_control = 0;
+	m_timer1_control = 0;
 	m_timer0_interrupt = 0x47;
-	m_timer0_countdown = 0;
+	m_timer1_interrupt = 0x47;
+	m_timer0_count = 0;
+	m_timer1_count = 0;
+	m_timer0_prescaler = 0;
+	m_timer1_prescaler = 0;
+	m_timer0_modulo_prescaler = 0;
+	m_count_prescaler[0] = 0;
+	m_count_prescaler[1] = 0;
 	m_timer0_pending = false;
+	m_timer1_pending = false;
+	m_adc_mode = 0;
+	// ADCR is unaffected by RESET on the real part.
+	m_adc_channel = 0;
+	m_adc_cycles = 0;
+	m_adc_triggered = false;
+	m_time_base_counter = 0;
+	m_watchdog_cycles = 0;
+	m_watchdog_pending = false;
+	m_serial_mode = 0;
+	m_serial_control = 0;
+	m_serial_baud = 0;
+	m_serial_rx_buffer = 0;
+	m_serial_tx_buffer = 0;
+	m_serial_rx_interrupt = 0x40;
+	m_serial_tx_interrupt = 0x40;
+	m_serial_rx_pending = false;
+	m_serial_tx_pending = false;
+	m_serial_tx_buffer_full = false;
+	m_serial_tx_busy = false;
+	m_serial_tx_shift = 0;
+	m_serial_tx_bits = 0;
+	m_serial_tx_timer->adjust(attotime::never);
+	m_serial_tx_cb(1);
+	m_external_interrupt[0] = 0x47;
+	m_external_interrupt[1] = 0x40;
+	m_external_interrupt[2] = 0x40;
+	u8 const standby_flag = m_misc_sfr[0x44] & 0x08;
+	std::fill(std::begin(m_misc_sfr), std::end(m_misc_sfr), 0);
+	m_misc_sfr[0x32] = 0x0f; // PMC2
+	m_misc_sfr[0x33] = 0x0f; // PMC3
+	m_misc_sfr[0x38] = 0x08; // RTPC
+	m_misc_sfr[0x40] = 0x30; // MM
+	m_misc_sfr[0x41] = 0x10; // RFM
+	m_misc_sfr[0x44] = 0x20 | standby_flag; // STBC (SBF survives RESET)
+	for (u8 const address : { 0xc0, 0xc2, 0xc4, 0xc6, 0xd0, 0xd2, 0xda, 0xe0, 0xe2 })
+		m_misc_sfr[address] = 0x47;
+}
+
+void upd78312_device::execute_set_input(int inputnum, int state)
+{
+	bool const rising = state != CLEAR_LINE && !interrupt_pending(inputnum);
+	upd78k3_device::execute_set_input(inputnum, state);
+	if (inputnum == INT2_LINE && rising && BIT(m_adc_mode, 7) && BIT(m_adc_mode, 6))
+	{
+		m_adc_triggered = true;
+		m_adc_cycles = 0;
+	}
 }
 
 
@@ -1804,9 +2052,167 @@ void upd78312_device::mem_map(address_map &map)
 void upd78312_device::sfr_map(address_map &map)
 {
 	map(0x00, 0x05).rw(FUNC(upd78312_device::port_r), FUNC(upd78312_device::port_w));
+	// Capture/compare, PWM and up/down-counter data registers.  The up/down
+	// counters are advanced below; active capture and PWM outputs remain unmodelled.
+	map(0x06, 0x1f).rw(FUNC(upd78312_device::misc_sfr_r<0x06>), FUNC(upd78312_device::misc_sfr_w<0x06>));
 	map(0x20, 0x25).rw(FUNC(upd78312_device::port_mode_r), FUNC(upd78312_device::port_mode_w));
-	map(0x80, 0x80).rw(FUNC(upd78312_device::timer0_control_r), FUNC(upd78312_device::timer0_control_w));
-	map(0xce, 0xce).rw(FUNC(upd78312_device::timer0_interrupt_r), FUNC(upd78312_device::timer0_interrupt_w));
+	map(0x32, 0x33).rw(FUNC(upd78312_device::misc_sfr_r<0x32>), FUNC(upd78312_device::misc_sfr_w<0x32>)); // PMC2, PMC3
+	map(0x38, 0x49).rw(FUNC(upd78312_device::misc_sfr_r<0x38>), FUNC(upd78312_device::misc_sfr_w<0x38>)); // RTPC, MM/RFM/WDM, STBC, TBM, INTM
+	map(0x4a, 0x4b).r(FUNC(upd78312_device::in_service_priority_r)).umask16(0x00ff);
+	map(0x4c, 0x4f).rw(FUNC(upd78312_device::misc_sfr_r<0x4c>), FUNC(upd78312_device::misc_sfr_w<0x4c>)); // CCW is handled by the core
+	map(0x50, 0x51).rw(FUNC(upd78312_device::serial_mode_r), FUNC(upd78312_device::serial_mode_w)).umask16(0x00ff);
+	map(0x52, 0x53).rw(FUNC(upd78312_device::serial_control_r), FUNC(upd78312_device::serial_control_w)).umask16(0x00ff);
+	map(0x52, 0x53).rw(FUNC(upd78312_device::serial_baud_r), FUNC(upd78312_device::serial_baud_w)).umask16(0xff00);
+	map(0x56, 0x57).r(FUNC(upd78312_device::serial_rx_buffer_r)).umask16(0x00ff);
+	map(0x56, 0x57).w(FUNC(upd78312_device::serial_tx_buffer_w)).umask16(0xff00);
+	map(0x60, 0x67).rw(FUNC(upd78312_device::misc_sfr_r<0x60>), FUNC(upd78312_device::misc_sfr_w<0x60>)); // pulse I/O registers
+	map(0x68, 0x69).rw(FUNC(upd78312_device::adc_mode_r), FUNC(upd78312_device::adc_mode_w)).umask16(0x00ff);
+	map(0x6a, 0x6b).r(FUNC(upd78312_device::adc_result_r)).umask16(0x00ff);
+	map(0x6c, 0x7f).rw(FUNC(upd78312_device::misc_sfr_r<0x6c>), FUNC(upd78312_device::misc_sfr_w<0x6c>)); // count-unit controls
+	map(0x80, 0x81).rw(FUNC(upd78312_device::timer0_control_r), FUNC(upd78312_device::timer0_control_w)).umask16(0x00ff);
+	map(0x82, 0x83).rw(FUNC(upd78312_device::timer1_control_r), FUNC(upd78312_device::timer1_control_w)).umask16(0x00ff);
+	map(0x84, 0x87).rw(FUNC(upd78312_device::misc_sfr_r<0x84>), FUNC(upd78312_device::misc_sfr_w<0x84>));
+	map(0x88, 0x89).rw(FUNC(upd78312_device::timer0_count_r), FUNC(upd78312_device::timer0_count_w));
+	map(0x8a, 0x8b).rw(FUNC(upd78312_device::timer0_modulo_r), FUNC(upd78312_device::timer0_modulo_w));
+	map(0x8c, 0x8d).rw(FUNC(upd78312_device::timer1_count_r), FUNC(upd78312_device::timer1_count_w));
+	map(0x8e, 0x8f).rw(FUNC(upd78312_device::misc_sfr_r<0x8e>), FUNC(upd78312_device::misc_sfr_w<0x8e>)); // MD1
+	map(0xc0, 0xc7).rw(FUNC(upd78312_device::misc_sfr_r<0xc0>), FUNC(upd78312_device::misc_sfr_w<0xc0>)); // count-unit interrupt and macro-service control
+	map(0xc8, 0xcd).rw(FUNC(upd78312_device::external_interrupt_r), FUNC(upd78312_device::external_interrupt_w)).umask16(0x00ff);
+	map(0xc8, 0xcd).rw(FUNC(upd78312_device::external_macro_r), FUNC(upd78312_device::external_macro_w)).umask16(0xff00);
+	map(0xce, 0xcf).rw(FUNC(upd78312_device::timer0_interrupt_r), FUNC(upd78312_device::timer0_interrupt_w)).umask16(0x00ff);
+	map(0xce, 0xcf).rw(FUNC(upd78312_device::misc_sfr_r<0xcf>), FUNC(upd78312_device::misc_sfr_w<0xcf>)).umask16(0xff00);
+	map(0xd0, 0xd1).rw(FUNC(upd78312_device::timer1_interrupt_r), FUNC(upd78312_device::timer1_interrupt_w)).umask16(0x00ff);
+	map(0xd0, 0xd1).rw(FUNC(upd78312_device::misc_sfr_r<0xd1>), FUNC(upd78312_device::misc_sfr_w<0xd1>)).umask16(0xff00);
+	map(0xd2, 0xd3).rw(FUNC(upd78312_device::misc_sfr_r<0xd2>), FUNC(upd78312_device::misc_sfr_w<0xd2>)); // timer 2 interrupt and macro-service control
+	map(0xda, 0xdb).rw(FUNC(upd78312_device::misc_sfr_r<0xda>), FUNC(upd78312_device::misc_sfr_w<0xda>)); // serial receive-error interrupt control
+	map(0xdc, 0xdd).rw(FUNC(upd78312_device::serial_rx_interrupt_r), FUNC(upd78312_device::serial_rx_interrupt_w)).umask16(0x00ff);
+	map(0xdc, 0xdd).rw(FUNC(upd78312_device::misc_sfr_r<0xdd>), FUNC(upd78312_device::misc_sfr_w<0xdd>)).umask16(0xff00);
+	map(0xde, 0xdf).rw(FUNC(upd78312_device::serial_tx_interrupt_r), FUNC(upd78312_device::serial_tx_interrupt_w)).umask16(0x00ff);
+	map(0xde, 0xdf).rw(FUNC(upd78312_device::misc_sfr_r<0xdf>), FUNC(upd78312_device::misc_sfr_w<0xdf>)).umask16(0xff00);
+	map(0xe0, 0xe3).rw(FUNC(upd78312_device::misc_sfr_r<0xe0>), FUNC(upd78312_device::misc_sfr_w<0xe0>)); // A/D and time-base interrupt/macro-service control
+}
+
+u8 upd78312_device::misc_sfr_read(u8 address) const
+{
+	u8 data = m_misc_sfr[address];
+	switch (address)
+	{
+	case 0xc2: // CRIC01
+	case 0xc4: // CRIC10
+	case 0xc6: // CRIC11
+	case 0xd2: // TMIC2
+	case 0xe2: // TBIC
+		// Only the first control register in each programmable-priority
+		// group implements PR2-PR0.  The other registers read these bits as 1.
+		data |= 0x07;
+		break;
+	}
+	return data;
+}
+
+void upd78312_device::misc_sfr_write(u8 address, u8 data)
+{
+	switch (address)
+	{
+	case 0x42: // WDM and STBC accept only their protected write encodings
+	case 0x44:
+		break;
+	case 0x46: // TBM
+		m_misc_sfr[address] = data & 0x03;
+		break;
+
+	case 0xc0: // CRIC00: request, mask, macro, context switch, priority
+	case 0xe0: // ADIC
+		m_misc_sfr[address] = data & 0xf7;
+		break;
+
+	case 0xc2: // CRIC01
+	case 0xc4: // CRIC10
+	case 0xc6: // CRIC11
+	case 0xd2: // TMIC2
+		m_misc_sfr[address] = (data & 0xf0) | 0x07;
+		break;
+
+	case 0xda: // SEIC has no macro-service bit
+		m_misc_sfr[address] = data & 0xd7;
+		break;
+
+	case 0xe2: // TBIC has no macro-service bit and no local priority field
+		m_misc_sfr[address] = (data & 0xd0) | 0x07;
+		break;
+
+	default:
+		m_misc_sfr[address] = data;
+		break;
+	}
+}
+
+void upd78312_device::write_protected_sfr(u8 address, u8 data)
+{
+	if (address == 0x42)
+	{
+		if (BIT(data, 7))
+		{
+			u32 const overflow_states = 1U << (15 + (m_misc_sfr[address] & 0x06));
+			if (BIT(m_misc_sfr[address], 7) && m_watchdog_cycles >= overflow_states / 16)
+				m_watchdog_pending = true;
+			m_watchdog_cycles = 0;
+		}
+		m_misc_sfr[address] = data & 0x96;
+	}
+	else if (address == 0x44)
+		m_misc_sfr[address] = (data & 0x33) | (m_misc_sfr[address] & 0x08) | (data & 0x08);
+	else
+		misc_sfr_write(address, data);
+}
+
+u8 upd78312_device::device_sfr_r(u8 address)
+{
+	switch (address)
+	{
+	case 0x88: return m_timer0_count;
+	case 0x89: return m_timer0_count >> 8;
+	case 0x8a: return m_misc_sfr[0x8a];
+	case 0x8b: return m_misc_sfr[0x8b];
+	case 0x8c: return m_timer1_count;
+	case 0x8d: return m_timer1_count >> 8;
+	case 0x8e: return m_misc_sfr[0x8e];
+	case 0x8f: return m_misc_sfr[0x8f];
+	default: return upd78k3_device::device_sfr_r(address);
+	}
+}
+
+void upd78312_device::device_sfr_w(u8 address, u8 data)
+{
+	switch (address)
+	{
+	case 0x88:
+		m_timer0_count = (m_timer0_count & 0xff00) | data;
+		if (BIT(m_timer0_control, 0)) { m_timer0_control |= 0x80; m_timer0_prescaler = 0; }
+		break;
+	case 0x89:
+		m_timer0_count = (m_timer0_count & 0x00ff) | u16(data) << 8;
+		if (BIT(m_timer0_control, 0)) { m_timer0_control |= 0x80; m_timer0_prescaler = 0; }
+		break;
+	case 0x8a:
+	case 0x8b:
+		m_misc_sfr[address] = data;
+		if (BIT(m_timer0_control, 0)) { m_timer0_control |= 0x20; m_timer0_modulo_prescaler = 0; }
+		break;
+	case 0x8c:
+		m_timer1_count = (m_timer1_count & 0xff00) | data;
+		break;
+	case 0x8d:
+		m_timer1_count = (m_timer1_count & 0x00ff) | u16(data) << 8;
+		break;
+	case 0x8e:
+	case 0x8f:
+		m_misc_sfr[address] = data;
+		break;
+	default:
+		upd78k3_device::device_sfr_w(address, data);
+		break;
+	}
 }
 
 
@@ -1845,7 +2251,174 @@ void upd78312_device::update_port_output(unsigned port)
 
 
 //-------------------------------------------------
-//  timer 0 (preliminary interval mode)
+//  analog-to-digital converter
+//-------------------------------------------------
+
+u8 upd78312_device::adc_mode_r()
+{
+	return m_adc_mode;
+}
+
+void upd78312_device::adc_mode_w(u8 data)
+{
+	// Rewriting ADM stops and reinitializes an in-progress conversion.
+	m_adc_mode = data & 0xd7;
+	m_adc_channel = BIT(data, 0) ? ((data >> 1) & 3) : 0;
+	m_adc_cycles = 0;
+	m_adc_triggered = false;
+}
+
+u8 upd78312_device::adc_result_r()
+{
+	return m_adc_result;
+}
+
+
+//-------------------------------------------------
+//  asynchronous serial interface (preliminary)
+//-------------------------------------------------
+
+void upd78312_device::serial_rx(u8 data)
+{
+	if (!BIT(m_serial_mode, 6))
+		return;
+	if (m_serial_rx_pending)
+		m_misc_sfr[0xda] |= 0x80; // overrun error
+	m_serial_rx_buffer = data;
+	m_serial_rx_pending = true;
+}
+
+u8 upd78312_device::serial_mode_r()
+{
+	return m_serial_mode;
+}
+
+void upd78312_device::serial_mode_w(u8 data)
+{
+	bool const transmit_was_enabled = BIT(m_serial_mode, 7);
+	m_serial_mode = data;
+	if (BIT(data, 7) && !transmit_was_enabled)
+	{
+		if (m_serial_tx_buffer_full && !m_serial_tx_busy)
+			start_serial_tx();
+		else if (!m_serial_tx_buffer_full)
+			m_serial_tx_pending = true;
+	}
+}
+
+u8 upd78312_device::serial_control_r()
+{
+	return m_serial_control;
+}
+
+void upd78312_device::serial_control_w(u8 data)
+{
+	m_serial_control = data;
+}
+
+u8 upd78312_device::serial_baud_r()
+{
+	return m_serial_baud;
+}
+
+void upd78312_device::serial_baud_w(u8 data)
+{
+	m_serial_baud = data;
+}
+
+u8 upd78312_device::serial_rx_buffer_r()
+{
+	return m_serial_rx_buffer;
+}
+
+void upd78312_device::serial_tx_buffer_w(u8 data)
+{
+	m_serial_tx_buffer = data;
+	m_serial_tx_buffer_full = true;
+	m_serial_tx_pending = false;
+	if (BIT(m_serial_mode, 7) && !m_serial_tx_busy)
+		start_serial_tx();
+}
+
+u8 upd78312_device::serial_rx_interrupt_r()
+{
+	return (m_serial_rx_pending ? 0x80 : 0x00) | m_serial_rx_interrupt | 0x07;
+}
+
+void upd78312_device::serial_rx_interrupt_w(u8 data)
+{
+	m_serial_rx_interrupt = data & 0x70;
+	if (!BIT(data, 7))
+		m_serial_rx_pending = false;
+}
+
+u8 upd78312_device::serial_tx_interrupt_r()
+{
+	return (m_serial_tx_pending ? 0x80 : 0x00) | m_serial_tx_interrupt | 0x07;
+}
+
+void upd78312_device::serial_tx_interrupt_w(u8 data)
+{
+	m_serial_tx_interrupt = data & 0x70;
+	if (!BIT(data, 7))
+		m_serial_tx_pending = false;
+}
+
+void upd78312_device::start_serial_tx()
+{
+	m_serial_tx_buffer_full = false;
+	m_serial_tx_busy = true;
+	m_serial_tx_pending = true;
+	m_serial_tx_shift = (u16(m_serial_tx_buffer) << 1) | 0x0200;
+	m_serial_tx_bits = 9;
+	m_serial_tx_cb(0);
+	m_serial_tx_timer->adjust(attotime::from_hz(31'250));
+}
+
+TIMER_CALLBACK_MEMBER(upd78312_device::serial_tx_tick)
+{
+	if (m_serial_tx_bits)
+	{
+		m_serial_tx_cb(BIT(m_serial_tx_shift, 1));
+		m_serial_tx_shift >>= 1;
+		m_serial_tx_bits--;
+		m_serial_tx_timer->adjust(attotime::from_hz(31'250));
+	}
+	else
+	{
+		m_serial_tx_cb(1);
+		m_serial_tx_busy = false;
+		if (m_serial_tx_buffer_full && BIT(m_serial_mode, 7))
+			start_serial_tx();
+	}
+}
+
+u8 upd78312_device::external_interrupt_r(offs_t offset)
+{
+	unsigned const line = INT0_LINE + offset;
+	return (interrupt_pending(line) ? 0x80 : 0x00) | m_external_interrupt[offset] | (offset ? 0x07 : 0x00);
+}
+
+void upd78312_device::external_interrupt_w(offs_t offset, u8 data)
+{
+	m_external_interrupt[offset] = data & (offset ? 0x70 : 0x77);
+	if (!BIT(data, 7))
+		clear_interrupt_pending(INT0_LINE + offset);
+}
+
+u8 upd78312_device::external_macro_r(offs_t offset)
+{
+	return m_misc_sfr[0xc9 + offset * 2];
+}
+
+void upd78312_device::external_macro_w(offs_t offset, u8 data)
+{
+	m_misc_sfr[0xc9 + offset * 2] = data;
+}
+
+
+//-------------------------------------------------
+//  timer unit
 //-------------------------------------------------
 
 u8 upd78312_device::timer0_control_r()
@@ -1856,8 +2429,69 @@ u8 upd78312_device::timer0_control_r()
 void upd78312_device::timer0_control_w(u8 data)
 {
 	m_timer0_control = data;
-	if (BIT(data, 7) && m_timer0_countdown <= 0)
-		m_timer0_countdown = 6'000;
+	if (BIT(data, 7) && !BIT(data, 0))
+	{
+		m_timer0_count = u16(m_misc_sfr[0x8a]) | u16(m_misc_sfr[0x8b]) << 8;
+		m_timer0_prescaler = 0;
+	}
+}
+
+u8 upd78312_device::timer1_control_r()
+{
+	return m_timer1_control;
+}
+
+void upd78312_device::timer1_control_w(u8 data)
+{
+	m_timer1_control = data;
+	if (BIT(data, 7))
+	{
+		m_timer1_count = u16(m_misc_sfr[0x8e]) | u16(m_misc_sfr[0x8f]) << 8;
+		m_timer1_prescaler = 0;
+	}
+}
+
+u16 upd78312_device::timer0_count_r(offs_t offset)
+{
+	return m_timer0_count;
+}
+
+void upd78312_device::timer0_count_w(offs_t offset, u16 data, u16 mem_mask)
+{
+	COMBINE_DATA(&m_timer0_count);
+	if (BIT(m_timer0_control, 0))
+	{
+		m_timer0_control |= 0x80;
+		m_timer0_prescaler = 0;
+	}
+}
+
+u16 upd78312_device::timer0_modulo_r(offs_t offset)
+{
+	return u16(m_misc_sfr[0x8a]) | u16(m_misc_sfr[0x8b]) << 8;
+}
+
+void upd78312_device::timer0_modulo_w(offs_t offset, u16 data, u16 mem_mask)
+{
+	u16 value = timer0_modulo_r(0);
+	COMBINE_DATA(&value);
+	m_misc_sfr[0x8a] = value;
+	m_misc_sfr[0x8b] = value >> 8;
+	if (BIT(m_timer0_control, 0))
+	{
+		m_timer0_control |= 0x20;
+		m_timer0_modulo_prescaler = 0;
+	}
+}
+
+u16 upd78312_device::timer1_count_r(offs_t offset)
+{
+	return m_timer1_count;
+}
+
+void upd78312_device::timer1_count_w(offs_t offset, u16 data, u16 mem_mask)
+{
+	COMBINE_DATA(&m_timer1_count);
 }
 
 u8 upd78312_device::timer0_interrupt_r()
@@ -1867,40 +2501,384 @@ u8 upd78312_device::timer0_interrupt_r()
 
 void upd78312_device::timer0_interrupt_w(u8 data)
 {
-	m_timer0_interrupt = data & 0x47;
+	m_timer0_interrupt = data & 0x77;
 	if (!BIT(data, 7))
 		m_timer0_pending = false;
 }
 
+u8 upd78312_device::timer1_interrupt_r()
+{
+	return m_timer1_interrupt | (m_timer1_pending ? 0x80 : 0x00) | 0x07;
+}
+
+void upd78312_device::timer1_interrupt_w(u8 data)
+{
+	m_timer1_interrupt = data & 0x70;
+	if (!BIT(data, 7))
+		m_timer1_pending = false;
+}
+
+u8 upd78312_device::in_service_priority_r()
+{
+	return m_misc_sfr[0x4a];
+}
+
 void upd78312_device::execute_peripherals(int cycles)
 {
-	if (!BIT(m_timer0_control, 7))
-		return;
-
-	m_timer0_countdown -= cycles;
-	if (m_timer0_countdown <= 0)
+	static constexpr u32 time_base_period[4] = { 1U << 10, 1U << 13, 1U << 16, 1U << 20 };
+	u32 const period = time_base_period[m_misc_sfr[0x46] & 3];
+	if ((m_time_base_counter & (period - 1)) + cycles >= period)
+		m_misc_sfr[0xe2] |= 0x80; // falling edge of the selected TBC tap
+	m_time_base_counter = (m_time_base_counter + cycles) & 0x000fffff;
+	if (BIT(m_misc_sfr[0x42], 7))
 	{
-		// The exact clock selector and compare register are not yet modelled.
-		// The D-50 programs timer 0 as an approximately 1 kHz interval source.
-		m_timer0_countdown += 6'000;
-		m_timer0_pending = true;
+		u32 const overflow_states = 1U << (15 + (m_misc_sfr[0x42] & 0x06));
+		m_watchdog_cycles += cycles;
+		if (m_watchdog_cycles >= overflow_states)
+		{
+			m_watchdog_cycles %= overflow_states;
+			m_watchdog_pending = true;
+		}
 	}
+
+	auto run_timer = [cycles](u8 &control, u16 &count, s32 &prescaler, bool &pending, u16 modulo, bool timer0)
+	{
+		if (!BIT(control, 7))
+			return false;
+		bool underflow = false;
+		int const divider = BIT(control, 6) ? 128 : (timer0 && BIT(control, 0) ? 12 : 6);
+		prescaler += cycles;
+		while (prescaler >= divider && BIT(control, 7))
+		{
+			prescaler -= divider;
+			if (count)
+				--count;
+			else
+			{
+				pending = true;
+				underflow = true;
+				if (timer0 && BIT(control, 0))
+					control &= ~0x80;
+				else
+					count = modulo;
+			}
+		}
+		return underflow;
+	};
+
+	if (BIT(m_timer0_control, 0))
+	{
+		auto run_one_shot = [cycles](u8 &control, u8 enable_mask, u8 clock_mask, u16 &count, s32 &prescaler, bool &pending)
+		{
+			if (!(control & enable_mask))
+				return;
+			int const divider = (control & clock_mask) ? 128 : 12;
+			prescaler += cycles;
+			while (prescaler >= divider && (control & enable_mask))
+			{
+				prescaler -= divider;
+				if (count > 1)
+					--count;
+				else
+				{
+					count = 0;
+					control &= ~enable_mask;
+					pending = true;
+				}
+			}
+		};
+		run_one_shot(m_timer0_control, 0x80, 0x40, m_timer0_count, m_timer0_prescaler, m_timer0_pending);
+		u16 modulo = u16(m_misc_sfr[0x8a]) | u16(m_misc_sfr[0x8b]) << 8;
+		run_one_shot(m_timer0_control, 0x20, 0x10, modulo, m_timer0_modulo_prescaler, m_timer1_pending);
+		m_misc_sfr[0x8a] = modulo;
+		m_misc_sfr[0x8b] = modulo >> 8;
+	}
+	else
+	{
+		run_timer(m_timer0_control, m_timer0_count, m_timer0_prescaler, m_timer0_pending,
+			u16(m_misc_sfr[0x8a]) | u16(m_misc_sfr[0x8b]) << 8, true);
+	}
+
+	bool timer1_underflow;
+	if (BIT(m_timer0_control, 0))
+	{
+		bool ignored_tmf1 = false;
+		timer1_underflow = run_timer(m_timer1_control, m_timer1_count, m_timer1_prescaler, ignored_tmf1,
+			u16(m_misc_sfr[0x8e]) | u16(m_misc_sfr[0x8f]) << 8, false);
+	}
+	else
+	{
+		timer1_underflow = run_timer(m_timer1_control, m_timer1_count, m_timer1_prescaler, m_timer1_pending,
+			u16(m_misc_sfr[0x8e]) | u16(m_misc_sfr[0x8f]) << 8, false);
+	}
+	if (timer1_underflow)
+		m_misc_sfr[0xd2] |= 0x80; // TM1 underflow always sets TMF2
+
+	if (BIT(m_adc_mode, 7) && (!BIT(m_adc_mode, 6) || m_adc_triggered))
+	{
+		m_adc_cycles += cycles;
+		int const conversion_states = BIT(m_adc_mode, 4) ? 120 : 180;
+		while (m_adc_cycles >= conversion_states && BIT(m_adc_mode, 7) && (!BIT(m_adc_mode, 6) || m_adc_triggered))
+		{
+			m_adc_cycles -= conversion_states;
+			m_adc_result = m_analog_in_cb[m_adc_channel]();
+			m_misc_sfr[0xe0] |= 0x80; // ADF
+			if (!BIT(m_adc_mode, 0))
+			{
+				u8 const last_channel = (m_adc_mode >> 1) & 3;
+				m_adc_channel = m_adc_channel == last_channel ? 0 : m_adc_channel + 1;
+			}
+		}
+	}
+
+	// The two count units use fCLK/3 when their external-clock select bit is
+	// clear.  The D-50 runs count unit 1 in up/down modulo mode with CR11 as
+	// its terminal count, so model the counter, status flags and request flag.
+	auto run_count_unit = [this, cycles](unsigned unit)
+	{
+		u8 &control = m_misc_sfr[unit ? 0x7a : 0x72];
+		if (!BIT(control, 7) || BIT(control, 3))
+			return;
+		m_count_prescaler[unit] += cycles;
+		while (m_count_prescaler[unit] >= 3 && BIT(control, 7))
+		{
+			m_count_prescaler[unit] -= 3;
+			u8 const count_address = unit ? 0x1e : 0x1c;
+			u8 const compare_address = unit ? 0x0e : 0x0a;
+			u8 const interrupt_address = unit ? 0xc6 : 0xc2;
+			u16 count = u16(m_misc_sfr[count_address]) | u16(m_misc_sfr[count_address + 1]) << 8;
+			u16 const compare = u16(m_misc_sfr[compare_address]) | u16(m_misc_sfr[compare_address + 1]) << 8;
+			if (!BIT(control, 4))
+			{
+				if (BIT(control, 0) && count == compare)
+				{
+					count = 0;
+					control |= 0x40;
+					m_misc_sfr[interrupt_address] |= 0x80;
+				}
+				else
+				{
+					++count;
+					if (!count)
+						control |= 0x40;
+				}
+			}
+			else if (BIT(control, 0) && !count)
+			{
+				count = compare;
+				control |= 0x20;
+				m_misc_sfr[interrupt_address] |= 0x80;
+			}
+			else
+			{
+				--count;
+				if (count == 0xffff)
+					control |= 0x20;
+			}
+			m_misc_sfr[count_address] = count;
+			m_misc_sfr[count_address + 1] = count >> 8;
+		}
+	};
+	run_count_unit(0);
+	run_count_unit(1);
+}
+
+int upd78312_device::pending_nonmaskable_interrupt() const
+{
+	return m_watchdog_pending ? 0x0a : -1;
+}
+
+bool upd78312_device::internal_nmi_precedes_external() const
+{
+	return BIT(m_misc_sfr[0x42], 4);
 }
 
 int upd78312_device::pending_internal_interrupt() const
 {
-	return m_timer0_pending && !BIT(m_timer0_interrupt, 6) ? 0x0e : -1;
+	int result = -1;
+	int priority = 0x7fffffff;
+	int default_order = 0x7fffffff;
+	auto consider = [this, &result, &priority, &default_order](bool pending, bool masked, int vector)
+	{
+		int const candidate_priority = interrupt_priority(vector);
+		int const candidate_order = interrupt_default_order(vector);
+		if (pending && !masked && interrupt_eligible(vector)
+			&& (candidate_priority < priority || (candidate_priority == priority && candidate_order < default_order)))
+		{
+			result = vector;
+			priority = candidate_priority;
+			default_order = candidate_order;
+		}
+	};
+	consider(BIT(m_misc_sfr[0xc0], 7), BIT(m_misc_sfr[0xc0], 6), 0x1a);
+	consider(BIT(m_misc_sfr[0xc2], 7), BIT(m_misc_sfr[0xc2], 6), 0x1c);
+	consider(BIT(m_misc_sfr[0xc4], 7), BIT(m_misc_sfr[0xc4], 6), 0x1e);
+	consider(BIT(m_misc_sfr[0xc6], 7), BIT(m_misc_sfr[0xc6], 6), 0x20);
+	consider(m_timer0_pending, BIT(m_timer0_interrupt, 6), 0x0e);
+	consider(m_timer1_pending, BIT(m_timer1_interrupt, 6), 0x10);
+	consider(BIT(m_misc_sfr[0xd2], 7), BIT(m_misc_sfr[0xd2], 6), 0x12);
+	consider(BIT(m_misc_sfr[0xda], 7), BIT(m_misc_sfr[0xda], 6), 0x22);
+	consider(m_serial_rx_pending, BIT(m_serial_rx_interrupt, 6), 0x24);
+	consider(m_serial_tx_pending, BIT(m_serial_tx_interrupt, 6), 0x26);
+	consider(BIT(m_misc_sfr[0xe0], 7), BIT(m_misc_sfr[0xe0], 6), 0x28);
+	consider(BIT(m_misc_sfr[0xe2], 7), BIT(m_misc_sfr[0xe2], 6), 0x0c);
+	return result;
+}
+
+bool upd78312_device::execute_internal_service(int vector)
+{
+	u8 control = 0;
+	u8 macro_control = 0;
+	switch (vector)
+	{
+	case 0x1a: control = m_misc_sfr[0xc0]; macro_control = m_misc_sfr[0xc1]; break;
+	case 0x1c: control = m_misc_sfr[0xc2]; macro_control = m_misc_sfr[0xc3]; break;
+	case 0x1e: control = m_misc_sfr[0xc4]; macro_control = m_misc_sfr[0xc5]; break;
+	case 0x20: control = m_misc_sfr[0xc6]; macro_control = m_misc_sfr[0xc7]; break;
+	case 0x0e: control = m_timer0_interrupt; macro_control = m_misc_sfr[0xcf]; break;
+	case 0x10: control = m_timer1_interrupt; macro_control = m_misc_sfr[0xd1]; break;
+	case 0x12: control = m_misc_sfr[0xd2]; macro_control = m_misc_sfr[0xd3]; break;
+	case 0x24: control = m_serial_rx_interrupt; macro_control = m_misc_sfr[0xdd]; break;
+	case 0x26: control = m_serial_tx_interrupt; macro_control = m_misc_sfr[0xdf]; break;
+	case 0x28: control = m_misc_sfr[0xe0]; macro_control = m_misc_sfr[0xe1]; break;
+	default: return false;
+	}
+	if (!BIT(control, 5))
+		return false;
+
+	bool const complete = perform_macro_service(macro_control);
+	if (!complete)
+	{
+		acknowledge_internal_interrupt(vector);
+		return true;
+	}
+
+	// Completion leaves the request flag set, changes the source back to
+	// normal interrupt service and lets the next arbitration pass vector it.
+	switch (vector)
+	{
+	case 0x1a: m_misc_sfr[0xc0] &= ~0x20; break;
+	case 0x1c: m_misc_sfr[0xc2] &= ~0x20; break;
+	case 0x1e: m_misc_sfr[0xc4] &= ~0x20; break;
+	case 0x20: m_misc_sfr[0xc6] &= ~0x20; break;
+	case 0x0e: m_timer0_interrupt &= ~0x20; break;
+	case 0x10: m_timer1_interrupt &= ~0x20; break;
+	case 0x12: m_misc_sfr[0xd2] &= ~0x20; break;
+	case 0x24: m_serial_rx_interrupt &= ~0x20; break;
+	case 0x26: m_serial_tx_interrupt &= ~0x20; break;
+	case 0x28: m_misc_sfr[0xe0] &= ~0x20; break;
+	}
+	return true;
 }
 
 void upd78312_device::acknowledge_internal_interrupt(int vector)
 {
-	if (vector == 0x0e)
-	{
-		static int timer0_log_count;
-		if (timer0_log_count++ < 20)
-			logerror("timer 0 interrupt\n");
+	if (vector == 0x0a)
+		m_watchdog_pending = false;
+	else if (vector >= 0x1a && vector <= 0x20 && !(vector & 1))
+		m_misc_sfr[0xc0 + vector - 0x1a] &= ~0x80;
+	else if (vector == 0x0e)
 		m_timer0_pending = false;
+	else if (vector == 0x10)
+		m_timer1_pending = false;
+	else if (vector == 0x12)
+		m_misc_sfr[0xd2] &= ~0x80;
+	else if (vector == 0x22)
+		m_misc_sfr[0xda] &= ~0x80;
+	else if (vector == 0x24)
+		m_serial_rx_pending = false;
+	else if (vector == 0x26)
+		m_serial_tx_pending = false;
+	else if (vector == 0x28)
+		m_misc_sfr[0xe0] &= ~0x80;
+	else if (vector == 0x0c)
+		m_misc_sfr[0xe2] &= ~0x80;
+}
+
+bool upd78312_device::external_interrupt_masked(int line) const
+{
+	return BIT(m_external_interrupt[line - INT0_LINE], 6);
+}
+
+int upd78312_device::interrupt_priority(int vector) const
+{
+	if (vector >= 0x1a && vector <= 0x20)
+		return m_misc_sfr[0xc0] & 0x07;
+	if (vector >= 0x04 && vector <= 0x08)
+		return m_external_interrupt[0] & 0x07;
+	if (vector >= 0x0e && vector <= 0x12)
+		return m_timer0_interrupt & 0x07;
+	if (vector >= 0x22 && vector <= 0x26)
+		return m_misc_sfr[0xda] & 0x07;
+	if (vector == 0x28 || vector == 0x0c)
+		return m_misc_sfr[0xe0] & 0x07;
+	return 0;
+}
+
+int upd78312_device::interrupt_default_order(int vector) const
+{
+	// Table 5-2 defines the fixed order used within a group and when two
+	// groups are assigned the same programmable priority.
+	switch (vector)
+	{
+	case 0x1a: return 0;  // CRF00
+	case 0x1c: return 1;  // CRF01
+	case 0x1e: return 2;  // CRF10
+	case 0x20: return 3;  // CRF11
+	case 0x04: return 4;  // EXIF0
+	case 0x06: return 5;  // EXIF1
+	case 0x08: return 6;  // EXIF2
+	case 0x0e: return 7;  // TMF0
+	case 0x10: return 8;  // TMF1
+	case 0x12: return 9;  // TMF2
+	case 0x22: return 10; // SEF
+	case 0x24: return 11; // SRF
+	case 0x26: return 12; // STF
+	case 0x28: return 13; // ADF
+	case 0x0c: return 14; // TBF
+	default: return 0x7fffffff;
 	}
+}
+
+bool upd78312_device::interrupt_eligible(int vector) const
+{
+	u8 const in_service = m_misc_sfr[0x4a];
+	return !in_service || interrupt_priority(vector) < std::countr_zero(unsigned(in_service));
+}
+
+bool upd78312_device::interrupt_context_switch(int vector) const
+{
+	switch (vector)
+	{
+	case 0x1a: return BIT(m_misc_sfr[0xc0], 4);
+	case 0x1c: return BIT(m_misc_sfr[0xc2], 4);
+	case 0x1e: return BIT(m_misc_sfr[0xc4], 4);
+	case 0x20: return BIT(m_misc_sfr[0xc6], 4);
+	case 0x04: return BIT(m_external_interrupt[0], 4);
+	case 0x06: return BIT(m_external_interrupt[1], 4);
+	case 0x08: return BIT(m_external_interrupt[2], 4);
+	case 0x0e: return BIT(m_timer0_interrupt, 4);
+	case 0x10: return BIT(m_timer1_interrupt, 4);
+	case 0x12: return BIT(m_misc_sfr[0xd2], 4);
+	case 0x22: return BIT(m_misc_sfr[0xda], 4);
+	case 0x24: return BIT(m_serial_rx_interrupt, 4);
+	case 0x26: return BIT(m_serial_tx_interrupt, 4);
+	case 0x28: return BIT(m_misc_sfr[0xe0], 4);
+	case 0x0c: return BIT(m_misc_sfr[0xe2], 4);
+	default: return false;
+	}
+}
+
+void upd78312_device::begin_interrupt(int vector)
+{
+	if (vector != 0x02 && vector != 0x0a)
+		m_misc_sfr[0x4a] |= 1U << interrupt_priority(vector);
+}
+
+void upd78312_device::end_interrupt()
+{
+	if (!suppress_interrupt_end())
+		m_misc_sfr[0x4a] &= m_misc_sfr[0x4a] - 1;
 }
 
 

@@ -3319,6 +3319,8 @@ end
 ---------------------------------------------------
 --
 --@src/devices/bus/midi/midi.h,BUSES["MIDI"] = true
+--@src/devices/bus/midi/midiinport.h,BUSES["MIDI"] = true
+--@src/devices/bus/midi/midioutport.h,BUSES["MIDI"] = true
 ---------------------------------------------------
 
 if BUSES["MIDI"] then

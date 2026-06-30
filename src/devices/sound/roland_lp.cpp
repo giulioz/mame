@@ -291,6 +291,12 @@ void mb87419_mb87420_device::device_start()
 	// voice.  Keep those slots separate so a downstream RCC implementation can
 	// route and process them before producing the six analogue outputs.
 	m_stream = stream_alloc(0, NUM_CHANNELS, m_rate, STREAM_SYNCHRONOUS);
+	if (char const *const path = osd_getenv("ROLAND_LP_WAV"); path && *path)
+	{
+		m_debug_wav = util::wav_open(path, m_rate, NUM_CHANNELS);
+		if (!m_debug_wav)
+			logerror("Roland PCM: unable to open debug WAV %s\n", path);
+	}
 
 	save_item(STRUCT_MEMBER(m_chns, volume_cur));
 	save_item(STRUCT_MEMBER(m_chns, bank_loopmode));
@@ -302,6 +308,14 @@ void mb87419_mb87420_device::device_start()
 	save_item(STRUCT_MEMBER(m_chns, loop));
 	save_item(STRUCT_MEMBER(m_chns, enable));
 	save_item(STRUCT_MEMBER(m_chns, play_dir));
+	save_item(STRUCT_MEMBER(m_chns, loop_reference));
+	save_item(STRUCT_MEMBER(m_chns, loop_reference_valid));
+	save_item(STRUCT_MEMBER(m_chns, dlm_checked));
+	save_item(STRUCT_MEMBER(m_chns, dlm));
+	save_item(STRUCT_MEMBER(m_chns, dlm_reference));
+	save_item(STRUCT_MEMBER(m_chns, dlm_loop_sum));
+	save_item(STRUCT_MEMBER(m_chns, dlm_bias));
+	save_item(STRUCT_MEMBER(m_chns, dlm_alt_cycle_phase));
 	save_item(STRUCT_MEMBER(m_chns, irq));
 	save_item(STRUCT_MEMBER(m_chns, tempReference));
 	save_item(NAME(m_sel_chn));
@@ -371,6 +385,7 @@ uint8_t mb87419_mb87420_device::read(offs_t offset)
 				else
 				{
 					m_irq_current_valid = false;
+					m_int_callback(CLEAR_LINE);
 				}
 			}
 			return result;
@@ -507,6 +522,14 @@ void mb87419_mb87420_device::write(offs_t offset, uint8_t data, offs_t pc)
 					if (play && !chn.enable)
 					{
 						chn.play_dir = 0;
+						chn.loop_reference = 0;
+						chn.loop_reference_valid = false;
+						chn.dlm_checked = false;
+						chn.dlm = false;
+						chn.dlm_reference = 0;
+						chn.dlm_loop_sum = 0;
+						chn.dlm_bias = 0;
+						chn.dlm_alt_cycle_phase = false;
 						chn.irq = true;
 						chn.tempReference = 0;
 					}
@@ -555,7 +578,7 @@ void mb87419_mb87420_device::write(offs_t offset, uint8_t data, offs_t pc)
 		case 0x19:
 		case 0x1B:
 		case 0x1D:
-			logerror("LP config %02X = %02X\n", offset, data);
+			LOGMASKED(LOG_REGISTERS, "LP config %02X = %02X\n", offset, data);
 			break;
 		case 0x1F:
 			m_sel_chn = data & 0x1f;
@@ -573,6 +596,9 @@ void mb87419_mb87420_device::write(offs_t offset, uint8_t data, offs_t pc)
 
 void mb87419_mb87420_device::sound_stream_update(sound_stream &stream)
 {
+	if (m_debug_wav)
+		m_debug_buffer.assign(stream.samples() * NUM_CHANNELS, 0);
+
 	for (int smpl = 0; smpl < stream.samples(); smpl++)
 	{
 		for (int i = 0; i < NUM_CHANNELS; i++)
@@ -585,201 +611,279 @@ void mb87419_mb87420_device::sound_stream_update(sound_stream &stream)
 				continue;
 			}
 
-			// Address gen
-			uint32_t hiphase = chn.addr >> 14;
-			uint32_t sub_phase = chn.addr & 0x3fff;
-			[[maybe_unused]] int interp_ratio = (sub_phase >> 7) & 127;
-			sub_phase += chn.step;
-			int sub_phase_of = (sub_phase >> 14) & 7;
-			chn.addr = (hiphase << 14) | (sub_phase & 0x3fff);
+			// Ordinary DPCM uses a persistent predictor and restores the value
+			// captured at its loop anchor. Forward DLM wraps a narrower predictor;
+			// alternate DLM also advances an encoded baseline after a round trip.
+			// All paths share address generation and interpolation.
+			uint32_t const hiphase = (chn.addr >> 14) & 0x3ffff;
+			uint32_t const old_sub_phase = chn.addr & 0x3fff;
+			int const interp_ratio = (old_sub_phase >> 7) & 127;
+			bool const alt_loop = BIT(chn.bank_loopmode, 7);
+			// The host-visible 2.14 value is the address-generator step for both
+			// ordinary PCM and DLM; DLM pitch comes from accumulator wrapping, not
+			// from a second phase-rate correction.
+			uint32_t const phase_step = chn.step;
+			uint32_t const sub_phase = old_sub_phase + phase_step;
+			unsigned const sub_phase_of = sub_phase >> 14;
+			uint32_t const hiaddr = ((chn.bank_loopmode & 0x3c) >> 2) << 18;
+			int const first_step = BIT(chn.bank_loopmode, 6) ? -1 : 1;
+			uint32_t const address_loop = uint32_t(chn.loop) << 2;
+			uint32_t const address_end = uint32_t(chn.end) << 2;
 
-			uint32_t hiaddr = (chn.bank_loopmode & 0x3C) >> 2 << 18;
-			bool altLoopState = chn.play_dir != 0;
-			bool altLoop = (chn.bank_loopmode & 0x80) != 0;
-			bool backwardsPlay = (chn.bank_loopmode & 0x40) != 0;
-			bool kon = false;
-			uint32_t address_loop = ((uint32_t)chn.loop << 16) >> 14;
-			uint32_t address_end = ((uint32_t)chn.end << 16) >> 14;
-
-			// address 0
-			uint32_t address_cnt = hiphase;
-			int samp0 = decode_sample((int8_t)read_byte(hiaddr | address_cnt));
-
-			uint32_t cmp1 = hiphase;
-			uint32_t cmp2 = address_cnt;
-			int nibble_cmp2 = (cmp1 & 0xffff0) == (cmp2 & 0xffff0); // 8
-			cmp1 = altLoopState ? address_loop : address_end;
-			cmp2 = address_cnt;
-			int address_cmp = (cmp1 & 0xfffff) == (cmp2 & 0xfffff); // 9
-
-			[[maybe_unused]] uint32_t next_address = address_cnt; // 11
-			[[maybe_unused]] int usenew = !nibble_cmp2;
-			int next_altLoopState = altLoopState;
-
-			cmp1 = (!altLoop && address_cmp) ? address_loop : address_cnt;
-			cmp2 = address_cnt;
-			uint32_t address_cnt2 = (kon || (!altLoop && address_cmp)) ? cmp1 : cmp2;
-
-			int address_add = (!address_cmp && altLoop && !altLoopState) || (!address_cmp && !altLoop);
-			int address_sub = !address_cmp && altLoop && altLoopState;
-			if (backwardsPlay)
-					address_cnt2 -= address_add - address_sub;
-			else
-					address_cnt2 += address_add - address_sub;
-			address_cnt = address_cnt2 & 0x3ffff; // 11
-			altLoopState = altLoop && (altLoopState ^ address_cmp); // 11
-
-			[[maybe_unused]] int samp1 = decode_sample((int8_t)read_byte(hiaddr | address_cnt));
-
-			cmp1 = hiphase;
-			cmp2 = address_cnt;
-			int nibble_cmp3 = (cmp1 & 0xffff0) == (cmp2 & 0xffff0); // 12
-			cmp1 = altLoopState ? address_loop : address_end;
-			cmp2 = address_cnt;
-			address_cmp = (cmp1 & 0xfffff) == (cmp2 & 0xfffff); // 13
-
-			if (sub_phase_of >= 1)
+			auto advance_address = [alt_loop, first_step, address_loop, address_end]
+				(uint32_t &address, bool &return_leg)
 			{
-					next_address = address_cnt; // 13
-					usenew = !nibble_cmp3;
-					next_altLoopState = altLoopState;
+				uint32_t const boundary = return_leg ? address_loop : address_end;
+				bool const at_boundary = address == boundary;
+				bool const wrapped = !alt_loop && at_boundary;
+
+				if (wrapped)
+				{
+					// The loop byte establishes the predictor anchor on the first
+					// pass. After end, playback restores that anchor and resumes with
+					// the following differential byte; replaying the anchor makes a
+					// short DLM loop sharp and gives ordinary loops a slow DC drift.
+					address = (address_loop + first_step) & 0x3ffff;
+				}
+				else if (!at_boundary)
+				{
+					address = (address + (return_leg ? -first_step : first_step)) & 0x3ffff;
+				}
+
+				return_leg = alt_loop && (return_leg != at_boundary);
+				return wrapped;
+			};
+
+			// A 16-bit step crosses at most four bytes; the fifth fetch supplies
+			// the interpolation lookahead at that extreme.
+			u8 encoded_deltas[5];
+			int deltas[5];
+			uint32_t delta_addresses[5];
+			bool wrap_after[5];
+			bool dlm_reset_after[5];
+			uint32_t address = hiphase;
+			bool return_leg = chn.play_dir != 0;
+			uint32_t next_address = address;
+			bool next_return_leg = return_leg;
+			for (unsigned fetch = 0; fetch < 5; fetch++)
+			{
+				delta_addresses[fetch] = address;
+				encoded_deltas[fetch] = read_byte(hiaddr | address);
+				deltas[fetch] = decode_sample(int8_t(encoded_deltas[fetch]));
+
+				// The return leg reaching the loop point is an alternate-DLM
+				// half-cycle boundary. The baseline advances at every second return;
+				// never recognizing the return lets the predictor run into a rail.
+				bool const alt_cycle_complete = alt_loop && return_leg && address == address_loop;
+				wrap_after[fetch] = advance_address(address, return_leg);
+				dlm_reset_after[fetch] = alt_loop ? alt_cycle_complete : wrap_after[fetch];
+				if (sub_phase_of == fetch + 1)
+				{
+					next_address = address;
+					next_return_leg = return_leg;
+				}
 			}
 
-			cmp1 = (!altLoop && address_cmp) ? address_loop : address_cnt;
-			cmp2 = address_cnt;
-			address_cnt2 = (kon || (!altLoop && address_cmp)) ? cmp1 : cmp2;
-
-			address_add = (!address_cmp && altLoop && !altLoopState) || (!address_cmp && !altLoop);
-			address_sub = !address_cmp && altLoop && altLoopState;
-			if (backwardsPlay)
-					address_cnt2 -= address_add - address_sub;
-			else
-					address_cnt2 += address_add - address_sub;
-			address_cnt = address_cnt2 & 0x3ffff; // 15
-			altLoopState = altLoop && (altLoopState ^ address_cmp); // 15
-
-			[[maybe_unused]] int samp2 = decode_sample((int8_t)read_byte(hiaddr | address_cnt));
-
-			cmp1 = hiphase;
-			cmp2 = address_cnt;
-			int nibble_cmp4 = (cmp1 & 0xffff0) == (cmp2 & 0xffff0); // 16
-			cmp1 = altLoopState ? address_loop : address_end;
-			cmp2 = address_cnt;
-			address_cmp = (cmp1 & 0xfffff) == (cmp2 & 0xfffff); // 17
-
-			if (sub_phase_of >= 2)
+			if (!chn.dlm_checked)
 			{
-					next_address = address_cnt; // 17
-					usenew = !nibble_cmp4;
-					next_altLoopState = altLoopState;
+				// DLM starts directly on a deliberately non-zero, very short
+				// differential loop. Ordinary PCM loops instead have a zero linear
+				// delta sum and use the wide predictor below.
+				unsigned const loop_bytes = address_end >= address_loop ? address_end - address_loop : 0;
+				int loop_sum = 0;
+				unsigned encoded_loop_sum = 0;
+				int loop_prefix = 0;
+				int loop_prefix_sum = 0;
+				unsigned loop_sample_count = 0;
+				if (hiphase == address_loop && loop_bytes <= 512)
+				{
+					for (uint32_t loop_address = address_loop; loop_address <= address_end; loop_address++)
+					{
+						encoded_loop_sum += read_byte(hiaddr | loop_address);
+						loop_prefix_sum += loop_prefix;
+						loop_prefix += decode_sample(int8_t(read_byte(hiaddr | loop_address)));
+						loop_sample_count++;
+					}
+					for (uint32_t loop_address = address_loop + 1; loop_address <= address_end; loop_address++)
+						loop_sum += decode_sample(int8_t(read_byte(hiaddr | loop_address)));
+				}
+				chn.dlm = loop_sum != 0;
+				// Alternate DLM advances its eight-bit expanded baseline by the
+				// complete encoded-loop sum once per forward-and-return traversal.
+				chn.dlm_loop_sum = u8(encoded_loop_sum);
+				if (chn.dlm && alt_loop)
+				{
+					int expansion_sum = 0;
+					unsigned expansion_count = 0;
+					u8 encoded = 0;
+					do
+					{
+						expansion_sum += decode_sample(int8_t(encoded));
+						expansion_count++;
+						encoded += chn.dlm_loop_sum;
+					} while (encoded != 0 && expansion_count < 256);
+					double const expansion_mean = double(expansion_sum) / expansion_count;
+					double const loop_mean = double(loop_prefix_sum) / loop_sample_count;
+					chn.dlm_bias = -int(std::lround(expansion_mean + loop_mean / 4.0));
+				}
+				if (chn.dlm && alt_loop)
+					chn.tempReference = (int(decode_sample(int8_t(chn.dlm_reference))) + chn.dlm_bias) << 2;
+				chn.dlm_checked = true;
 			}
 
-			cmp1 = (!altLoop && address_cmp) ? address_loop : address_cnt;
-			cmp2 = address_cnt;
-			address_cnt2 = (kon || (!altLoop && address_cmp)) ? cmp1 : cmp2;
-
-			address_add = (!address_cmp && altLoop && !altLoopState) || (!address_cmp && !altLoop);
-			address_sub = !address_cmp && altLoop && altLoopState;
-			if (backwardsPlay)
-					address_cnt2 -= address_add - address_sub;
-			else
-					address_cnt2 += address_add - address_sub;
-			address_cnt = address_cnt2 & 0x3ffff; // 19
-			altLoopState = altLoop && (altLoopState ^ address_cmp); // 19
-
-			[[maybe_unused]] int samp3 = decode_sample((int8_t)read_byte(hiaddr | address_cnt));
-
-			cmp1 = hiphase;
-			cmp2 = address_cnt;
-			int nibble_cmp5 = (cmp1 & 0xffff0) == (cmp2 & 0xffff0); // 20
-			cmp1 = altLoopState ? address_loop : address_end;
-			cmp2 = address_cnt;
-			address_cmp = (cmp1 & 0xfffff) == (cmp2 & 0xfffff); // 21
-
-			if (sub_phase_of >= 3)
+			int32_t constexpr limit_pos = 262143;
+			int32_t constexpr limit_neg = -262144;
+			int test;
+			if (chn.dlm && !alt_loop)
 			{
-					next_address = address_cnt; // 21
-					usenew = !nibble_cmp5;
-					next_altLoopState = altLoopState;
+				// Forward DLM is the direct consequence of repeatedly adding a
+				// non-zero five-byte differential loop in the LP's signed 12-bit
+				// provisional lane.  The wrap rate is the musical fundamental: for
+				// Schizoid's -98 loop and step 0x0dae it is 32.71 Hz (C1).
+				// Saturating the wider ordinary-PCM predictor, or expanding a second
+				// encoded accumulator, instead turns the loop into an unrelated
+				// high-frequency carrier.
+				auto const wrap_dlm = [] (int value)
+				{
+					value &= 0xfff;
+					return BIT(value, 11) ? value - 0x1000 : value;
+				};
+
+				int reference = chn.tempReference;
+				for (unsigned crossed = 0; crossed < sub_phase_of; crossed++)
+					reference = wrap_dlm(reference + deltas[crossed]);
+
+				int interpolated = chn.tempReference;
+				int preview_reference = chn.tempReference;
+				for (unsigned tap = 0; tap < 3; tap++)
+				{
+					int const next_reference = wrap_dlm(preview_reference + deltas[tap]);
+					int const effective_delta = next_reference - preview_reference;
+					interpolated += (interp_lut[tap][interp_ratio] * effective_delta) >> 12;
+					preview_reference = next_reference;
+				}
+				test = interpolated;
+				chn.tempReference = reference;
 			}
-
-			cmp1 = (!altLoop && address_cmp) ? address_loop : address_cnt;
-			cmp2 = address_cnt;
-			address_cnt2 = (kon || (!altLoop && address_cmp)) ? cmp1 : cmp2;
-
-			address_add = (!address_cmp && altLoop && !altLoopState) || (!address_cmp && !altLoop);
-			address_sub = !address_cmp && altLoop && altLoopState;
-			if (backwardsPlay)
-					address_cnt2 -= address_add - address_sub;
-			else
-					address_cnt2 += address_add - address_sub;
-			address_cnt = address_cnt2 & 0x3ffff; // 23
-			// altLoopState = altLoop && (altLoopState ^ address_cmp); // 23
-
-			cmp1 = hiphase;
-			cmp2 = address_cnt;
-			int nibble_cmp6 = (cmp1 & 0xffff0) == (cmp2 & 0xffff0); // 24
-
-			if (sub_phase_of >= 4)
+			else if (chn.dlm)
 			{
-					next_address = address_cnt; // 1
-					usenew = !nibble_cmp6;
-					// altLoopState is not updated?
+				u8 const interpolation_encoded = chn.dlm_reference;
+				bool const interpolation_cycle_phase = chn.dlm_alt_cycle_phase;
+				int reference = chn.tempReference;
+				for (unsigned crossed = 0; crossed < sub_phase_of; crossed++)
+				{
+					reference = std::clamp(reference + deltas[crossed], limit_neg, limit_pos);
+					if (dlm_reset_after[crossed])
+					{
+						// The expanded modulation cycle spans two complete ping-pong
+						// traversals. Advancing on every return is one octave high.
+						chn.dlm_alt_cycle_phase = !chn.dlm_alt_cycle_phase;
+						if (!chn.dlm_alt_cycle_phase)
+						{
+							chn.dlm_reference += chn.dlm_loop_sum;
+							reference = (int(decode_sample(int8_t(chn.dlm_reference))) + chn.dlm_bias) << 2;
+						}
+					}
+				}
+
+				test = chn.tempReference;
+				int preview_reference = chn.tempReference;
+				u8 preview_encoded = interpolation_encoded;
+				bool preview_cycle_phase = interpolation_cycle_phase;
+				bool reset_before = false;
+				for (unsigned tap = 0; tap < 3; tap++)
+				{
+					int effective_delta = deltas[tap];
+					if (reset_before)
+					{
+						int const loop_reference = (int(decode_sample(int8_t(preview_encoded))) + chn.dlm_bias) << 2;
+						effective_delta += loop_reference - preview_reference;
+						preview_reference = loop_reference;
+					}
+					preview_reference = std::clamp(preview_reference + deltas[tap], limit_neg, limit_pos);
+					test = std::clamp(test + ((interp_lut[tap][interp_ratio] * effective_delta) >> 12), limit_neg, limit_pos);
+					reset_before = false;
+					if (dlm_reset_after[tap])
+					{
+						preview_cycle_phase = !preview_cycle_phase;
+						reset_before = !preview_cycle_phase;
+						if (reset_before)
+							preview_encoded += chn.dlm_loop_sum;
+					}
+				}
+				chn.tempReference = reference;
+			}
+			else
+			{
+				bool const loop_reference_was_valid = chn.loop_reference_valid;
+				int reference = chn.tempReference;
+				for (unsigned crossed = 0; crossed < sub_phase_of; crossed++)
+				{
+					if (delta_addresses[crossed] == address_loop)
+					{
+						if (!chn.loop_reference_valid)
+						{
+							reference = std::clamp(reference + deltas[crossed], limit_neg, limit_pos);
+							chn.loop_reference = reference;
+							chn.loop_reference_valid = true;
+						}
+						else
+						{
+							reference = chn.loop_reference;
+						}
+					}
+					else
+					{
+						reference = std::clamp(reference + deltas[crossed], limit_neg, limit_pos);
+					}
+					if (wrap_after[crossed] && chn.loop_reference_valid)
+						reference = chn.loop_reference;
+				}
+
+				test = chn.tempReference;
+				int preview_reference = chn.tempReference;
+				for (unsigned tap = 0; tap < 3; tap++)
+				{
+					int effective_delta = deltas[tap];
+					if (delta_addresses[tap] == address_loop && loop_reference_was_valid)
+					{
+						effective_delta = chn.loop_reference - preview_reference;
+						preview_reference = chn.loop_reference;
+					}
+					else
+					{
+						preview_reference = std::clamp(preview_reference + deltas[tap], limit_neg, limit_pos);
+					}
+					test = std::clamp(test + ((interp_lut[tap][interp_ratio] * effective_delta) >> 12), limit_neg, limit_pos);
+					if (wrap_after[tap] && loop_reference_was_valid)
+						preview_reference = chn.loop_reference;
+				}
+
+				chn.tempReference = reference;
 			}
 
 			chn.addr = (next_address << 14) | (sub_phase & 0x3fff);
-			chn.play_dir = next_altLoopState;
-
-			// dpcm
-
-			// 18
-			int reference = chn.tempReference;
-
-			int32_t limit_pos = 262143; // 18 bit
-			int32_t limit_neg = -262144;
-
-			// 19
-			if (sub_phase_of >= 1)
-				reference = std::clamp(reference + samp0, limit_neg, limit_pos);
-			if (sub_phase_of >= 2)
-				reference = std::clamp(reference + samp1, limit_neg, limit_pos);
-			if (sub_phase_of >= 3)
-				reference = std::clamp(reference + samp2, limit_neg, limit_pos);
-			if (sub_phase_of >= 4)
-				reference = std::clamp(reference + samp3, limit_neg, limit_pos);
-
-
-			// reference >>= 4;
-
-			// interpolation
-
-			int test = chn.tempReference;
-
-			int step0 = ((interp_lut[0][interp_ratio] << 0) * samp0) >> 12;
-			test = std::clamp(test + step0, limit_neg, limit_pos);
-			int step1 = ((interp_lut[1][interp_ratio] << 0) * samp1) >> 12;
-			test = std::clamp(test + step1, limit_neg, limit_pos);
-			int step2 = ((interp_lut[2][interp_ratio] << 0) * samp2) >> 12;
-			test = std::clamp(test + step2, limit_neg, limit_pos);
-
-			chn.tempReference = reference;
+			chn.play_dir = next_return_leg;
 
 
 			// Envelope
-			int32_t vol_dest_norm = env_limit_table[chn.volume_dest];
-			int32_t vol_incr = env_incr_table[chn.volume_incr];
-			bool incrDown = chn.volume_incr & 0x80;
-			bool incrUp = !incrDown;
-			if (incrDown) vol_incr = -vol_incr;
-
-			bool volIncrement = chn.volume_cur < vol_dest_norm && incrUp;
-			bool volDecrement = chn.volume_cur > vol_dest_norm && incrDown;
+			int32_t const vol_dest_norm = env_limit_table[chn.volume_dest];
+			int32_t const vol_incr = env_incr_table[chn.volume_incr];
+			if (chn.volume_incr == 0xff)
+			{
+				// The firmware uses FF/FF as the key-on preset: load full
+				// scale immediately, without scheduling an envelope callback.
+				chn.volume_cur = vol_dest_norm;
+				chn.irq = false;
+			}
+			bool const volIncrement = chn.volume_cur < vol_dest_norm;
+			bool const volDecrement = chn.volume_cur > vol_dest_norm;
 			bool const segment_active = chn.irq;
 			if (volIncrement || volDecrement)
 			{
-				chn.volume_cur = chn.volume_cur + vol_incr;
-				bool overshoot = (chn.volume_cur < vol_dest_norm && incrDown)
-					|| (chn.volume_cur > vol_dest_norm && incrUp);
+				chn.volume_cur += volIncrement ? vol_incr : -vol_incr;
+				bool const overshoot = (volIncrement && chn.volume_cur >= vol_dest_norm)
+					|| (volDecrement && chn.volume_cur <= vol_dest_norm);
 				if (overshoot)
 				{
 					chn.volume_cur = vol_dest_norm;
@@ -800,8 +904,12 @@ void mb87419_mb87420_device::sound_stream_update(sound_stream &stream)
 			// volume
 			s32 smp_data = (s64(test) * (chn.volume_cur >> 10)) >> 12;
 			stream.put(i, smpl, float(smp_data) / (1 << 18));
+			if (m_debug_wav)
+				m_debug_buffer[smpl * NUM_CHANNELS + i] = std::clamp(smp_data / 8, -32768, 32767);
 		}
 	}
+	if (m_debug_wav)
+		util::wav_add_data_16(*m_debug_wav, m_debug_buffer.data(), m_debug_buffer.size());
 
 	return;
 }

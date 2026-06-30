@@ -10,6 +10,9 @@
 #include "mb63h158.h"
 #include "cpu/upd78k/upd78k3.h"
 #include "machine/nvram.h"
+#include "emupal.h"
+#include "screen.h"
+#include "video/hd44780.h"
 
 
 namespace {
@@ -20,6 +23,7 @@ public:
 	kawai_k1_state(const machine_config &mconfig, device_type type, const char *tag)
 		: driver_device(mconfig, type, tag)
 		, m_mpu(*this, "mpu")
+		, m_lcdc(*this, "lcdc")
 	{
 	}
 
@@ -27,11 +31,23 @@ public:
 	void k1m(machine_config &config);
 
 private:
+	void port0_w(u8 data);
+
 	void k1_map(address_map &map) ATTR_COLD;
 	void k1m_map(address_map &map) ATTR_COLD;
 
 	required_device<upd78310_device> m_mpu;
+	required_device<hd44780_device> m_lcdc;
 };
+
+
+void kawai_k1_state::port0_w(u8 data)
+{
+	// P00-P02 select the panel switch row; P04-P06 control the LCD.
+	m_lcdc->rs_w(BIT(data, 4));
+	m_lcdc->rw_w(BIT(data, 5));
+	m_lcdc->e_w(BIT(data, 6));
+}
 
 
 void kawai_k1_state::k1m_map(address_map &map)
@@ -55,10 +71,25 @@ void kawai_k1_state::k1(machine_config &config)
 {
 	UPD78310(config, m_mpu, 12_MHz_XTAL); // µPD78310G-36
 	m_mpu->set_addrmap(AS_PROGRAM, &kawai_k1_state::k1_map);
+	m_mpu->port_out_cb<0>().set(FUNC(kawai_k1_state::port0_w));
+	m_mpu->port_in_cb<1>().set(m_lcdc, FUNC(hd44780_device::db_r));
+	m_mpu->port_out_cb<1>().set(m_lcdc, FUNC(hd44780_device::db_w));
 
 	NVRAM(config, "toneram", nvram_device::DEFAULT_ALL_0); // LC3564PL-12 + battery
 
 	MB63H158(config, "sensor", 7.2_MHz_XTAL);
+
+	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_LCD));
+	screen.set_refresh_hz(60);
+	screen.set_screen_update(m_lcdc, FUNC(hd44780_device::screen_update));
+	screen.set_size(6 * 16, 8 * 2);
+	screen.set_visarea_full();
+	screen.set_palette("palette");
+
+	PALETTE(config, "palette", palette_device::MONOCHROME_INVERTED);
+
+	HD44780(config, m_lcdc, 270'000); // clock not measured, datasheet typical clock used
+	m_lcdc->set_lcd_size(2, 16);
 }
 
 void kawai_k1_state::k1m(machine_config &config)

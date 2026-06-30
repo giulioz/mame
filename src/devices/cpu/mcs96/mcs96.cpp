@@ -136,10 +136,11 @@ void mcs96_device::execute_run()
 
 	while(icount > 0) {
 		while(icount > bcount) {
-			int picount = inst_state >= 0x200 ? -1 : icount;
+			const bool was_fetch = inst_state >= 0x200;
+			const int picount = icount;
 			do_exec_full();
 			// printf("pc %04x\n", PPC);
-			if(icount == picount) {
+			if(!was_fetch && icount == picount) {
 				fatalerror("Unhandled %x (%04x)\n", inst_state, PPC);
 			}
 		}
@@ -226,11 +227,12 @@ void mcs96_device::any_w8(u16 adr, u8 data)
 
 void mcs96_device::any_w16(u16 adr, u16 data)
 {
-	adr &= 0xfffe;
-	if (adr < 0x100)
-		regs->write_word(adr, data);
-	else
-		program->write_word(adr, data);
+	// Some production firmware relies on the observed 8x9x behaviour for
+	// unaligned word accesses.  Assemble the two byte cycles explicitly: a
+	// native 16-bit address-space access aligns an odd address down and swaps
+	// the byte the firmware is trying to access.
+	any_w8(adr, data);
+	any_w8(u16(adr + 1), data >> 8);
 }
 
 u8 mcs96_device::any_r8(u16 adr)
@@ -243,11 +245,7 @@ u8 mcs96_device::any_r8(u16 adr)
 
 u16 mcs96_device::any_r16(u16 adr)
 {
-	adr &= 0xfffe;
-	if (adr < 0x100)
-		return regs->read_word(adr);
-	else
-		return program->read_word(adr);
+	return any_r8(adr) | (u16(any_r8(u16(adr + 1))) << 8);
 }
 
 bool mcs96_device::memory_translate(int spacenum, int intention, offs_t &address, address_space *&target_space)
@@ -262,12 +260,13 @@ bool mcs96_device::memory_translate(int spacenum, int intention, offs_t &address
 uint8_t mcs96_device::do_addb(uint8_t v1, uint8_t v2)
 {
 	uint16_t sum = v1+v2;
+	bool const overflow = (~(v1 ^ v2) & (v1 ^ sum) & 0x80) != 0;
 	PSW &= ~(F_Z|F_N|F_C|F_V);
 	if(!uint8_t(sum))
 		PSW |= F_Z;
-	else if(int8_t(sum) < 0)
+	else if((int8_t(sum) < 0) != overflow)
 		PSW |= F_N;
-	if(~(v1^v2) & (v1^sum) & 0x80)
+	if(overflow)
 		PSW |= F_V|F_VT;
 	if(sum & 0xff00)
 		PSW |= F_C;
@@ -277,12 +276,13 @@ uint8_t mcs96_device::do_addb(uint8_t v1, uint8_t v2)
 uint16_t mcs96_device::do_add(uint16_t v1, uint16_t v2)
 {
 	uint32_t sum = v1+v2;
+	bool const overflow = (~(v1 ^ v2) & (v1 ^ sum) & 0x8000) != 0;
 	PSW &= ~(F_Z|F_N|F_C|F_V);
 	if(!uint16_t(sum))
 		PSW |= F_Z;
-	else if(int16_t(sum) < 0)
+	else if((int16_t(sum) < 0) != overflow)
 		PSW |= F_N;
-	if(~(v1^v2) & (v1^sum) & 0x8000)
+	if(overflow)
 		PSW |= F_V|F_VT;
 	if(sum & 0xffff0000)
 		PSW |= F_C;
@@ -292,13 +292,14 @@ uint16_t mcs96_device::do_add(uint16_t v1, uint16_t v2)
 uint8_t mcs96_device::do_subb(uint8_t v1, uint8_t v2)
 {
 	uint16_t diff = v1 - v2;
+	bool const overflow = ((v1 ^ v2) & (v1 ^ diff) & 0x80) != 0;
 	PSW &= ~(F_N|F_V|F_Z|F_C);
 	if(!uint8_t(diff))
 		PSW |= F_Z;
-	else if(int8_t(diff) < 0)
+	else if((int8_t(diff) < 0) != overflow)
 		PSW |= F_N;
-	if((v1^v2) & (v1^diff) & 0x80)
-		PSW |= F_V;
+	if(overflow)
+		PSW |= F_V|F_VT;
 	if(!(diff & 0xff00))
 		PSW |= F_C;
 	return diff;
@@ -307,13 +308,14 @@ uint8_t mcs96_device::do_subb(uint8_t v1, uint8_t v2)
 uint16_t mcs96_device::do_sub(uint16_t v1, uint16_t v2)
 {
 	uint32_t diff = v1 - v2;
+	bool const overflow = ((v1 ^ v2) & (v1 ^ diff) & 0x8000) != 0;
 	PSW &= ~(F_N|F_V|F_Z|F_C);
 	if(!uint16_t(diff))
 		PSW |= F_Z;
-	else if(int16_t(diff) < 0)
+	else if((int16_t(diff) < 0) != overflow)
 		PSW |= F_N;
-	if((v1^v2) & (v1^diff) & 0x8000)
-		PSW |= F_V;
+	if(overflow)
+		PSW |= F_V|F_VT;
 	if(!(diff & 0xffff0000))
 		PSW |= F_C;
 	return diff;
@@ -322,10 +324,11 @@ uint16_t mcs96_device::do_sub(uint16_t v1, uint16_t v2)
 uint8_t mcs96_device::do_addcb(uint8_t v1, uint8_t v2)
 {
 	const uint16_t sum = v1 + v2 + ((PSW & F_C) ? 1 : 0);
+	bool const overflow = (~(v1 ^ v2) & (v1 ^ uint8_t(sum)) & 0x80) != 0;
 	// Do NOT touch Z yet; we'll only clear it if result != 0
 	PSW &= ~(F_N | F_C | F_V);
-	if (int8_t(uint8_t(sum)) < 0) PSW |= F_N;
-	if (~(v1 ^ v2) & (v1 ^ uint8_t(sum)) & 0x80) PSW |= F_V | F_VT; // VT sticks (see §3.3)
+	if ((int8_t(uint8_t(sum)) < 0) != overflow) PSW |= F_N;
+	if (overflow) PSW |= F_V | F_VT; // VT sticks (see §3.3)
 	if (sum & 0x100) PSW |= F_C;
 	if (uint8_t(sum) != 0) PSW &= ~F_Z;  // never set Z here; only clear it if non-zero
 	return uint8_t(sum);
@@ -334,9 +337,10 @@ uint8_t mcs96_device::do_addcb(uint8_t v1, uint8_t v2)
 uint16_t mcs96_device::do_addc(uint16_t v1, uint16_t v2)
 {
 	const uint32_t sum = uint32_t(v1) + uint32_t(v2) + ((PSW & F_C) ? 1U : 0U);
+	bool const overflow = (~(v1 ^ v2) & (v1 ^ uint16_t(sum)) & 0x8000) != 0;
 	PSW &= ~(F_N | F_C | F_V);
-	if (int16_t(uint16_t(sum)) < 0) PSW |= F_N;
-	if (~(v1 ^ v2) & (v1 ^ uint16_t(sum)) & 0x8000) PSW |= F_V | F_VT;
+	if ((int16_t(uint16_t(sum)) < 0) != overflow) PSW |= F_N;
+	if (overflow) PSW |= F_V | F_VT;
 	if (sum & 0x10000) PSW |= F_C;
 	if (uint16_t(sum) != 0) PSW &= ~F_Z;
 	return uint16_t(sum);
@@ -346,10 +350,11 @@ uint16_t mcs96_device::do_addc(uint16_t v1, uint16_t v2)
 uint8_t mcs96_device::do_subcb(uint8_t v1, uint8_t v2)
 {
 	const uint16_t sum = v1 - v2 - ((PSW & F_C) ? 0 : 1);
+	bool const overflow = ((v1 ^ v2) & (v1 ^ uint8_t(sum)) & 0x80) != 0;
 	// Do NOT touch Z yet; we'll only clear it if result != 0
 	PSW &= ~(F_N | F_C | F_V);
-	if (int8_t(uint8_t(sum)) < 0) PSW |= F_N;
-	if ((v1 ^ v2) & (v1 ^ uint8_t(sum)) & 0x80) PSW |= F_V | F_VT; // VT sticks (see §3.3)
+	if ((int8_t(uint8_t(sum)) < 0) != overflow) PSW |= F_N;
+	if (overflow) PSW |= F_V | F_VT; // VT sticks (see §3.3)
 	if (!(sum & 0x100)) PSW |= F_C;
 	if (uint8_t(sum) != 0) PSW &= ~F_Z;  // never set Z here; only clear it if non-zero
 	return uint8_t(sum);
@@ -358,12 +363,30 @@ uint8_t mcs96_device::do_subcb(uint8_t v1, uint8_t v2)
 uint16_t mcs96_device::do_subc(uint16_t v1, uint16_t v2)
 {
 	const uint32_t sum = uint32_t(v1) - uint32_t(v2) - ((PSW & F_C) ? 0U : 1U);
+	bool const overflow = ((v1 ^ v2) & (v1 ^ uint16_t(sum)) & 0x8000) != 0;
 	PSW &= ~(F_N | F_C | F_V);
-	if (int16_t(uint16_t(sum)) < 0) PSW |= F_N;
-	if ((v1 ^ v2) & (v1 ^ uint16_t(sum)) & 0x8000) PSW |= F_V | F_VT;
+	if ((int16_t(uint16_t(sum)) < 0) != overflow) PSW |= F_N;
+	if (overflow) PSW |= F_V | F_VT;
 	if (!(sum & 0x10000)) PSW |= F_C;
 	if (uint16_t(sum) != 0) PSW &= ~F_Z;
 	return uint16_t(sum);
+}
+
+uint32_t mcs96_device::do_sub32(uint32_t v1, uint32_t v2)
+{
+	const uint64_t diff = uint64_t(v1) - uint64_t(v2);
+	const uint32_t result = uint32_t(diff);
+	bool const overflow = ((v1 ^ v2) & (v1 ^ result) & 0x80000000U) != 0;
+	PSW &= ~(F_N | F_V | F_Z | F_C);
+	if (!result)
+		PSW |= F_Z;
+	else if ((int32_t(result) < 0) != overflow)
+		PSW |= F_N;
+	if (overflow)
+		PSW |= F_V | F_VT;
+	if (!(diff & 0xffffffff00000000ULL))
+		PSW |= F_C;
+	return result;
 }
 
 void mcs96_device::set_nz8(uint8_t v)

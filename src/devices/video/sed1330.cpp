@@ -82,7 +82,7 @@ void sed1330_device::sed1330(address_map &map)
 
 // internal character generator ROM
 ROM_START( sed1330 )
-	ROM_REGION( 0x5c0, "gfx1", 0 ) // internal chargen ROM
+	ROM_REGION( 0x5c0, "gfx1", ROMREGION_ERASE00 ) // internal chargen ROM
 	ROM_LOAD( "sed1330.bin", 0x000, 0x5c0, NO_DUMP )
 ROM_END
 
@@ -262,6 +262,11 @@ void sed1330_device::command_w(uint8_t data)
 
 	switch (m_ir)
 	{
+	case INSTRUCTION_DISP_ON:
+	case INSTRUCTION_DISP_OFF:
+		m_d = BIT(m_ir, 0);
+		break;
+
 #if 0
 	case INSTRUCTION_SLEEP_IN:
 		break;

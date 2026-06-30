@@ -19,14 +19,14 @@
 //   0x0100-0x01FF  sample start address (4 bytes x 64 voices)
 //   0x0200-0x02FF  sample loop point   (4 bytes x 64 voices)
 //   0x0300-0x03FF  sample end           (4 bytes x 64 voices)
-//   0x1100-0x2100  ramp parameters (current, target, control)
+//   0x1100-0x2100  ramp destinations, starting values and controls
 //   0x2C00-0x38FF  DSP program and configuration
 //   0x3900-0x39FF  global configuration and readback registers
 //   0x3A00-0x3A7F  mixer send 0 (16-bit x 64 voices)
 //   0x3A80-0x3AFF  mixer send 1
 //   0x3B00-0x3B7F  mixer send 2
 //   0x3B80-0x3BFF  mixer send 3
-//   0x3C00-0x3C7F  mixer send 4
+//   0x3C00-0x3FFF  host wave-ROM read aperture (1 KiB window)
 //
 // Each mixer send entry (16 bits): bits 6-15 = level (10 bits), bits 0-5 = output bus (6 bits)
 
@@ -55,7 +55,9 @@ protected:
 
 private:
 	static constexpr unsigned NUM_VOICES = 64;
-	static constexpr unsigned NUM_MIXER_SENDS = 5;
+	static constexpr unsigned NUM_MIXER_SENDS = 4;
+	static constexpr unsigned NUM_IRAM3_BREAKPOINTS = 64;
+	static constexpr unsigned IRQ_QUEUE_SIZE = 64;
 	static constexpr unsigned DSP_PROGRAM_SIZE = 0x3900 - 0x2C00;   // 0x0D00 bytes
 	static constexpr unsigned GLOBAL_CONFIG_SIZE = 0x100;
 	static constexpr unsigned DRAM_SIZE = 0x40000;                   // 2Mbit = 256KB
@@ -83,30 +85,32 @@ private:
 
 		int32_t filter_type_select = 0;
 
-		uint32_t pitch_current_val = 0;
-		uint32_t pitch_target_val = 0;
+		uint32_t pitch_destination_val = 0; // area 0x1200
+		uint32_t pitch_start_val = 0;       // area 0x1b00
 		uint32_t pitch_interp_ctrl = 0;
 		
-		uint32_t amp_current_val = 0; // max:0x1ffc0?
-		uint32_t amp_target_val = 0;
+		uint32_t amp_destination_val = 0; // area 0x1500, max:0x1ffc0?
+		uint32_t amp_start_val = 0;       // area 0x1e00
 		uint32_t amp_interp_ctrl = 0;
 		
-		uint32_t ampmod_current_val = 0; // max:0x20000?
-		uint32_t ampmod_target_val = 0;
+		uint32_t ampmod_destination_val = 0; // area 0x1400, max:0x20000?
+		uint32_t ampmod_start_val = 0;       // area 0x1d00
 		uint32_t ampmod_interp_ctrl = 0;
 		
-		uint32_t tvf_f_current_val = 0; // max(open filter):0x3c000  min:0x14000
-		uint32_t tvf_f_target_val = 0;
+		uint32_t tvf_f_destination_val = 0; // area 0x1300, max(open):0x3c000 min:0x14000
+		uint32_t tvf_f_start_val = 0;       // area 0x1c00
 		uint32_t tvf_f_interp_ctrl = 0;
 		
-		uint32_t tvf_q_current_val = 0; // max(no resonance):0x80000  min(full reso):0x00   depends on cutoff!
-		uint32_t tvf_q_target_val = 0;
+		uint32_t tvf_q_destination_val = 0; // area 0x1100, max(no resonance):0x80000
+		uint32_t tvf_q_start_val = 0;       // area 0x2100, shifted right two on start
 		uint32_t tvf_q_interp_ctrl = 0;
 
 		uint32_t current_addr = 0;    // runtime decode/read position
 		int32_t dpcm_val = 0;
 		uint16_t subphase = 0;
 		bool alt_loop_dir = false;
+		bool playing = false;
+		bool loop_irq_pending = false;
 
 		int32_t tvf_bp;
 		int32_t tvf_lp;
@@ -122,8 +126,9 @@ private:
 	static int32_t pitch_to_increment(int32_t pitch_val);
 	static uint16_t decode_interp_flags(uint32_t ctrl, bool force_log = false);
 	static uint32_t interp_mask(uint16_t flags);
-	static int32_t clamp_s32(int32_t v, int32_t lo, int32_t hi);
 	static int16_t interp_q14_output(const interp_state &s);
+	static int16_t limit_tvf_frequency(int16_t f_q14, const interp_state &q);
+	static int decode_filter_type(const pcm_voice &v);
 	static void interp_start_linear(interp_state &s);
 	static void interp_start_log(interp_state &s);
 	static void interp_start_trunk(interp_state &s);
@@ -149,13 +154,26 @@ private:
 	void retarget_tvf_q_interp(pcm_voice &v);
 	void retarget_tvf_f_interp(pcm_voice &v);
 
-	int32_t do_voice(pcm_voice &v);
+	void reset_voice_runtime(pcm_voice &v);
+	void update_irq_line();
+	void raise_irq(uint8_t reason, uint8_t source, uint16_t data = 0);
+	void acknowledge_irq();
+	uint16_t current_irq_status() const;
+	uint16_t current_irq_data() const;
+	uint8_t read_command_status();
+	uint16_t next_random();
+	uint32_t dsp_read_u32(offs_t offset) const;
+	uint16_t dsp_read_u16(offs_t offset) const;
+	void dsp_write_u32(offs_t offset, uint32_t data);
+	void update_iram3_breakpoints();
+	int32_t do_voice(pcm_voice &v, bool control_tick_2, bool control_tick_8, bool &voice_event);
 	int32_t decode_sample(uint32_t sample_addr, uint32_t wave_ctrl);
 
 	devcb_write_line m_int_callback;
 
 	uint32_t m_rate;
 	sound_stream *m_stream;
+	uint8_t m_control_phase;
 	pcm_voice m_voices[NUM_VOICES];
 
 	// Full register array (for ramp current/target lookups across banks)
@@ -163,6 +181,21 @@ private:
 
 	// DSP program/config area (0x2C00-0x38FF)
 	uint8_t m_dsp_program[DSP_PROGRAM_SIZE];
+	uint8_t m_dsp_read_latch[4];
+	uint8_t m_dsp_read_latch_mask;
+	uint8_t m_command_busy_reads;
+	uint16_t m_random_seed1;
+	uint16_t m_random_seed2;
+	bool m_iram3_breakpoint_active[NUM_IRAM3_BREAKPOINTS];
+
+	// IRQ7 is level-triggered.  Status contains source in bits 13-8 and reason
+	// in bits 3-0; reading the low byte of 0x391a acknowledges the head event.
+	uint16_t m_irq_status[IRQ_QUEUE_SIZE];
+	uint16_t m_irq_data[IRQ_QUEUE_SIZE];
+	uint8_t m_irq_head;
+	uint8_t m_irq_count;
+	bool m_irq_line;
+	uint16_t m_irq_control;
 
 	// Global config area (0x3900-0x39FF)
 	uint8_t m_global_config[GLOBAL_CONFIG_SIZE];

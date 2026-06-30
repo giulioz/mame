@@ -87,6 +87,9 @@ protected:
 
 	inline void next(int cycles) { icount -= cycles_scaling*cycles; inst_state = STATE_FETCH; }
 	inline void next_noirq(int cycles) { icount -= cycles_scaling*cycles; inst_state = STATE_FETCH_NOIRQ; }
+	inline void next_196(int legacy_cycles, int c196_cycles) { next(is_196() ? c196_cycles : legacy_cycles); }
+	inline void next_noirq_196(int legacy_cycles, int c196_cycles) { next_noirq(is_196() ? c196_cycles : legacy_cycles); }
+	virtual bool is_196() const { return false; }
 	virtual void check_irq();
 	inline uint8_t read_pc() { return m_pr8(PC++); }
 
@@ -115,6 +118,7 @@ protected:
 	uint16_t do_addc(uint16_t v1, uint16_t v2);
 	uint8_t do_subcb(uint8_t v1, uint8_t v2);
 	uint16_t do_subc(uint16_t v1, uint16_t v2);
+	uint32_t do_sub32(uint32_t v1, uint32_t v2);
 
 	void set_nz8(uint8_t v);
 	void set_nz16(uint16_t v);
@@ -212,8 +216,6 @@ protected:
 	O(subc_direct_2w); O(subc_immed_2w); O(subc_indexed_2w); O(subc_indirect_2w);
 	O(subcb_direct_2b); O(subcb_immed_2b); O(subcb_indexed_2b); O(subcb_indirect_2b);
 	O(trap_none);
-	O(xch_direct_2w);
-	O(xchb_direct_2b);
 	O(xor_direct_2w); O(xor_immed_2w); O(xor_indexed_2w); O(xor_indirect_2w);
 	O(xorb_direct_2b); O(xorb_immed_2b); O(xorb_indexed_2b); O(xorb_indirect_2b);
 

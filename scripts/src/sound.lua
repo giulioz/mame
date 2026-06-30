@@ -1772,6 +1772,20 @@ if SOUNDS["ROLANDGP"] then
 end
 
 ---------------------------------------------------
+-- Roland LA32
+--@src/devices/sound/roland_la32.h,SOUNDS["ROLANDLA32"] = true
+---------------------------------------------------
+
+if SOUNDS["ROLANDLA32"] then
+	files {
+		MAME_DIR .. "src/devices/sound/roland_d50fx.cpp",
+		MAME_DIR .. "src/devices/sound/roland_d50fx.h",
+		MAME_DIR .. "src/devices/sound/roland_la32.cpp",
+		MAME_DIR .. "src/devices/sound/roland_la32.h",
+	}
+end
+
+---------------------------------------------------
 -- Roland LP-based sample players
 --@src/devices/sound/roland_lp.h,SOUNDS["ROLANDLP"] = true
 ---------------------------------------------------
@@ -1780,6 +1794,8 @@ if SOUNDS["ROLANDLP"] then
 	files {
 		MAME_DIR .. "src/devices/sound/roland_lp.cpp",
 		MAME_DIR .. "src/devices/sound/roland_lp.h",
+		MAME_DIR .. "src/devices/sound/roland_rcc.cpp",
+		MAME_DIR .. "src/devices/sound/roland_rcc.h",
 	}
 end
 

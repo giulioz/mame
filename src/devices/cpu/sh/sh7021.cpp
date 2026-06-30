@@ -162,9 +162,11 @@ void sh7021_device::internal_map(address_map &map)
 	map(0x05ffffb0, 0x05ffffb1).rw(FUNC(sh7021_device::bsc_rtcnt_r), FUNC(sh7021_device::bsc_rtcnt_w));
 	map(0x05ffffb2, 0x05ffffb3).rw(FUNC(sh7021_device::bsc_rtcor_r), FUNC(sh7021_device::bsc_rtcor_w));
 
-	map(0x05ffffb8, 0x05ffffb8).rw(FUNC(sh7021_device::wdt_tcsr_r), FUNC(sh7021_device::wdt_tcsr_w));
-	map(0x05ffffb9, 0x05ffffb9).rw(FUNC(sh7021_device::wdt_tcnt_r), FUNC(sh7021_device::wdt_tcnt_w));
-	map(0x05ffffba, 0x05ffffba).rw(FUNC(sh7021_device::wdt_rstcsr_r), FUNC(sh7021_device::wdt_rstcsr_w));
+	map(0x05ffffb8, 0x05ffffb8).r(FUNC(sh7021_device::wdt_tcsr_r));
+	map(0x05ffffb9, 0x05ffffb9).r(FUNC(sh7021_device::wdt_tcnt_r));
+	map(0x05ffffb8, 0x05ffffb9).w(FUNC(sh7021_device::wdt_tcsr_tcnt_w));
+	map(0x05ffffbb, 0x05ffffbb).r(FUNC(sh7021_device::wdt_rstcsr_r));
+	map(0x05ffffba, 0x05ffffbb).w(FUNC(sh7021_device::wdt_rstcsr_w));
 
 	map(0x05ffffc0, 0x05ffffc1).rw(FUNC(sh7021_device::pfc_padr_r), FUNC(sh7021_device::pfc_padr_w));
 	map(0x05ffffc2, 0x05ffffc3).rw(FUNC(sh7021_device::pfc_pbdr_r), FUNC(sh7021_device::pfc_pbdr_w));
@@ -189,6 +191,10 @@ void sh7021_device::internal_map(address_map &map)
 
 sh7021_device::sh7021_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
 	: sh2_device(mconfig, SH7021, tag, owner, clock, CPU_TYPE_SH2, address_map_constructor(FUNC(sh7021_device::internal_map), this), 28, 0xc7ffffff)
+	, m_tpc_out(*this)
+	, m_wdtovf(*this)
+	, m_sci_tx(*this)
+	, m_an_in(*this, 0)
 	, m_pa_out(*this)
 	, m_pb_out(*this)
 	, m_pa_bit_out(*this)
@@ -199,6 +205,10 @@ sh7021_device::sh7021_device(const machine_config &mconfig, const char *tag, dev
 
 sh7021_device::sh7021_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, address_map_constructor internal_map)
 	: sh2_device(mconfig, type, tag, owner, clock, CPU_TYPE_SH2, internal_map.isnull() ? address_map_constructor(FUNC(sh7021_device::internal_map), this) : internal_map, 28, 0xc7ffffff)
+	, m_tpc_out(*this)
+	, m_wdtovf(*this)
+	, m_sci_tx(*this)
+	, m_an_in(*this, 0)
 	, m_pa_out(*this)
 	, m_pb_out(*this)
 	, m_pa_bit_out(*this)
@@ -216,6 +226,13 @@ void sh7021_device::execute_run()
 		debugger_instruction_hook(m_sh2_state->pc);
 
 		const uint16_t opcode = decrypted_read_word(m_sh2_state->pc >= 0x40000000 ? m_sh2_state->pc : m_sh2_state->pc & m_am);
+		if (m_ubc.pending && ((m_sh2_state->sr >> 4) & 15) < 15)
+		{
+			check_pending_irq("SH703x user break");
+			m_test_irq = 0;
+			consumed_cycles = icount_before - m_sh2_state->icount;
+			continue;
+		}
 
 		if (m_sh2_state->m_delay)
 		{
@@ -261,7 +278,19 @@ void sh7021_device::device_start()
 		m_sci[i].et->adjust(attotime::never);
 	}
 
+	m_adc.et = machine().scheduler().timer_alloc(timer_expired_delegate(FUNC(sh7021_device::adc_conversion_complete), this));
+	m_adc.et->adjust(attotime::never);
+	m_wdt.et = machine().scheduler().timer_alloc(timer_expired_delegate(FUNC(sh7021_device::wdt_overflow), this));
+	m_wdt.et->adjust(attotime::never);
+	m_bsc.et = machine().scheduler().timer_alloc(timer_expired_delegate(FUNC(sh7021_device::bsc_refresh_timer), this));
+	m_bsc.et->adjust(attotime::never);
+
 	// Interrupt Controller (INTC)
+	save_item(NAME(m_ext_irq_pending));
+	save_item(NAME(m_ext_irq_state));
+	save_item(NAME(m_nmi_input_state));
+	save_item(NAME(m_ipra));
+	save_item(NAME(m_iprb));
 	save_item(NAME(m_iprc));
 	save_item(NAME(m_iprd));
 	save_item(NAME(m_ipre));
@@ -273,6 +302,7 @@ void sh7021_device::device_start()
 	save_item(STRUCT_MEMBER(m_ubc, bamrh));
 	save_item(STRUCT_MEMBER(m_ubc, bamrl));
 	save_item(STRUCT_MEMBER(m_ubc, bbr));
+	save_item(STRUCT_MEMBER(m_ubc, pending));
 
 	// Bus State Controller (BSC)
 	save_item(STRUCT_MEMBER(m_bsc, bcr));
@@ -292,6 +322,8 @@ void sh7021_device::device_start()
 	save_item(STRUCT_MEMBER(m_dma, dar));
 	save_item(STRUCT_MEMBER(m_dma, tcr));
 	save_item(STRUCT_MEMBER(m_dma, chcr));
+	save_item(STRUCT_MEMBER(m_dma, te_read));
+	save_item(NAME(m_dmaor));
 	save_item(NAME(m_dma_cycles));
 
 	// 16-Bit Integrated-Timer Pulse Unit (ITU)
@@ -304,6 +336,7 @@ void sh7021_device::device_start()
 	save_item(STRUCT_MEMBER(m_itu.timer, tior));
 	save_item(STRUCT_MEMBER(m_itu.timer, tier));
 	save_item(STRUCT_MEMBER(m_itu.timer, tsr));
+	save_item(STRUCT_MEMBER(m_itu.timer, tsr_read));
 	save_item(STRUCT_MEMBER(m_itu.timer, tcnt));
 	save_item(STRUCT_MEMBER(m_itu.timer, gra));
 	save_item(STRUCT_MEMBER(m_itu.timer, grb));
@@ -317,11 +350,14 @@ void sh7021_device::device_start()
 	save_item(STRUCT_MEMBER(m_tpc, nderb));
 	save_item(STRUCT_MEMBER(m_tpc, ndra));
 	save_item(STRUCT_MEMBER(m_tpc, ndrb));
+	save_item(STRUCT_MEMBER(m_tpc, output));
 
 	// Watchdog Timer (WDT)
 	save_item(STRUCT_MEMBER(m_wdt, tcsr));
 	save_item(STRUCT_MEMBER(m_wdt, tcnt));
 	save_item(STRUCT_MEMBER(m_wdt, rstcsr));
+	save_item(STRUCT_MEMBER(m_wdt, ovf_read));
+	save_item(STRUCT_MEMBER(m_wdt, wovf_read));
 
 	// Serial Communication Interface (SCI)
 	save_item(STRUCT_MEMBER(m_sci, smr));
@@ -333,6 +369,14 @@ void sh7021_device::device_start()
 	save_item(STRUCT_MEMBER(m_sci, ssr_read));
 	save_item(STRUCT_MEMBER(m_sci, rsr));
 	save_item(STRUCT_MEMBER(m_sci, rdr));
+	save_item(STRUCT_MEMBER(m_sci, tx_busy));
+
+	// A/D Converter
+	save_item(STRUCT_MEMBER(m_adc, addr));
+	save_item(STRUCT_MEMBER(m_adc, adcsr));
+	save_item(STRUCT_MEMBER(m_adc, adcr));
+	save_item(STRUCT_MEMBER(m_adc, channel));
+	save_item(STRUCT_MEMBER(m_adc, adf_read));
 
 	// Pin Function Controller (PFC)
 	save_item(STRUCT_MEMBER(m_pfc, paior));
@@ -350,6 +394,9 @@ void sh7021_device::device_start()
 	save_item(STRUCT_MEMBER(m_pfc, pbfunc));
 	save_item(STRUCT_MEMBER(m_pfc, pa_gpio_mask));
 	save_item(STRUCT_MEMBER(m_pfc, pb_gpio_mask));
+	save_item(STRUCT_MEMBER(m_pfc, pcdr_in));
+	save_item(NAME(m_sbycr));
+	save_item(NAME(m_has_internal_rom));
 }
 
 void sh7021_device::device_reset()
@@ -357,6 +404,9 @@ void sh7021_device::device_reset()
 	sh2_device::device_reset();
 
 	// Interrupt Controller (INTC)
+	m_ext_irq_pending = 0;
+	m_ext_irq_state = 0;
+	m_nmi_input_state = false;
 	m_ipra = 0;
 	m_iprb = 0;
 	m_iprc = 0;
@@ -370,6 +420,7 @@ void sh7021_device::device_reset()
 	m_ubc.bamrh = 0;
 	m_ubc.bamrl = 0;
 	m_ubc.bbr = 0;
+	m_ubc.pending = false;
 
 	// Bus State Controller (BSC)
 	m_bsc.bcr = 0;
@@ -383,6 +434,7 @@ void sh7021_device::device_reset()
 	m_bsc.rtcsr_read = false;
 	m_bsc.rtcnt = 0;
 	m_bsc.rtcor = 0x00ff;
+	m_bsc.et->adjust(attotime::never);
 
 	// DMA Controller (DMAC)
 	for (uint32_t i = 0; i < 4; i++)
@@ -391,22 +443,25 @@ void sh7021_device::device_reset()
 		m_dma[i].dar = 0;
 		m_dma[i].tcr = 0;
 		m_dma[i].chcr = 0;
+		m_dma[i].te_read = false;
 	}
 	m_dmaor = 0;
 	m_dma_cycles = 0;
 
 	// 16-Bit Integrated-Timer Pulse Unit (ITU)
-	m_itu.tstr = 0x00;
-	m_itu.tsnc = 0x00;
+	m_itu.tstr = 0;
+	m_itu.tsnc = 0;
 	m_itu.tmdr = 0;
-	m_itu.tfcr = 0x00;
-	m_itu.tocr = 0xff;
+	m_itu.tfcr = 0;
+	m_itu.tocr = 3;
 	for (uint32_t i = 0; i < 5; i++)
 	{
+		m_itu.timer[i].et->adjust(attotime::never);
 		m_itu.timer[i].tcr = 0;
-		m_itu.timer[i].tior = 0x00;
-		m_itu.timer[i].tier = 0x00;
-		m_itu.timer[i].tsr = 0x00;
+		m_itu.timer[i].tior = 0;
+		m_itu.timer[i].tier = 0;
+		m_itu.timer[i].tsr = 0;
+		m_itu.timer[i].tsr_read = 0;
 		m_itu.timer[i].tcnt = 0;
 		m_itu.timer[i].gra = 0xffff;
 		m_itu.timer[i].grb = 0xffff;
@@ -421,15 +476,20 @@ void sh7021_device::device_reset()
 	m_tpc.ndera = 0;
 	m_tpc.ndra = 0;
 	m_tpc.ndrb = 0;
+	m_tpc.output = 0;
 
 	// Watchdog Timer (WDT)
 	m_wdt.tcsr = 0x18;
 	m_wdt.tcnt = 0;
-	m_wdt.rstcsr = 0x3f;
+	m_wdt.rstcsr = 0x1f;
+	m_wdt.ovf_read = false;
+	m_wdt.wovf_read = false;
+	m_wdt.et->adjust(attotime::never);
 
 	// Serial Communication Interface (SCI)
 	for (uint32_t i = 0; i < 2; i++)
 	{
+		m_sci[i].et->adjust(attotime::never);
 		m_sci[i].smr = 0;
 		m_sci[i].brr = 0xff;
 		m_sci[i].scr = 0;
@@ -439,7 +499,16 @@ void sh7021_device::device_reset()
 		m_sci[i].ssr_read = 0;
 		m_sci[i].rsr = 0;
 		m_sci[i].rdr = 0;
+		m_sci[i].tx_busy = false;
 	}
+
+	// A/D Converter
+	m_adc.et->adjust(attotime::never);
+	std::fill(std::begin(m_adc.addr), std::end(m_adc.addr), 0);
+	m_adc.adcsr = 0;
+	m_adc.adcr = 0x7f;
+	m_adc.channel = 0;
+	m_adc.adf_read = false;
 
 	// Pin Function Controller (PFC)
 	m_pfc.paior = 0;
@@ -455,6 +524,8 @@ void sh7021_device::device_reset()
 	m_pfc.cascr = 0x5fff;
 	m_pfc.pa_gpio_mask = 0;
 	m_pfc.pb_gpio_mask = 0xffff;
+	m_pfc.pcdr_in = 0;
+	m_sbycr = 0;
 
 	static constexpr uint16_t PACR1_W_MASK = 0xfffd;
 	static constexpr uint16_t PACR2_W_MASK = 0x55ff;
@@ -469,107 +540,171 @@ void sh7021_device::device_reset()
 			m_pfc.pa_gpio_mask |= 1 << i;
 		m_pfc.pbfunc[i] = 0;
 	}
+
+	recalc_irq();
 }
 
 uint8_t sh7021_device::read_byte(offs_t offset)
 {
-	const uint32_t area = (offset >> 24) & 7;
-	if (area == 6)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 11) & 3) + 1; // Consume cycles specified by A6LW
-	else if (area == 0 || area == 2)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 13) & 3) + 1; // Consume cycles specified by A02LW
+	ubc_check(offset, false, false, false, 1);
+	consume_bus_cycles(offset, false);
 
 	return m_program->read_byte(offset & m_am);
 }
 
 uint16_t sh7021_device::read_word(offs_t offset)
 {
-	const uint32_t area = (offset >> 24) & 7;
-	if (area == 6)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 11) & 3) + 1; // Consume cycles specified by A6LW
-	else if (area == 0 || area == 2)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 13) & 3) + 1; // Consume cycles specified by A02LW
+	ubc_check(offset, false, false, false, 2);
+	consume_bus_cycles(offset, false);
 
 	return m_program->read_word(offset & m_am);
 }
 
 uint32_t sh7021_device::read_long(offs_t offset)
 {
-	const uint32_t area = (offset >> 24) & 7;
-	if (area == 6)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 11) & 3) + 1; // Consume cycles specified by A6LW
-	else if (area == 0 || area == 2)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 13) & 3) + 1; // Consume cycles specified by A02LW
+	ubc_check(offset, false, false, false, 3);
+	consume_bus_cycles(offset, false);
 
 	return m_program->read_dword(offset & m_am);
 }
 
 uint16_t sh7021_device::decrypted_read_word(offs_t offset)
 {
-	const uint32_t area = (offset >> 24) & 7;
-	if (area == 6)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 11) & 3) + 1; // Consume cycles specified by A6LW
-	else if (area == 0 || area == 2)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 13) & 3) + 1; // Consume cycles specified by A02LW
+	ubc_check(offset, false, true, false, 2);
+	consume_bus_cycles(offset, false);
 
 	return m_decrypted_program->read_word(offset);
 }
 
 void sh7021_device::write_byte(offs_t offset, uint8_t data)
 {
-	const uint32_t area = (offset >> 24) & 7;
-	if (area == 6)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 11) & 3) + 1; // Consume cycles specified by A6LW
-	else if (area == 0 || area == 2)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 13) & 3) + 1; // Consume cycles specified by A02LW
+	ubc_check(offset, false, false, true, 1);
+	consume_bus_cycles(offset, true);
 
 	m_program->write_byte(offset & m_am, data);
 }
 
 void sh7021_device::write_word(offs_t offset, uint16_t data)
 {
-	const uint32_t area = (offset >> 24) & 7;
-	if (area == 6)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 11) & 3) + 1; // Consume cycles specified by A6LW
-	else if (area == 0 || area == 2)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 13) & 3) + 1; // Consume cycles specified by A02LW
+	ubc_check(offset, false, false, true, 2);
+	consume_bus_cycles(offset, true);
 
 	m_program->write_word(offset & m_am, data);
 }
 
 void sh7021_device::write_long(offs_t offset, uint32_t data)
 {
-	const uint32_t area = (offset >> 24) & 7;
-	if (area == 6)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 11) & 3) + 1; // Consume cycles specified by A6LW
-	else if (area == 0 || area == 2)
-		m_sh2_state->icount -= ((m_bsc.wcr3 >> 13) & 3) + 1; // Consume cycles specified by A02LW
+	ubc_check(offset, false, false, true, 3);
+	consume_bus_cycles(offset, true);
 
 	m_program->write_dword(offset & m_am, data);
+}
+
+void sh7021_device::consume_bus_cycles(offs_t offset, bool write)
+{
+	const unsigned area = (offset >> 24) & 7;
+
+	// On-chip ROM and RAM always complete in one state.  Peripheral module
+	// accesses are fixed at three states.
+	if ((area == 0 && m_has_internal_rom) || area == 7)
+		return;
+	if (area == 5)
+	{
+		m_sh2_state->icount -= 2;
+		return;
+	}
+
+	if (write)
+	{
+		// CPU external writes use a fixed two-state bus cycle.  DRAM can use
+		// short pitch when DRAME is set and WW1 is clear.
+		if (area != 1 || !BIT(m_bsc.bcr, 15) || BIT(m_bsc.wcr1, 1))
+			m_sh2_state->icount--;
+		return;
+	}
+
+	if (area == 0 || area == 2)
+		m_sh2_state->icount -= ((m_bsc.wcr3 >> 13) & 3) + 1;
+	else if (area == 6)
+		m_sh2_state->icount -= ((m_bsc.wcr3 >> 11) & 3) + 1;
+	else if (BIT(m_bsc.wcr1, 8 + area))
+		m_sh2_state->icount--;
 }
 
 void sh7021_device::execute_set_input(int inputnum, int state)
 {
 	if (inputnum == INPUT_LINE_NMI)
 	{
-		sh2_device::execute_set_input(inputnum, state);
+		const bool old_state = m_nmi_input_state;
+		m_nmi_input_state = state != CLEAR_LINE;
+
+		// MAME's asserted state represents the active-low NMI pin.  Pulse the
+		// base core only for the edge selected by NMIE.
+		const bool falling_edge = !old_state && m_nmi_input_state;
+		const bool rising_edge = old_state && !m_nmi_input_state;
+		if ((!BIT(m_icr, 8) && falling_edge) || (BIT(m_icr, 8) && rising_edge))
+		{
+			sh2_device::execute_set_input(INPUT_LINE_NMI, ASSERT_LINE);
+			sh2_device::execute_set_input(INPUT_LINE_NMI, CLEAR_LINE);
+		}
 		return;
 	}
 
 	if (inputnum >= 0 && inputnum <= 7)
 	{
-		if (state == ASSERT_LINE)
-			m_ext_irq_pending |= (1 << inputnum);
+		const uint8_t mask = 1U << inputnum;
+		const bool old_state = bool(m_ext_irq_state & mask);
+		const bool new_state = state != CLEAR_LINE;
+
+		if (new_state)
+			m_ext_irq_state |= mask;
 		else
-			m_ext_irq_pending &= ~(1 << inputnum);
+			m_ext_irq_state &= ~mask;
+
+		if (BIT(m_icr, inputnum))
+		{
+			// Edge-sensed requests remain pending until accepted by the CPU.
+			if (!old_state && new_state)
+				m_ext_irq_pending |= mask;
+		}
+		else if (new_state)
+			m_ext_irq_pending |= mask;
+		else
+			m_ext_irq_pending &= ~mask;
 		recalc_irq();
 	}
 }
 
+void sh7021_device::sh2_exception_internal(const char *message, int irqline, int vector)
+{
+	if (vector == 12)
+		m_ubc.pending = false;
+	// Acceptance clears the interrupt controller's latch for edge-sensed IRQs.
+	if (vector >= 64 && vector <= 71 && BIT(m_icr, vector - 64))
+		m_ext_irq_pending &= ~(1U << (vector - 64));
+
+	sh2_device::sh2_exception_internal(message, irqline, vector);
+	recalc_irq();
+}
+
 void sh7021_device::recalc_irq()
 {
-	int irq = 0;
+	int irq = -1;
 	int vector = -1;
+
+	// Sources are visited in the hardware's default priority order.  Equal
+	// programmed levels retain the first source, as specified by table 5.3.
+	auto consider = [&irq, &vector] (int level, int candidate_vector)
+	{
+		if (level > 0 && level > irq)
+		{
+			irq = level;
+			vector = candidate_vector;
+		}
+	};
+
+	if (m_ubc.pending)
+		consider(15, 12);
 
 	// External IRQs (IRQ0-IRQ7)
 	// IRQ0-3 priorities in IPRA, IRQ4-7 in IPRB
@@ -585,11 +720,7 @@ void sh7021_device::recalc_irq()
 		else
 			level = (m_iprb >> (12 - (i - 4) * 4)) & 0xf;
 
-		if (level > irq)
-		{
-			irq = level;
-			vector = 64 + i;
-		}
+		consider(level, 64 + i);
 	}
 
 	// DMA IRQs
@@ -600,43 +731,15 @@ void sh7021_device::recalc_irq()
 		if ((m_dma[i].chcr & 2) && (m_dma[i].chcr & 4))
 		{
 			int level = (i < 2) ? ((m_iprc >> 12) & 0xf) : ((m_iprc >> 8) & 0xf);
-			if (level > irq)
-			{
-				irq = level;
-				vector = 72 + i * 4; // DMAC0=72, DMAC1=74, DMAC2=76, DMAC3=78
-			}
+			consider(level, 72 + i * 2);
 		}
 	}
 
-	// Serial IRQs
-	for (uint32_t i = 0; i < 2; ++i)
-	{
-		int sci_level = (i == 1 ? ((m_ipre >> 12) & 0xf) : (m_iprd & 0xf));
-		if (sci_level == 0)
-		{
-			continue;
-		}
-
-		if (BIT(m_sci[i].scr, 7) && BIT(m_sci[i].ssr, 7))
-		{
-			// TxI
-			irq = sci_level;
-			vector = 102 + i * 4;
-			LOGMASKED(LOG_DMA_WR, "SCI Tx interrupt %d is ready, level %d vector %d\n", i, irq, vector);
-		}
-		else if (BIT(m_sci[i].scr, 2) && BIT(m_sci[i].ssr, 2))
-		{
-			// TEI
-			irq = sci_level;
-			vector = 103 + i * 4;
-			LOGMASKED(LOG_DMA_WR, "SCI TE interrupt %d is ready, level %d vector %d\n", i, irq, vector);
-		}
-	}
-
-	// Timer IRQs
+	// ITU IRQs
 	for (uint32_t i = 0; i < 5; ++i)
 	{
-		if ((m_itu.timer[i].tier & m_itu.timer[i].tsr) & 7)
+		const uint8_t pending = m_itu.timer[i].tier & m_itu.timer[i].tsr & 7;
+		if (pending)
 		{
 			int level;
 
@@ -659,29 +762,45 @@ void sh7021_device::recalc_irq()
 					break;
 			}
 
-			if (level == 0)
-			{
-				continue;
-			}
-
 			for (uint32_t j = 0; j < 3; j++)
 			{
-				if (BIT(m_itu.timer[i].tier & m_itu.timer[i].tsr, j))
+				if (BIT(pending, j))
 				{
-					irq = level;
-					vector = 80 + i * 4 + j;
+					consider(level, 80 + i * 4 + j);
 					break;
 				}
 			}
 		}
 	}
 
-	if (vector >= 0)
+	// SCI IRQs, ordered ERI, RXI, TXI, TEI within each module.
+	for (uint32_t i = 0; i < 2; ++i)
 	{
-		m_sh2_state->internal_irq_level = irq;
-		m_internal_irq_vector = vector;
-		m_test_irq = 1;
+		const int level = i ? ((m_ipre >> 12) & 0xf) : (m_iprd & 0xf);
+		const int base = 100 + i * 4;
+		if (BIT(m_sci[i].scr, 6) && (m_sci[i].ssr & 0x38))
+			consider(level, base);
+		else if (BIT(m_sci[i].scr, 6) && BIT(m_sci[i].ssr, 6))
+			consider(level, base + 1);
+		else if (BIT(m_sci[i].scr, 7) && BIT(m_sci[i].ssr, 7))
+			consider(level, base + 2);
+		else if (BIT(m_sci[i].scr, 2) && BIT(m_sci[i].ssr, 2))
+			consider(level, base + 3);
 	}
+
+	// Parity error (vector 108) is generated by the BSC; A/D conversion end
+	// is vector 109.  They share IPRE bits 11-8.
+	if ((m_adc.adcsr & 0xc0) == 0xc0)
+		consider((m_ipre >> 8) & 0xf, 109);
+
+	if (!BIT(m_wdt.tcsr, 6) && BIT(m_wdt.tcsr, 7))
+		consider((m_ipre >> 4) & 0xf, 112);
+	if ((m_bsc.rtcsr & 0xc0) == 0xc0)
+		consider((m_ipre >> 4) & 0xf, 113);
+
+	m_sh2_state->internal_irq_level = irq;
+	m_internal_irq_vector = vector;
+	m_test_irq = 1;
 }
 
 
@@ -698,6 +817,7 @@ void sh7021_device::intc_ipra_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	LOGMASKED(LOG_INTC_WR, "%s: intc_ipra_w = %04x & %04x\n", machine().describe_context(), data, mem_mask);
 	COMBINE_DATA(&m_ipra);
+	recalc_irq();
 }
 
 uint16_t sh7021_device::intc_iprb_r()
@@ -711,6 +831,7 @@ void sh7021_device::intc_iprb_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	LOGMASKED(LOG_INTC_WR, "%s: intc_iprb_w = %04x & %04x\n", machine().describe_context(), data, mem_mask);
 	COMBINE_DATA(&m_iprb);
+	recalc_irq();
 }
 
 uint16_t sh7021_device::intc_iprc_r()
@@ -724,6 +845,7 @@ void sh7021_device::intc_iprc_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	LOGMASKED(LOG_INTC_WR, "%s: intc_iprc_w = %04x & %04x\n", machine().describe_context(), data, mem_mask);
 	COMBINE_DATA(&m_iprc);
+	recalc_irq();
 }
 
 uint16_t sh7021_device::intc_iprd_r()
@@ -737,6 +859,7 @@ void sh7021_device::intc_iprd_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	LOGMASKED(LOG_INTC_WR, "%s: intc_iprd_w = %04x & %04x\n", machine().describe_context(), data, mem_mask);
 	COMBINE_DATA(&m_iprd);
+	recalc_irq();
 }
 
 uint16_t sh7021_device::intc_ipre_r()
@@ -750,19 +873,42 @@ void sh7021_device::intc_ipre_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	LOGMASKED(LOG_INTC_WR, "%s: intc_ipre_w = %04x & %04x\n", machine().describe_context(), data, mem_mask);
 	COMBINE_DATA(&m_ipre);
+	recalc_irq();
 }
 
 uint16_t sh7021_device::intc_icr_r()
 {
 	if (!machine().side_effects_disabled())
-		LOGMASKED(LOG_INTC_RD, "%s: intc_icr_r: %04x\n", machine().describe_context(), m_ipre);
-	return m_icr;
+		LOGMASKED(LOG_INTC_RD, "%s: intc_icr_r: %04x\n", machine().describe_context(), m_icr);
+	return m_icr | (m_nmi_input_state ? 0 : 0x8000);
 }
 
 void sh7021_device::intc_icr_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	LOGMASKED(LOG_INTC_WR, "%s: intc_icr_w = %04x & %04x\n", machine().describe_context(), data, mem_mask);
+	const uint16_t old_icr = m_icr;
 	COMBINE_DATA(&m_icr);
+	m_icr &= 0x01ff;
+
+	// A level-sensed request always reflects the current pin state.  Edge
+	// latches are retained when their sense mode is not changed.
+	for (unsigned i = 0; i < 8; i++)
+	{
+		const uint8_t mask = 1U << i;
+		if (BIT(old_icr, i) && !BIT(m_icr, i))
+		{
+			if (m_ext_irq_state & mask)
+				m_ext_irq_pending |= mask;
+			else
+				m_ext_irq_pending &= ~mask;
+		}
+		else if (!BIT(old_icr, i) && BIT(m_icr, i))
+		{
+			// Merely changing the mode must not manufacture an edge.
+			m_ext_irq_pending &= ~mask;
+		}
+	}
+	recalc_irq();
 }
 
 
@@ -839,6 +985,30 @@ void sh7021_device::ubc_bbr_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 	LOGMASKED(LOG_UBC_WR, "%s:         Read/Write Select: %s\n", machine().describe_context(), READ_WRITE_NAMES[(data >> 2) & 3]);
 	LOGMASKED(LOG_UBC_WR, "%s:         Operand Size Select: %s\n", machine().describe_context(), SIZE_NAMES[data & 3]);
 	COMBINE_DATA(&m_ubc.bbr);
+	m_ubc.bbr &= 0x00ff;
+}
+
+void sh7021_device::ubc_check(uint32_t address, bool is_dma, bool is_instruction, bool is_write, unsigned size)
+{
+	const uint8_t conditions = m_ubc.bbr;
+	if (!(is_dma ? BIT(conditions, 7) : BIT(conditions, 6)))
+		return;
+	if (!(is_instruction ? BIT(conditions, 4) : BIT(conditions, 5)))
+		return;
+	if (!(is_write ? BIT(conditions, 3) : BIT(conditions, 2)))
+		return;
+
+	const unsigned size_select = conditions & 3;
+	if (size_select && size_select != size)
+		return;
+
+	const uint32_t break_address = uint32_t(m_ubc.barh) << 16 | m_ubc.barl;
+	const uint32_t ignore_mask = uint32_t(m_ubc.bamrh) << 16 | m_ubc.bamrl;
+	if (((address ^ break_address) & ~ignore_mask) != 0)
+		return;
+
+	m_ubc.pending = true;
+	recalc_irq();
 }
 
 
@@ -991,19 +1161,26 @@ void sh7021_device::bsc_rtcsr_w(uint16_t data)
 	LOGMASKED(LOG_BSC_WR, "%s:         Refresh Control Enable: %d\n", machine().describe_context(), BIT(data, 7));
 	LOGMASKED(LOG_BSC_WR, "%s:         Compare Match Interrupt Enable: %d\n", machine().describe_context(), BIT(data, 6));
 	LOGMASKED(LOG_BSC_WR, "%s:         Refresh Timer Counter Prescale: %d\n", machine().describe_context(), RTCSR_CKS_NAMES[(data >> 3) & 7]);
+	const uint8_t current_count = bsc_rtcnt_r();
 	m_bsc.rtcsr = (m_bsc.rtcsr & 0x80) | (uint8_t)(data & 0x7f);
 	if (m_bsc.rtcsr_read && !BIT(data, 7))
 	{
 		m_bsc.rtcsr_read = false;
 		m_bsc.rtcsr &= 0x7f;
 	}
+	m_bsc.rtcnt = current_count;
+	bsc_refresh_schedule();
+	recalc_irq();
 }
 
 uint16_t sh7021_device::bsc_rtcnt_r()
 {
+	uint8_t value = m_bsc.rtcnt;
+	if (((m_bsc.rtcsr >> 3) & 7) != 0 && m_bsc.et->enabled())
+		value += m_bsc.et->elapsed().as_ticks(clock()) / bsc_refresh_divider();
 	if (!machine().side_effects_disabled())
-		LOGMASKED(LOG_BSC_RD, "%s: Refresh Timer Count, bsc_rtcnt_r: %04x\n", machine().describe_context(), m_bsc.rtcnt);
-	return m_bsc.rtcnt;
+		LOGMASKED(LOG_BSC_RD, "%s: Refresh Timer Count, bsc_rtcnt_r: %04x\n", machine().describe_context(), value);
+	return value;
 }
 
 void sh7021_device::bsc_rtcnt_w(uint16_t data)
@@ -1013,6 +1190,7 @@ void sh7021_device::bsc_rtcnt_w(uint16_t data)
 
 	LOGMASKED(LOG_BSC_WR, "%s: Refresh Timer Count, bsc_rtcnt_w = %02x\n", machine().describe_context(), (uint8_t)data);
 	m_bsc.rtcnt = (uint8_t)data;
+	bsc_refresh_schedule();
 }
 
 uint16_t sh7021_device::bsc_rtcor_r()
@@ -1029,6 +1207,35 @@ void sh7021_device::bsc_rtcor_w(uint16_t data)
 
 	LOGMASKED(LOG_BSC_WR, "%s: Refresh Time Constant Register, bsc_rtcor_w = %02x\n", machine().describe_context(), (uint8_t)data);
 	m_bsc.rtcor = (uint8_t)data;
+	bsc_refresh_schedule();
+}
+
+unsigned sh7021_device::bsc_refresh_divider() const
+{
+	static constexpr unsigned divisors[8] = { 0, 2, 8, 32, 128, 512, 2048, 4096 };
+	return divisors[(m_bsc.rtcsr >> 3) & 7];
+}
+
+void sh7021_device::bsc_refresh_schedule()
+{
+	const unsigned divider = bsc_refresh_divider();
+	if (!divider)
+	{
+		m_bsc.et->adjust(attotime::never);
+		return;
+	}
+
+	const uint8_t difference = m_bsc.rtcor - m_bsc.rtcnt;
+	const uint64_t ticks = (uint64_t(difference) + 1) * divider;
+	m_bsc.et->adjust(attotime::from_ticks(ticks, clock()));
+}
+
+TIMER_CALLBACK_MEMBER(sh7021_device::bsc_refresh_timer)
+{
+	m_bsc.rtcnt = 0;
+	m_bsc.rtcsr |= 0x80;
+	bsc_refresh_schedule();
+	recalc_irq();
 }
 
 
@@ -1119,7 +1326,11 @@ template <int Channel>
 uint16_t sh7021_device::dma_chcr_r()
 {
 	if (!machine().side_effects_disabled())
+	{
 		LOGMASKED(LOG_DMA_RD, "%s: DMA Channel Control Register %d, dma_chcr_r: %04x\n", machine().describe_context(), Channel, m_dma[Channel].chcr);
+		if (BIT(m_dma[Channel].chcr, 1))
+			m_dma[Channel].te_read = true;
+	}
 	return m_dma[Channel].chcr;
 }
 
@@ -1167,8 +1378,19 @@ void sh7021_device::dma_chcr_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 	LOGMASKED(LOG_DMA_WR, "%s:         Interrupt Enable: %d\n", machine().describe_context(), BIT(data, 2));
 	LOGMASKED(LOG_DMA_WR, "%s:         Transfer End Clear: %d\n", machine().describe_context(), BIT(data, 1));
 	LOGMASKED(LOG_DMA_WR, "%s:         Transfer Enable: %d\n", machine().describe_context(), BIT(data, 0));
+	const bool old_te = BIT(m_dma[Channel].chcr, 1);
 	COMBINE_DATA(&m_dma[Channel].chcr);
+	// TE is a status flag: software may clear it after observing it, but may
+	// not set it by writing one.
+	const bool clear_te = old_te && m_dma[Channel].te_read && ACCESSING_BITS_0_7 && !BIT(data, 1);
+	if (old_te && !clear_te)
+		m_dma[Channel].chcr |= 2;
+	else
+		m_dma[Channel].chcr &= ~2;
+	if (clear_te)
+		m_dma[Channel].te_read = false;
 	execute_dma(Channel);
+	recalc_irq();
 }
 
 uint16_t sh7021_device::dmaor_r()
@@ -1198,6 +1420,9 @@ void sh7021_device::dmaor_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 	LOGMASKED(LOG_DMA_WR, "%s:         NMI Flag: %d\n", machine().describe_context(), BIT(data, 1));
 	LOGMASKED(LOG_DMA_WR, "%s:         DMA Master Enable: %d\n", machine().describe_context(), BIT(data, 0));
 	COMBINE_DATA(&m_dmaor);
+	for (int channel = 0; channel < 4; channel++)
+		execute_dma(channel);
+	recalc_irq();
 }
 
 void sh7021_device::execute_dma(int ch)
@@ -1206,7 +1431,7 @@ void sh7021_device::execute_dma(int ch)
 	uint8_t rs = (m_dma[ch].chcr >> 8) & 0xf; /**< Resource Select bits */
 
 	// channel enable & master enable
-	if ((m_dma[ch].chcr & 1) == 0 || (m_dmaor & 1) == 0)
+	if ((m_dma[ch].chcr & 3) != 1 || (m_dmaor & 7) != 1)
 	{
 		return;
 	}
@@ -1237,17 +1462,20 @@ void sh7021_device::execute_dma(int ch)
 	if (rs == 5 || rs == 7)
 	{
 		int channel = (rs == 5 ? 0 : 1);
-		uint64_t clock_divider = 1 << ((m_sci[channel].smr & 3) << 1);
-		uint64_t char_length = BIT(m_sci[channel].smr, 6) ? 8 : 7;
-		uint64_t stop_bits = BIT(m_sci[channel].smr, 3) ? 2 : 1;
-		attotime transmit_time = attotime::from_ticks(clock_divider * count * (char_length + stop_bits) * (m_sci[channel].brr + 1), clock());
+		const uint64_t clock_divider = uint64_t(1) << ((m_sci[channel].smr & 3) * 2);
+		const uint64_t clocks_per_character = BIT(m_sci[channel].smr, 7)
+			? 4 * clock_divider * (m_sci[channel].brr + 1) * 8
+			: 32 * clock_divider * (m_sci[channel].brr + 1)
+				* (1 + (BIT(m_sci[channel].smr, 6) ? 7 : 8) + BIT(m_sci[channel].smr, 5) + (BIT(m_sci[channel].smr, 3) ? 2 : 1));
+		attotime transmit_time = attotime::from_ticks(clocks_per_character * count, clock());
 		m_sci[channel].et->adjust(transmit_time);
-		LOGMASKED(LOG_DMA_WR, "Setting SCI channel %d to elapse in %d ticks (%d * %d * (%d + %d) * %d)\n", channel, clock_divider * count * (char_length + stop_bits) * (m_sci[channel].brr + 1),
-			clock_divider, count, char_length, stop_bits, m_sci[channel].brr + 1);
+		m_sci[channel].tx_busy = true;
 	}
 
 	for (int i = 0; i < count; ++i)
 	{
+		ubc_check(src_addr, true, false, false, ts ? 2 : 1);
+		ubc_check(dst_addr, true, false, true, ts ? 2 : 1);
 		if (ts)
 			m_program->write_word(dst_addr & m_am, m_program->read_word(src_addr & m_am));
 		else
@@ -1259,14 +1487,13 @@ void sh7021_device::execute_dma(int ch)
 
 	m_dma[ch].sar = src_addr;
 	m_dma[ch].dar = dst_addr;
+	m_dma[ch].tcr = 0;
 
 	m_dma[ch].chcr |= 2; // Transfer ended
+	m_dma[ch].te_read = false;
 
 	// Fire DMA transfer end interrupt if enabled (CHCR bit 2 = IE)
-	if (m_dma[ch].chcr & 4)
-	{
-		recalc_irq();
-	}
+	recalc_irq();
 }
 
 void sh7021_device::execute_peripherals(int peripheral_cycles)
@@ -1285,51 +1512,48 @@ template TIMER_CALLBACK_MEMBER(sh7021_device::sh7021_timer_callback<4>);
 template<int Which>
 TIMER_CALLBACK_MEMBER(sh7021_device::sh7021_timer_callback)
 {
-	// TCNT0 and 1 are up-counters
-	//if (Which < 2)
-	{
-		//if (Which == 0)
-			//LOGMASKED(LOG_ITU_WR, "T%d %04x\n", Which, m_itu.timer[Which].tcnt);
-		m_itu.timer[Which].tcnt++;
+	auto &timer = m_itu.timer[Which];
+	timer.tcnt++;
 
-		if (m_itu.timer[Which].tcnt == 0)
-		{
-			LOGMASKED(LOG_ITU_WR, "Timer %d has overflowed, flagging OVF\n", Which);
-			m_itu.timer[Which].tsr |= 4; // OVF
-		}
+	const bool overflow = timer.tcnt == 0;
+	const bool match_a = timer.tcnt == timer.gra;
+	const bool match_b = timer.tcnt == timer.grb;
+
+	if (overflow)
+	{
+		LOGMASKED(LOG_ITU_WR, "Timer %d has overflowed, flagging OVF\n", Which);
+		timer.tsr |= 4;
 	}
 
-	if (m_itu.timer[Which].tcnt == m_itu.timer[Which].gra)
+	if (match_a)
 	{
-		LOGMASKED(LOG_ITU_WR, "Timer %d count %04x matches GRA %04x, flagging IMFA\n", Which, m_itu.timer[Which].tcnt, m_itu.timer[Which].gra);
-		m_itu.timer[Which].tsr |= 1; // IMFA
-
-		// CCLR[1:0] = 01
-		if (((m_itu.timer[Which].tcr >> 5) & 3) == 1)
-		{
-			LOGMASKED(LOG_ITU_WR, "Timer %d resetting count to 0\n", Which);
-			m_itu.timer[Which].tcnt = 0;
-		}
+		LOGMASKED(LOG_ITU_WR, "Timer %d count %04x matches GRA %04x, flagging IMFA\n", Which, timer.tcnt, timer.gra);
+		timer.tsr |= 1;
+		tpc_trigger(Which);
 	}
 
-	if (m_itu.timer[Which].tcnt == m_itu.timer[Which].grb)
+	if (match_b)
 	{
-		LOGMASKED(LOG_ITU_WR, "Timer %d count %04x matches GRB %04x, flagging IMFB\n", Which, m_itu.timer[Which].tcnt, m_itu.timer[Which].grb);
-		m_itu.timer[Which].tsr |= 2; // IMFB
-
-		// CCLR[1:0] = 10
-		if (((m_itu.timer[Which].tcr >> 5) & 3) == 2)
-			m_itu.timer[Which].tcnt = 0;
+		LOGMASKED(LOG_ITU_WR, "Timer %d count %04x matches GRB %04x, flagging IMFB\n", Which, timer.tcnt, timer.grb);
+		timer.tsr |= 2;
 	}
+
+	const unsigned clear_mode = (timer.tcr >> 5) & 3;
+	if ((clear_mode == 1 && match_a) || (clear_mode == 2 && match_b))
+		timer.tcnt = 0;
 
 	recalc_irq();
-	//start_timer(Which);
 }
 
 void sh7021_device::start_timer(int i)
 {
 	if (m_itu.timer[i].tcr & 4)
-		fatalerror("external clock source");
+	{
+		// External clock pins are not connected yet; keep the counter stopped
+		// rather than terminating the machine.
+		m_itu.timer[i].et->adjust(attotime::never);
+		return;
+	}
 
 	int prescale = 1 << (m_itu.timer[i].tcr & 3);
 
@@ -1344,7 +1568,7 @@ uint8_t sh7021_device::itu_tstr_r()
 {
 	if (!machine().side_effects_disabled())
 		LOGMASKED(LOG_ITU_RD, "%s: Timer Start Register, itu_tstr_r: %02x\n", machine().describe_context(), m_itu.tstr);
-	return m_itu.tstr | 0x60;
+	return (m_itu.tstr & 0x1f) | 0x60;
 }
 
 void sh7021_device::itu_tstr_w(uint8_t data)
@@ -1352,6 +1576,7 @@ void sh7021_device::itu_tstr_w(uint8_t data)
 	LOGMASKED(LOG_ITU_WR, "%s: Timer Start Register, itu_tstr_w = %02x\n", machine().describe_context(), data);
 
 	// Starts timers
+	data &= 0x1f;
 	const uint8_t newly_enabled = ~m_itu.tstr & data;
 	const uint8_t newly_disabled = m_itu.tstr & ~data;
 	m_itu.tstr = data;
@@ -1375,13 +1600,13 @@ uint8_t sh7021_device::itu_tsnc_r()
 {
 	if (!machine().side_effects_disabled())
 		LOGMASKED(LOG_ITU_RD, "%s: Timer Synchro Register, itu_tsnc_r: %02x\n", machine().describe_context(), m_itu.tsnc);
-	return m_itu.tsnc;
+	return (m_itu.tsnc & 0x1f) | 0x60;
 }
 
 void sh7021_device::itu_tsnc_w(uint8_t data)
 {
 	LOGMASKED(LOG_ITU_WR, "%s: Timer Synchro Register, itu_tsnc_w = %02x\n", machine().describe_context(), data);
-	m_itu.tsnc = data;
+	m_itu.tsnc = data & 0x1f;
 }
 
 uint8_t sh7021_device::itu_tmdr_r()
@@ -1401,14 +1626,14 @@ void sh7021_device::itu_tmdr_w(uint8_t data)
 	LOGMASKED(LOG_ITU_WR, "%s:         Channel 2 PWM Mode: %d\n", machine().describe_context(), BIT(data, 2));
 	LOGMASKED(LOG_ITU_WR, "%s:         Channel 1 PWM Mode: %d\n", machine().describe_context(), BIT(data, 1));
 	LOGMASKED(LOG_ITU_WR, "%s:         Channel 0 PWM Mode: %d\n", machine().describe_context(), BIT(data, 0));
-	m_itu.tmdr = data;
+	m_itu.tmdr = data & 0x7f;
 }
 
 uint8_t sh7021_device::itu_tfcr_r()
 {
 	if (!machine().side_effects_disabled())
 		LOGMASKED(LOG_ITU_RD, "%s: Timer Function Control Register, itu_tfcr_r: %02x\n", machine().describe_context(), m_itu.tfcr);
-	return m_itu.tfcr;
+	return (m_itu.tfcr & 0x3f) | 0x40;
 }
 
 void sh7021_device::itu_tfcr_w(uint8_t data)
@@ -1426,14 +1651,14 @@ void sh7021_device::itu_tfcr_w(uint8_t data)
 	LOGMASKED(LOG_ITU_WR, "%s:         Buffer Mode A4: %s\n", machine().describe_context(), BIT(data, 2) ? "GRA4 and BRA4 buffer mode for Ch.4" : "GRA4 normal for Ch.4");
 	LOGMASKED(LOG_ITU_WR, "%s:         Buffer Mode B3: %s\n", machine().describe_context(), BIT(data, 1) ? "GRB3 and BRB3 buffer mode for Ch.3" : "GRB3 normal for Ch.3");
 	LOGMASKED(LOG_ITU_WR, "%s:         Buffer Mode A3: %s\n", machine().describe_context(), BIT(data, 0) ? "GRA3 and BRA3 buffer mode for Ch.3" : "GRA3 normal for Ch.3");
-	m_itu.tfcr = data;
+	m_itu.tfcr = data & 0x3f;
 }
 
 uint8_t sh7021_device::itu_tocr_r()
 {
 	if (!machine().side_effects_disabled())
 		LOGMASKED(LOG_ITU_RD, "%s: Timer Output Control Register, itu_tfcr_r: %02x\n", machine().describe_context(), m_itu.tocr);
-	return m_itu.tocr | 0x7c;
+	return (m_itu.tocr & 3) | 0x7c;
 }
 
 void sh7021_device::itu_tocr_w(uint8_t data)
@@ -1441,7 +1666,7 @@ void sh7021_device::itu_tocr_w(uint8_t data)
 	LOGMASKED(LOG_ITU_WR, "%s: Timer Output Control Register, itu_tocr_w = %02x\n", machine().describe_context(), data);
 	LOGMASKED(LOG_ITU_WR, "%s:         Output Level Select Ch.4: %s\n", machine().describe_context(), BIT(data, 1) ? "Direct" : "Inverted");
 	LOGMASKED(LOG_ITU_WR, "%s:         Output Level Select Ch.3: %s\n", machine().describe_context(), BIT(data, 0) ? "Direct" : "Inverted");
-	m_itu.tocr = data;
+	m_itu.tocr = data & 3;
 }
 
 template uint8_t sh7021_device::itu_tcr_r<0>();
@@ -1455,7 +1680,7 @@ uint8_t sh7021_device::itu_tcr_r()
 {
 	if (!machine().side_effects_disabled())
 		LOGMASKED(LOG_ITU_RD, "%s: Timer Control Register %d, itu_tcr_r: %02x\n", machine().describe_context(), Channel, m_itu.timer[Channel].tcr);
-	return m_itu.timer[Channel].tcr;
+	return m_itu.timer[Channel].tcr & 0x7f;
 }
 
 template void sh7021_device::itu_tcr_w<0>(uint8_t data);
@@ -1484,7 +1709,9 @@ void sh7021_device::itu_tcr_w(uint8_t data)
 	LOGMASKED(LOG_ITU_WR, "%s:         Counter Clear Mode: %s\n", machine().describe_context(), CCLR_NAMES[(data >> 5) & 3]);
 	LOGMASKED(LOG_ITU_WR, "%s:         External-Clock Edge Mode: %s\n", machine().describe_context(), CKEG_NAMES[(data >> 3) & 3]);
 	LOGMASKED(LOG_ITU_WR, "%s:         Timer Prescaler Mode: %s\n", machine().describe_context(), TPSC_NAMES[data & 7]);
-	m_itu.timer[Channel].tcr = data;
+	m_itu.timer[Channel].tcr = data & 0x7f;
+	if (BIT(m_itu.tstr, Channel))
+		start_timer(Channel);
 }
 
 template uint8_t sh7021_device::itu_tior_r<0>();
@@ -1498,7 +1725,7 @@ uint8_t sh7021_device::itu_tior_r()
 {
 	if (!machine().side_effects_disabled())
 		LOGMASKED(LOG_ITU_RD, "%s: Timer I/O Control Register %d, itu_tior_r: %02x\n", machine().describe_context(), Channel, m_itu.timer[Channel].tior);
-	return m_itu.timer[Channel].tior;
+	return (m_itu.timer[Channel].tior & 0x77) | 0x08;
 }
 
 template void sh7021_device::itu_tior_w<0>(uint8_t data);
@@ -1536,7 +1763,7 @@ void sh7021_device::itu_tior_w(uint8_t data)
 	LOGMASKED(LOG_ITU_WR, "%s: Timer I/O Control Register %d, itu_tior_w = %02x\n", machine().describe_context(), Channel, data);
 	LOGMASKED(LOG_ITU_WR, "%s:         GRB Function: %s\n", machine().describe_context(), IOB_NAMES[(data >> 4) & 7]);
 	LOGMASKED(LOG_ITU_WR, "%s:         GRA Function: %s\n", machine().describe_context(), IOA_NAMES[data & 7]);
-	m_itu.timer[Channel].tior = data;
+	m_itu.timer[Channel].tior = data & 0x77;
 }
 
 template uint8_t sh7021_device::itu_tier_r<0>();
@@ -1550,7 +1777,7 @@ uint8_t sh7021_device::itu_tier_r()
 {
 	if (!machine().side_effects_disabled())
 		LOGMASKED(LOG_ITU_RD, "%s: Timer Interrupt Enable Register %d, itu_tier_r: %02x\n", machine().describe_context(), Channel, m_itu.timer[Channel].tier);
-	return m_itu.timer[Channel].tier;
+	return (m_itu.timer[Channel].tier & 7) | 0x78;
 }
 
 template void sh7021_device::itu_tier_w<0>(uint8_t data);
@@ -1566,7 +1793,8 @@ void sh7021_device::itu_tier_w(uint8_t data)
 	LOGMASKED(LOG_ITU_WR, "%s:         Enable Overflow Interrupts: %d\n", machine().describe_context(), BIT(data, 2));
 	LOGMASKED(LOG_ITU_WR, "%s:         Enable Capture/Compare B Interrupts: %d\n", machine().describe_context(), BIT(data, 1));
 	LOGMASKED(LOG_ITU_WR, "%s:         Enable Capture/Compare A Interrupts: %d\n", machine().describe_context(), BIT(data, 0));
-	m_itu.timer[Channel].tier = data;
+	m_itu.timer[Channel].tier = data & 7;
+	recalc_irq();
 }
 
 template uint8_t sh7021_device::itu_tsr_r<0>();
@@ -1584,8 +1812,9 @@ uint8_t sh7021_device::itu_tsr_r()
 		LOGMASKED(LOG_ITU_RD, "%s:         Overflow Flag: %d\n", machine().describe_context(), BIT(m_itu.timer[Channel].tsr, 2));
 		LOGMASKED(LOG_ITU_RD, "%s:         Compare/Capture B Flag: %d\n", machine().describe_context(), BIT(m_itu.timer[Channel].tsr, 1));
 		LOGMASKED(LOG_ITU_RD, "%s:         Compare/Capture A Flag: %d\n", machine().describe_context(), BIT(m_itu.timer[Channel].tsr, 0));
+		m_itu.timer[Channel].tsr_read |= m_itu.timer[Channel].tsr & 7;
 	}
-	return m_itu.timer[Channel].tsr;
+	return (m_itu.timer[Channel].tsr & 7) | 0x78;
 }
 
 template void sh7021_device::itu_tsr_w<0>(uint8_t data);
@@ -1604,7 +1833,10 @@ void sh7021_device::itu_tsr_w(uint8_t data)
 		LOGMASKED(LOG_ITU_WR, "%s:         Compare/Capture B Clear\n", machine().describe_context());
 	if (BIT(m_itu.timer[Channel].tsr, 0) && !BIT(data, 0))
 		LOGMASKED(LOG_ITU_WR, "%s:         Compare/Capture A Clear\n", machine().describe_context());
-	m_itu.timer[Channel].tsr = data;
+	const uint8_t clear = m_itu.timer[Channel].tsr_read & ~data & 7;
+	m_itu.timer[Channel].tsr &= ~clear;
+	m_itu.timer[Channel].tsr_read &= ~clear;
+	recalc_irq();
 }
 
 template uint16_t sh7021_device::itu_tcnt_r<0>();
@@ -1795,84 +2027,193 @@ void sh7021_device::tpc_nderb_w(uint8_t data)
 
 uint8_t sh7021_device::tpc_ndra_r()
 {
+	const bool shared = (m_tpc.tpcr & 3) == ((m_tpc.tpcr >> 2) & 3);
 	if (!machine().side_effects_disabled())
-		LOGMASKED(LOG_TPC_RD, "%s: Next Data Register A, tpc_ndra_r: %02x\n", machine().describe_context(), 0);//m_tpc.ndra);
-	return 0;//m_tpc.ndra;
+		LOGMASKED(LOG_TPC_RD, "%s: Next Data Register A, tpc_ndra_r: %02x\n", machine().describe_context(), m_tpc.ndra);
+	return shared ? m_tpc.ndra : (m_tpc.ndra & 0xf0);
 }
 
 void sh7021_device::tpc_ndra_w(uint8_t data)
 {
 	LOGMASKED(LOG_TPC_WR, "%s: Next Data Register A, tpc_ndra_w = %02x\n", machine().describe_context(), data);
+	if ((m_tpc.tpcr & 3) == ((m_tpc.tpcr >> 2) & 3))
+		m_tpc.ndra = data;
+	else
+		m_tpc.ndra = (m_tpc.ndra & 0x0f) | (data & 0xf0);
 }
 
 uint8_t sh7021_device::tpc_ndra_alt_r()
 {
 	if (!machine().side_effects_disabled())
-		LOGMASKED(LOG_TPC_RD, "%s: Next Data Register A (alt. address), tpc_ndra_alt_r: %02x\n", machine().describe_context(), 0);//m_tpc.ndra);
-	return 0;//m_tpc.ndra;
+		LOGMASKED(LOG_TPC_RD, "%s: Next Data Register A (alt. address), tpc_ndra_alt_r: %02x\n", machine().describe_context(), m_tpc.ndra & 0x0f);
+	return m_tpc.ndra & 0x0f;
 }
 
 void sh7021_device::tpc_ndra_alt_w(uint8_t data)
 {
 	LOGMASKED(LOG_TPC_WR, "%s: Next Data Register A (alt. address), tpc_ndra_alt_w = %02x\n", machine().describe_context(), data);
+	m_tpc.ndra = (m_tpc.ndra & 0xf0) | (data & 0x0f);
 }
 
 uint8_t sh7021_device::tpc_ndrb_r()
 {
+	const bool shared = ((m_tpc.tpcr >> 4) & 3) == ((m_tpc.tpcr >> 6) & 3);
 	if (!machine().side_effects_disabled())
-		LOGMASKED(LOG_TPC_RD, "%s: Next Data Register B, tpc_ndrb_r: %02x\n", machine().describe_context(), 0);//m_tpc.ndrb);
-	return 0;//m_tpc.ndrb;
+		LOGMASKED(LOG_TPC_RD, "%s: Next Data Register B, tpc_ndrb_r: %02x\n", machine().describe_context(), m_tpc.ndrb);
+	return shared ? m_tpc.ndrb : (m_tpc.ndrb & 0xf0);
 }
 
 void sh7021_device::tpc_ndrb_w(uint8_t data)
 {
 	LOGMASKED(LOG_TPC_WR, "%s: Next Data Register B, tpc_ndrb_w = %02x\n", machine().describe_context(), data);
+	if (((m_tpc.tpcr >> 4) & 3) == ((m_tpc.tpcr >> 6) & 3))
+		m_tpc.ndrb = data;
+	else
+		m_tpc.ndrb = (m_tpc.ndrb & 0x0f) | (data & 0xf0);
 }
 
 uint8_t sh7021_device::tpc_ndrb_alt_r()
 {
 	if (!machine().side_effects_disabled())
-		LOGMASKED(LOG_TPC_RD, "%s: Next Data Register B (alt. address), tpc_ndrb_alt_r: %02x\n", machine().describe_context(), 0);//m_tpc.ndrb);
-	return 0;//m_tpc.ndrb;
+		LOGMASKED(LOG_TPC_RD, "%s: Next Data Register B (alt. address), tpc_ndrb_alt_r: %02x\n", machine().describe_context(), m_tpc.ndrb & 0x0f);
+	return m_tpc.ndrb & 0x0f;
 }
 
 void sh7021_device::tpc_ndrb_alt_w(uint8_t data)
 {
 	LOGMASKED(LOG_TPC_WR, "%s: Next Data Register B (alt. address), tpc_ndrb_alt_w = %02x\n", machine().describe_context(), data);
+	m_tpc.ndrb = (m_tpc.ndrb & 0xf0) | (data & 0x0f);
+}
+
+void sh7021_device::tpc_trigger(unsigned itu_channel)
+{
+	uint16_t enable = uint16_t(m_tpc.nderb) << 8 | m_tpc.ndera;
+	const uint16_t next_data = uint16_t(m_tpc.ndrb) << 8 | m_tpc.ndra;
+	uint16_t triggered = 0;
+	for (unsigned group = 0; group < 4; group++)
+	{
+		if (((m_tpc.tpcr >> (group * 2)) & 3) == itu_channel)
+			triggered |= 0x000f << (group * 4);
+	}
+
+	const uint16_t mask = enable & triggered;
+	if (mask)
+	{
+		m_tpc.output = (m_tpc.output & ~mask) | (next_data & mask);
+		m_tpc_out(m_tpc.output, mask);
+	}
 }
 
 
 // Watchdog Timer (WDT)
 
-uint8_t sh7021_device::wdt_tcsr_r()
+unsigned sh7021_device::wdt_divider() const
 {
-	return m_wdt.tcsr;
+	static constexpr unsigned divisors[8] = { 2, 64, 128, 256, 512, 1024, 4096, 8192 };
+	return divisors[m_wdt.tcsr & 7];
 }
 
-void sh7021_device::wdt_tcsr_w(uint8_t data)
+uint8_t sh7021_device::wdt_tcsr_r()
 {
-	m_wdt.tcsr = data;
+	if (!machine().side_effects_disabled() && BIT(m_wdt.tcsr, 7))
+		m_wdt.ovf_read = true;
+	return m_wdt.tcsr | 0x18;
 }
 
 uint8_t sh7021_device::wdt_tcnt_r()
 {
-	return 0;
-}
-
-void sh7021_device::wdt_tcnt_w(uint8_t data)
-{
+	if (!BIT(m_wdt.tcsr, 5))
+		return 0;
+	const uint64_t ticks = m_wdt.et->elapsed().as_ticks(clock()) / wdt_divider();
+	return m_wdt.tcnt + ticks;
 }
 
 uint8_t sh7021_device::wdt_rstcsr_r()
 {
-	return 0;
+	if (!machine().side_effects_disabled() && BIT(m_wdt.rstcsr, 7))
+		m_wdt.wovf_read = true;
+	return m_wdt.rstcsr | 0x1f;
 }
 
-void sh7021_device::wdt_rstcsr_w(uint8_t data)
+void sh7021_device::wdt_tcsr_tcnt_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
+	if (mem_mask != 0xffff)
+		return;
 
+	if ((data >> 8) == 0x5a)
+	{
+		m_wdt.tcnt = data;
+		if (BIT(m_wdt.tcsr, 5))
+			wdt_schedule();
+		return;
+	}
+
+	if ((data >> 8) != 0xa5)
+		return;
+
+	const uint8_t old = m_wdt.tcsr;
+	const uint8_t current_count = wdt_tcnt_r();
+	const bool clear_ovf = BIT(old, 7) && m_wdt.ovf_read && !BIT(data, 7);
+	m_wdt.tcsr = (data & 0x67) | (clear_ovf ? 0 : (old & 0x80)) | 0x18;
+	if (clear_ovf)
+		m_wdt.ovf_read = false;
+
+	if (!BIT(m_wdt.tcsr, 5))
+	{
+		m_wdt.tcnt = 0;
+		m_wdt.et->adjust(attotime::never);
+	}
+	else
+	{
+		m_wdt.tcnt = BIT(old, 5) ? current_count : 0;
+		wdt_schedule();
+	}
+	recalc_irq();
 }
 
+void sh7021_device::wdt_rstcsr_w(offs_t offset, uint16_t data, uint16_t mem_mask)
+{
+	if (mem_mask != 0xffff)
+		return;
+
+	if ((data >> 8) == 0xa5 && uint8_t(data) == 0 && m_wdt.wovf_read)
+	{
+		m_wdt.rstcsr &= ~0x80;
+		m_wdt.wovf_read = false;
+	}
+	else if ((data >> 8) == 0x5a)
+	{
+		m_wdt.rstcsr = (m_wdt.rstcsr & 0x80) | (data & 0x60) | 0x1f;
+	}
+	recalc_irq();
+}
+
+void sh7021_device::wdt_schedule()
+{
+	const uint64_t ticks = uint64_t(0x100 - m_wdt.tcnt) * wdt_divider();
+	m_wdt.et->adjust(attotime::from_ticks(ticks, clock()));
+}
+
+TIMER_CALLBACK_MEMBER(sh7021_device::wdt_overflow)
+{
+	m_wdt.tcnt = 0;
+	if (BIT(m_wdt.tcsr, 6))
+	{
+		m_wdt.rstcsr |= 0x80;
+		m_wdtovf(ASSERT_LINE);
+		m_wdtovf(CLEAR_LINE);
+		// Without an internal reset request, only the WDT itself is reset.
+		// A board can use WDTOVF to reset the complete machine externally.
+		m_wdt.tcsr = 0x18;
+		m_wdt.et->adjust(attotime::never);
+	}
+	else
+	{
+		m_wdt.tcsr |= 0x80;
+		wdt_schedule();
+	}
+	recalc_irq();
+}
 
 // Serial Communication Interface (SCI)
 
@@ -1882,8 +2223,20 @@ template TIMER_CALLBACK_MEMBER(sh7021_device::sh7021_sci_callback<1>);
 template<int Which>
 TIMER_CALLBACK_MEMBER(sh7021_device::sh7021_sci_callback)
 {
-	LOGMASKED(LOG_DMA_WR, "Setting SCI interrupt on channel %d\n", Which);
-	m_sci[Which].ssr |= (1 << 7) | (1 << 2);
+	auto &sci = m_sci[Which];
+	m_sci_tx[Which](sci.tsr);
+	sci.tx_busy = false;
+
+	if (!BIT(sci.ssr, 7) && BIT(sci.scr, 5))
+	{
+		sci.tsr = sci.tdr;
+		sci.ssr |= 0x80;
+		sci_start_tx(Which);
+	}
+	else
+	{
+		sci.ssr |= 0x84;
+	}
 	recalc_irq();
 }
 
@@ -1962,6 +2315,7 @@ void sh7021_device::sci_scr_w(uint8_t data)
 	LOGMASKED(LOG_SCI_WR, "%s:         Transmit-End Interrupt Enable: %d\n", machine().describe_context(), BIT(data, 2));
 	LOGMASKED(LOG_SCI_WR, "%s:         Clock Enable Mode: %d%d\n", machine().describe_context(), BIT(data, 1), BIT(data, 0));
 	m_sci[Channel].scr = data;
+	recalc_irq();
 }
 
 template uint8_t sh7021_device::sci_tdr_r<0>();
@@ -2006,7 +2360,7 @@ uint8_t sh7021_device::sci_ssr_r()
 		m_sci[Channel].ssr_read |= m_sci[Channel].ssr & 0xf8;
 	}
 
-	return (m_sci[Channel].ssr & 0xf9) | 0x04;
+	return m_sci[Channel].ssr;
 }
 
 template void sh7021_device::sci_ssr_w<0>(uint8_t data);
@@ -2018,10 +2372,16 @@ void sh7021_device::sci_ssr_w(uint8_t data)
 	LOGMASKED(LOG_SCI_WR, "%s: Serial Status Register %d, sci_ssr_w = %02x\n", machine().describe_context(), Channel, data);
 	if (!BIT(data, 7) && BIT(m_sci[Channel].ssr, 7) && BIT(m_sci[Channel].ssr_read, 7))
 	{
-		// Clear TDR-Empty Flag and Transmit End Flag
+		// Clearing TDRE transfers TDR to the shift register when possible.
 		m_sci[Channel].ssr_read &= ~(1 << 7);
 		m_sci[Channel].ssr &= ~(1 << 7);
 		m_sci[Channel].ssr &= ~(1 << 2);
+		if (!m_sci[Channel].tx_busy)
+		{
+			m_sci[Channel].tsr = m_sci[Channel].tdr;
+			m_sci[Channel].ssr |= 0x80;
+			sci_start_tx(Channel);
+		}
 	}
 
 	if (!BIT(data, 6) && BIT(m_sci[Channel].ssr, 6) && BIT(m_sci[Channel].ssr_read, 6))
@@ -2054,6 +2414,52 @@ void sh7021_device::sci_ssr_w(uint8_t data)
 
 	m_sci[Channel].ssr &= 0xfe;
 	m_sci[Channel].ssr |= data & 1;
+	recalc_irq();
+}
+
+void sh7021_device::sci_start_tx(unsigned channel)
+{
+	auto &sci = m_sci[channel];
+	if (!BIT(sci.scr, 5))
+		return;
+
+	const uint64_t clock_divider = uint64_t(1) << ((sci.smr & 3) * 2);
+	uint64_t character_clocks;
+	if (BIT(sci.smr, 7))
+	{
+		character_clocks = 4 * clock_divider * (sci.brr + 1) * 8;
+	}
+	else
+	{
+		const unsigned data_bits = BIT(sci.smr, 6) ? 7 : 8;
+		const unsigned parity_bits = BIT(sci.smr, 5) ? 1 : 0;
+		const unsigned stop_bits = BIT(sci.smr, 3) ? 2 : 1;
+		character_clocks = 32 * clock_divider * (sci.brr + 1) * (1 + data_bits + parity_bits + stop_bits);
+	}
+
+	sci.tx_busy = true;
+	sci.ssr &= ~0x04;
+	sci.et->adjust(attotime::from_ticks(character_clocks, clock()));
+}
+
+void sh7021_device::sci_receive_byte(unsigned channel, uint8_t data, bool framing_error, bool parity_error)
+{
+	if (channel >= 2 || !BIT(m_sci[channel].scr, 4))
+		return;
+
+	auto &sci = m_sci[channel];
+	if (BIT(sci.ssr, 6))
+		sci.ssr |= 0x20;
+	else
+	{
+		sci.rdr = data;
+		sci.ssr |= 0x40;
+	}
+	if (framing_error)
+		sci.ssr |= 0x10;
+	if (parity_error)
+		sci.ssr |= 0x08;
+	recalc_irq();
 }
 
 template uint8_t sh7021_device::sci_rdr_r<0>();
@@ -2065,6 +2471,80 @@ uint8_t sh7021_device::sci_rdr_r()
 	if (!machine().side_effects_disabled())
 		LOGMASKED(LOG_SCI_RD, "%s: Receive Data Register %d, sci_rdr_r: %02x\n", machine().describe_context(), Channel, m_sci[Channel].rdr);
 	return m_sci[Channel].rdr;
+}
+
+
+// A/D Converter
+
+uint16_t sh7021_device::adc_addr_r(offs_t offset)
+{
+	return m_adc.addr[offset & 3];
+}
+
+uint8_t sh7021_device::adc_adcsr_r()
+{
+	if (!machine().side_effects_disabled() && BIT(m_adc.adcsr, 7))
+		m_adc.adf_read = true;
+	return m_adc.adcsr;
+}
+
+void sh7021_device::adc_adcsr_w(uint8_t data)
+{
+	const uint8_t old = m_adc.adcsr;
+	const bool clear_adf = BIT(old, 7) && m_adc.adf_read && !BIT(data, 7);
+	m_adc.adcsr = (data & 0x7f) | (clear_adf ? 0 : (old & 0x80));
+	if (clear_adf)
+		m_adc.adf_read = false;
+
+	if (!BIT(m_adc.adcsr, 5))
+		m_adc.et->adjust(attotime::never);
+	else if (!BIT(old, 5))
+		adc_start();
+
+	recalc_irq();
+}
+
+uint8_t sh7021_device::adc_adcr_r()
+{
+	return (m_adc.adcr & 0x80) | 0x7f;
+}
+
+void sh7021_device::adc_adcr_w(uint8_t data)
+{
+	m_adc.adcr = (data & 0x80) | 0x7f;
+}
+
+void sh7021_device::adc_start()
+{
+	// Scan groups begin at AN0 or AN4; single mode starts directly at CH2-0.
+	m_adc.channel = BIT(m_adc.adcsr, 4) ? (BIT(m_adc.adcsr, 2) ? 4 : 0) : (m_adc.adcsr & 7);
+	const unsigned states = BIT(m_adc.adcsr, 3) ? 134 : 266;
+	m_adc.et->adjust(attotime::from_ticks(states, clock()));
+}
+
+TIMER_CALLBACK_MEMBER(sh7021_device::adc_conversion_complete)
+{
+	const unsigned channel = m_adc.channel & 7;
+	m_adc.addr[channel & 3] = (m_an_in[channel]() & 0x03ff) << 6;
+
+	if (BIT(m_adc.adcsr, 4))
+	{
+		const unsigned end_channel = (BIT(m_adc.adcsr, 2) ? 4 : 0) | (m_adc.adcsr & 3);
+		if (channel != end_channel)
+		{
+			m_adc.channel++;
+			const unsigned states = BIT(m_adc.adcsr, 3) ? 134 : 266;
+			m_adc.et->adjust(attotime::from_ticks(states, clock()));
+			return;
+		}
+	}
+
+	m_adc.adcsr |= 0x80;
+	if (BIT(m_adc.adcsr, 4) && BIT(m_adc.adcsr, 5))
+		adc_start();
+	else
+		m_adc.adcsr &= ~0x20;
+	recalc_irq();
 }
 
 
@@ -2080,6 +2560,24 @@ void sh7021_device::write_pbdr(uint16_t data)
 {
 	LOGMASKED(LOG_PFC_WR, "%s: Port B Input write: write_pbdr: %04x\n", machine().describe_context(), data);
 	m_pfc.pbdr_in = data;
+}
+
+void sh7021_device::write_pcdr(uint8_t data)
+{
+	m_pfc.pcdr_in = data;
+}
+
+void sh7021_device::pfc_recalc_gpio_masks()
+{
+	m_pfc.pa_gpio_mask = 0;
+	m_pfc.pb_gpio_mask = 0;
+	for (unsigned i = 0; i < 16; i++)
+	{
+		if (!m_pfc.pafunc[i])
+			m_pfc.pa_gpio_mask |= 1U << i;
+		if (!m_pfc.pbfunc[i])
+			m_pfc.pb_gpio_mask |= 1U << i;
+	}
 }
 
 template void sh7021_device::write_padr_bit< 0>(int state);
@@ -2141,6 +2639,8 @@ void sh7021_device::pfc_paior_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	LOGMASKED(LOG_PFC_WR, "%s: Port A I/O (Direction) Register, pfc_paior_w = %04x & %04x\n", machine().describe_context(), data, mem_mask);
 	COMBINE_DATA(&m_pfc.paior);
+	const uint16_t output_mask = m_pfc.paior & m_pfc.pa_gpio_mask;
+	m_pa_out(m_pfc.padr & output_mask, output_mask);
 }
 
 uint16_t sh7021_device::pfc_pacr1_r()
@@ -2162,6 +2662,7 @@ void sh7021_device::pfc_pacr1_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 		int bit = i << 1;
 		m_pfc.pafunc[8 + i] = (pacr1_masked >> bit) & 3;
 	}
+	pfc_recalc_gpio_masks();
 }
 
 uint16_t sh7021_device::pfc_pacr2_r()
@@ -2183,6 +2684,7 @@ void sh7021_device::pfc_pacr2_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 		int bit = i << 1;
 		m_pfc.pafunc[i] = (pacr2_masked >> bit) & 3;
 	}
+	pfc_recalc_gpio_masks();
 }
 
 uint16_t sh7021_device::pfc_pbior_r()
@@ -2196,6 +2698,8 @@ void sh7021_device::pfc_pbior_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	LOGMASKED(LOG_PFC_WR, "%s: Port B I/O (Direction) Register, pfc_pbior_w = %04x & %04x\n", machine().describe_context(), data, mem_mask);
 	COMBINE_DATA(&m_pfc.pbior);
+	const uint16_t output_mask = m_pfc.pbior & m_pfc.pb_gpio_mask;
+	m_pb_out(m_pfc.pbdr & output_mask, output_mask);
 }
 
 uint16_t sh7021_device::pfc_pbcr1_r()
@@ -2214,6 +2718,7 @@ void sh7021_device::pfc_pbcr1_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 		int bit = i << 1;
 		m_pfc.pbfunc[8 + i] = (m_pfc.pbcr1 >> bit) & 3;
 	}
+	pfc_recalc_gpio_masks();
 }
 
 uint16_t sh7021_device::pfc_pbcr2_r()
@@ -2232,6 +2737,7 @@ void sh7021_device::pfc_pbcr2_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 		int bit = i << 1;
 		m_pfc.pbfunc[i] = (m_pfc.pbcr2 >> bit) & 3;
 	}
+	pfc_recalc_gpio_masks();
 }
 
 uint16_t sh7021_device::pfc_padr_r()
@@ -2266,7 +2772,7 @@ void sh7021_device::pfc_padr_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 
 uint16_t sh7021_device::pfc_pbdr_r()
 {
-	const uint16_t data = ((m_pfc.pbdr_in & ~m_pfc.pbior) | (m_pfc.padr & m_pfc.pbior)) & m_pfc.pa_gpio_mask;
+	const uint16_t data = ((m_pfc.pbdr_in & ~m_pfc.pbior) | (m_pfc.pbdr & m_pfc.pbior)) & m_pfc.pb_gpio_mask;
 	if (!machine().side_effects_disabled())
 		LOGMASKED(LOG_PFC_RD, "%s: Port B Data Register, pfc_pbdr_r: %04x\n", machine().describe_context(), data);
 	return data;
@@ -2279,7 +2785,7 @@ void sh7021_device::pfc_pbdr_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 	COMBINE_DATA(&m_pfc.pbdr);
 	const uint16_t changed = m_pfc.pbdr ^ old;
 
-	uint16_t output_mask = m_pfc.pbior;
+	uint16_t output_mask = m_pfc.pbior & m_pfc.pb_gpio_mask;
 	for (int i = 0; i < 16; i++)
 	{
 		if (m_pfc.pbfunc[i] != 0)
@@ -2296,6 +2802,26 @@ void sh7021_device::pfc_pbdr_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 	{
 		m_pb_out(m_pfc.pbdr & output_mask, output_mask);
 	}
+}
+
+uint16_t sh7021_device::pfc_pcdr_r()
+{
+	return BIT(m_adc.adcsr, 5) ? 0x00ff : m_pfc.pcdr_in;
+}
+
+uint8_t sh7021_device::sbycr_r()
+{
+	return (m_sbycr & 0xc0) | 0x1f;
+}
+
+void sh7021_device::sbycr_w(uint8_t data)
+{
+	// SBY and HIZ cannot be set while the watchdog is running.
+	const uint8_t requested = data & 0xc0;
+	if (BIT(m_wdt.tcsr, 5))
+		m_sbycr &= requested;
+	else
+		m_sbycr = requested;
 }
 
 uint16_t sh7021_device::pfc_cascr_r()

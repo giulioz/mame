@@ -15,6 +15,8 @@ public:
 	la32_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
 
 	auto int_callback() { return m_int_callback.bind(); }
+	// Board-level PCM ROM address-line transform (zero for direct wiring).
+	void set_rom_address_xor(u32 mask) { m_rom_address_xor = mask & 0xfffff; }
 
 	u8 read(offs_t offset);
 	void write(offs_t offset, u8 data);
@@ -33,6 +35,7 @@ private:
 	emu_timer *m_update_timer;
 	sound_stream *m_stream;
 	devcb_write_line m_int_callback;
+	u32 m_rom_address_xor;
 	u32 m_cycle;
 	u8 m_reg_1c0;
 	u8 m_reg_1c1;
@@ -41,6 +44,7 @@ private:
 	u8 m_reg_data_l;
 	u16 m_reg_file[6][32];
 	u32 m_counters[3][32];
+	u8 m_pcm_end[32];
 	s32 m_accum[2][8];
 	u8 m_inactive;
 	s32 m_prev;
@@ -51,6 +55,7 @@ private:
 	u8 m_int_status;
 
 	void update_inactive();
+	u8 pcm_rom_r(u32 address) { return device_rom_interface<20>::read_byte(address ^ m_rom_address_xor); }
 };
 
 #endif // MAME_SOUND_ROLAND_LA32_H

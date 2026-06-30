@@ -47,7 +47,9 @@ void debug_none::init_debugger(running_machine &machine)
 
 void debug_none::wait_for_debugger(device_t &device, bool firststop)
 {
-	m_machine->debugger().console().get_visible_cpu()->debug()->go();
+	m_machine->debugger().console().process_source_file();
+	if (m_machine->debugger().cpu().is_stopped())
+		m_machine->debugger().console().get_visible_cpu()->debug()->go();
 }
 
 void debug_none::debugger_update()

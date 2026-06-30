@@ -49396,6 +49396,9 @@ sstrangr2
 @source:yamaha/fb01.cpp
 fb01
 
+@source:yamaha/ymex5.cpp
+ex5r
+
 @source:yamaha/tg100.cpp
 tg100
 

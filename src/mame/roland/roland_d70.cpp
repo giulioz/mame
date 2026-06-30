@@ -15,9 +15,12 @@
 #include "bus/midi/midioutport.h"
 #include "cpu/mcs96/i8x9x.h"
 #include "cpu/mcs96/i8xc196.h"
+#include "machine/nvram.h"
 #include "machine/timer.h"
 #include "sound/roland_lp.h"
+#include "sound/roland_rcc.h"
 #include "video/t6963c.h"
+#include "wavwrite.h"
 
 #include "emupal.h"
 #include "screen.h"
@@ -26,7 +29,7 @@
 
 #include "multibyte.h"
 
-#include <queue>
+#include <cmath>
 
 #include "roland_d70.lh"
 
@@ -128,7 +131,7 @@ static INPUT_PORTS_START(d70)
 	PORT_BIT(0x01, IP_ACTIVE_LOW, IPT_OTHER) PORT_NAME("Lower 1")
 
 	PORT_START("KEY7")
-	PORT_BIT(0x80, IP_ACTIVE_LOW, IPT_OTHER) PORT_NAME("DEBUG note") PORT_CODE(KEYCODE_P)
+	PORT_BIT(0x80, IP_ACTIVE_LOW, IPT_UNUSED)
 	PORT_BIT(0x40, IP_ACTIVE_LOW, IPT_UNUSED)
 	PORT_BIT(0x20, IP_ACTIVE_LOW, IPT_UNUSED)
 	PORT_BIT(0x10, IP_ACTIVE_LOW, IPT_UNUSED)
@@ -168,6 +171,207 @@ static INPUT_PORTS_START(d70)
 INPUT_PORTS_END
 
 
+// The D-70 TVF and the later JD/XP family share a 32-context state-variable
+// filter/VCA architecture.  The register formats below are supported by D-70
+// firmware traces; structure/ring-modulation routing remains latched only.
+class d70_tvf_device : public device_t, public device_sound_interface
+{
+public:
+	d70_tvf_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
+
+	u8 read(offs_t offset) const;
+	void write(offs_t offset, u8 data);
+
+protected:
+	virtual void device_start() override ATTR_COLD;
+	virtual void device_reset() override ATTR_COLD;
+	virtual void sound_stream_update(sound_stream &stream) override;
+
+private:
+	static constexpr unsigned CONTEXTS = 32;
+	static bool per_context(offs_t offset);
+	u16 context_word(unsigned context, unsigned offset) const;
+	void commit_word(unsigned context, unsigned offset);
+
+	sound_stream *m_stream;
+	u8 m_global[0x80];
+	u8 m_context[CONTEXTS][0x40];
+	u8 m_dest;
+	u8 m_source;
+	double m_low[CONTEXTS];
+	double m_band[CONTEXTS];
+	double m_cutoff[CONTEXTS];
+	double m_cutoff_target[CONTEXTS];
+	double m_gain[CONTEXTS];
+	double m_gain_target[CONTEXTS];
+	double m_damping[CONTEXTS];
+	util::wav_file_ptr m_debug_wav;
+	std::vector<s16> m_debug_buffer;
+};
+
+DEFINE_DEVICE_TYPE_PRIVATE(D70_TVF, d70_tvf_device, d70_tvf_device, "d70_tvf", "Roland D-70 TVF")
+
+d70_tvf_device::d70_tvf_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock) :
+	device_t(mconfig, D70_TVF, tag, owner, clock),
+	device_sound_interface(mconfig, *this),
+	m_stream(nullptr),
+	m_dest(0),
+	m_source(0)
+{
+}
+
+bool d70_tvf_device::per_context(offs_t offset)
+{
+	return offset <= 0x0f
+		|| (offset >= 0x20 && offset <= 0x27)
+		|| (offset >= 0x30 && offset <= 0x35);
+}
+
+u16 d70_tvf_device::context_word(unsigned context, unsigned offset) const
+{
+	return get_u16le(&m_context[context & 0x1f][offset]);
+}
+
+void d70_tvf_device::device_start()
+{
+	m_stream = stream_alloc(CONTEXTS, CONTEXTS, 32'000, STREAM_SYNCHRONOUS);
+	if (char const *const path = osd_getenv("D70_TVF_WAV"); path && *path)
+	{
+		m_debug_wav = util::wav_open(path, 32'000, CONTEXTS);
+		if (!m_debug_wav)
+			logerror("D-70 TVF: unable to open debug WAV %s\n", path);
+	}
+
+	save_item(NAME(m_global));
+	save_item(NAME(m_context));
+	save_item(NAME(m_dest));
+	save_item(NAME(m_source));
+	save_item(NAME(m_low));
+	save_item(NAME(m_band));
+	save_item(NAME(m_cutoff));
+	save_item(NAME(m_cutoff_target));
+	save_item(NAME(m_gain));
+	save_item(NAME(m_gain_target));
+	save_item(NAME(m_damping));
+}
+
+void d70_tvf_device::device_reset()
+{
+	std::fill(std::begin(m_global), std::end(m_global), 0);
+	std::fill_n(&m_context[0][0], CONTEXTS * 0x40, 0);
+	std::fill(std::begin(m_low), std::end(m_low), 0.0);
+	std::fill(std::begin(m_band), std::end(m_band), 0.0);
+	std::fill(std::begin(m_cutoff), std::end(m_cutoff), 0.0);
+	std::fill(std::begin(m_cutoff_target), std::end(m_cutoff_target), 0.0);
+	std::fill(std::begin(m_gain), std::end(m_gain), 0.0);
+	std::fill(std::begin(m_gain_target), std::end(m_gain_target), 0.0);
+	std::fill(std::begin(m_damping), std::end(m_damping), 1.0);
+	m_dest = 0;
+	m_source = 0;
+}
+
+u8 d70_tvf_device::read(offs_t offset) const
+{
+	offset &= 0x7f;
+	if (offset >= 0x04 && offset <= 0x07)
+		return m_context[m_source][offset];
+	if (per_context(offset))
+		return m_context[m_dest][offset];
+	return m_global[offset];
+}
+
+void d70_tvf_device::commit_word(unsigned context, unsigned offset)
+{
+	u16 const word = context_word(context, offset);
+	if (offset == 0x08)
+	{
+		// Reset writes 0x1000 here, establishing a Q12 coefficient.  Treating
+		// it as Q14 makes the nominal zero-resonance setting highly resonant.
+		m_damping[context] = double(word & 0x1fff) / 4096.0;
+	}
+	else if (offset == 0x30)
+	{
+		m_cutoff_target[context] = std::clamp(double(word & 0x7fff) / 16384.0, 0.0, 1.999);
+		if (BIT(word, 15))
+		{
+			m_cutoff[context] = m_cutoff_target[context];
+			m_low[context] = 0.0;
+			m_band[context] = 0.0;
+		}
+	}
+	else if (offset == 0x34)
+	{
+		m_gain_target[context] = double(word & 0x7fff) / 32768.0;
+		if (BIT(word, 15))
+			m_gain[context] = m_gain_target[context];
+	}
+}
+
+void d70_tvf_device::write(offs_t offset, u8 data)
+{
+	offset &= 0x7f;
+
+	// D-70 words are written low byte first.  Bring audio up to the high-byte
+	// commit time so a half-written cutoff or gain never reaches the filter.
+	if ((offset == 0x09 || offset == 0x31 || offset == 0x35) && m_stream)
+		m_stream->update();
+
+	m_global[offset] = data;
+	if (offset == 0x40 || offset == 0x41)
+	{
+		m_dest = get_u16le(&m_global[0x40]) & 0x1f;
+		return;
+	}
+	if (offset == 0x64 || offset == 0x65)
+	{
+		m_source = get_u16le(&m_global[0x64]) & 0x1f;
+		return;
+	}
+
+	if (!per_context(offset))
+		return;
+	m_context[m_dest][offset] = data;
+	if (offset == 0x09 || offset == 0x31 || offset == 0x35)
+		commit_word(m_dest, offset - 1);
+}
+
+void d70_tvf_device::sound_stream_update(sound_stream &stream)
+{
+	if (m_debug_wav)
+		m_debug_buffer.assign(stream.samples() * CONTEXTS, 0);
+
+	for (int sample = 0; sample < stream.samples(); sample++)
+	{
+		for (unsigned context = 0; context < CONTEXTS; context++)
+		{
+			m_cutoff[context] += (m_cutoff_target[context] - m_cutoff[context]) * (1.0 / 64.0);
+			m_gain[context] += (m_gain_target[context] - m_gain[context]) * (1.0 / 128.0);
+
+			double const input = stream.get(context, sample);
+			double const damping = m_damping[context];
+			double const stability_limit = std::sqrt(damping * damping + 4.0) - damping;
+			double const frequency = std::min(m_cutoff[context], stability_limit);
+
+			// Roland's later XP/GP TVF performs LP, HP, then BP in this order.
+			// The JD-990 research model uses the same topology and Q14 cutoff coefficient.
+			m_low[context] += m_band[context] * frequency;
+			double const high = input - damping * m_band[context] - m_low[context];
+			m_band[context] += high * frequency;
+			m_low[context] = std::clamp(m_low[context], -16.0, 16.0);
+			m_band[context] = std::clamp(m_band[context], -16.0, 16.0);
+
+			double const output = m_low[context] * m_gain[context];
+			stream.put(context, sample, output);
+			if (m_debug_wav)
+				m_debug_buffer[sample * CONTEXTS + context] = std::clamp<int>(
+					std::lround(output * 32768.0), -32768, 32767);
+		}
+	}
+	if (m_debug_wav)
+		util::wav_add_data_16(*m_debug_wav, m_debug_buffer.data(), m_debug_buffer.size());
+}
+
+
 class roland_d70_state : public driver_device
 {
 public:
@@ -177,22 +381,22 @@ public:
 		m_ram1(*this, "ram1", 16 * 1024, ENDIANNESS_LITTLE),
 		m_ram2(*this, "ram2", 32 * 1024, ENDIANNESS_LITTLE),
 		m_cardram(*this, "cardram", 32 * 1024, ENDIANNESS_LITTLE),
-		m_dsp_ram(*this, "dsp_ram", 8 * 1024, ENDIANNESS_LITTLE),
-		m_tvf_ram(*this, "tvf_ram", 0x80, ENDIANNESS_LITTLE),
 		m_rom_bank(*this, "rom_bank"),
 		m_ram_bank(*this, "ram_bank"),
 		m_card_bank(*this, "card_bank"),
 		m_pcm_rom(*this, "pcm"),
 		m_cpu(*this, "maincpu"),
 		m_pcm(*this, "pcm"),
+		m_tvf(*this, "tvf"),
+		m_rcc(*this, "rcc"),
 		m_lcd(*this, "lcd"),
-		m_midi_timer(*this, "midi_timer"),
 		m_keys(*this, "KEY%u", 0),
 		m_sliders(*this, "SLIDER%u", 0),
 		m_protect_sw(*this, "PROTECT_SW"),
 		m_selected_slider(0),
 		m_sw_scan_index(0),
 		m_sw_scan_bank(0),
+		m_lp_eint(false),
 		m_midi_rx(0),
 		m_midi_pos(0)
 	{
@@ -203,6 +407,7 @@ public:
 
 protected:
 	virtual void machine_start() override ATTR_COLD;
+	virtual void machine_reset() override ATTR_COLD;
 
 private:
 	void lcd_map(address_map &map) ATTR_COLD;
@@ -223,16 +428,16 @@ private:
 	u8 snd_io_r(offs_t offset);
 	void snd_io_w(offs_t offset, u8 data);
 
-	u8 ach0_r();
-	u8 ach1_r();
-	u8 ach2_r();
-	u8 ach3_r();
-	u8 ach4_r();
+	u16 ach0_r();
+	u16 ach1_r();
+	u16 ach2_r();
+	u16 ach3_r();
+	u16 ach4_r();
 
-	TIMER_DEVICE_CALLBACK_MEMBER(midi_timer_cb);
 	TIMER_DEVICE_CALLBACK_MEMBER(test_timer_cb);
 
 	void midi_in_w(int state);
+	void lp_eint_w(int state);
 
 	void d70_map(address_map &map) ATTR_COLD;
 
@@ -243,31 +448,29 @@ private:
 	memory_share_creator<u16> m_ram1;
 	memory_share_creator<u16> m_ram2;
 	memory_share_creator<u16> m_cardram;
-	memory_share_creator<u8> m_dsp_ram;
-	memory_share_creator<u8> m_tvf_ram;
 	required_memory_bank m_rom_bank;
 	required_memory_bank m_ram_bank;
 	required_memory_bank m_card_bank;
 	required_region_ptr<u8> m_pcm_rom;
 	required_device<i8xc196_device> m_cpu;
 	required_device<mb87419_mb87420_device> m_pcm;
+	required_device<d70_tvf_device> m_tvf;
+	required_device<roland_rcc_device> m_rcc;
 	required_device<t6963c_device> m_lcd;
-	required_device<timer_device> m_midi_timer;
 	required_ioport_array<8> m_keys;
 	required_ioport_array<8> m_sliders;
 	required_ioport m_protect_sw;
 
 	u8 m_sound_io_buffer[0x100];
-	u8 m_dsp_io_buffer[0x80];
 	u8 m_selected_slider;
 	int m_sw_scan_index;
 	int m_sw_scan_bank;
 	u8 m_sw_scan_prev = 0;
 	bool m_sw_scan_write = true;
 	bool m_sw_scan_ad = true;
+	bool m_lp_eint;
 	u8 m_midi_rx;
 	int m_midi_pos;
-	std::queue<u8> midi_queue;
 };
 
 void roland_d70_state::machine_start() {
@@ -276,15 +479,39 @@ void roland_d70_state::machine_start() {
 	m_ram_bank->configure_entries(0, 2, &m_ram2[0], 0x4000);
 	m_card_bank->configure_entries(0, 2, &m_cardram[0], 0x4000);
 
+	save_item(NAME(m_sound_io_buffer));
+	save_item(NAME(m_selected_slider));
+	save_item(NAME(m_sw_scan_index));
+	save_item(NAME(m_sw_scan_bank));
+	save_item(NAME(m_sw_scan_prev));
+	save_item(NAME(m_sw_scan_write));
+	save_item(NAME(m_sw_scan_ad));
+	save_item(NAME(m_lp_eint));
+	save_item(NAME(m_midi_rx));
+	save_item(NAME(m_midi_pos));
+}
+
+
+void roland_d70_state::machine_reset() {
+	m_bank_view.select(0);
+	m_rom_bank->set_entry(0);
+	m_ram_bank->set_entry(0);
+	m_card_bank->set_entry(0);
 	m_sw_scan_index = 0;
-  m_sw_scan_bank = 0;
+	m_sw_scan_bank = 0;
 	m_sw_scan_prev = 0;
 	m_sw_scan_write = true;
 	m_sw_scan_ad = true;
+	m_lp_eint = false;
+	m_selected_slider = 0;
+	m_midi_rx = 0;
+	m_midi_pos = 0;
 }
 
 void roland_d70_state::bank_w(u8 data) {
-	m_bank_view.select(data >> 4);
+	// Only address-decoder inputs BS0/BS1 (bits 4-5) select the window target;
+	// bits 6-7 are unrelated control outputs and must not become view indices.
+	m_bank_view.select((data >> 4) & 0x03);
 	m_rom_bank->set_entry(data & 0x07);
 	m_ram_bank->set_entry(data & 0x01);
 	m_card_bank->set_entry(data & 0x01);
@@ -302,36 +529,40 @@ void roland_d70_state::lcd_map(address_map &map) {
 }
 
 void roland_d70_state::midi_in_w(int state) {
-	if (m_midi_pos == 0 || m_midi_pos == 9) {
-		m_midi_pos += 1;
-	} else if (m_midi_pos == 10) {
-		midi_queue.push(m_midi_rx);
-		// logerror("midi enqueued %x\n", m_midi_rx);
-		m_midi_rx = 0;
-		m_midi_pos = 0;
+	// The MIDI image device presents a 31.25 kbaud 8-N-1 bitstream.  Position
+	// zero waits for the falling start bit, positions 1-8 collect data LSB
+	// first, and position 9 validates the stop bit.  The previous decoder only
+	// delivered a byte on the next start bit and consequently lost the first
+	// data bit of every byte after the first one.
+	if (!m_midi_pos) {
+		if (!state) {
+			m_midi_rx = 0;
+			m_midi_pos = 1;
+		}
+	} else if (m_midi_pos <= 8) {
+		m_midi_rx |= bool(state) << (m_midi_pos - 1);
+		m_midi_pos++;
 	} else {
-		m_midi_rx |= state << (m_midi_pos - 1);
-		m_midi_pos += 1;
+		if (state) {
+			m_cpu->serial_w(m_midi_rx);
+		}
+		m_midi_pos = 0;
 	}
 }
 
-TIMER_DEVICE_CALLBACK_MEMBER(roland_d70_state::midi_timer_cb) {
-	// CPU doesn't have a proper serial interface so we are forced
-	// to simulate it this way for now
-	if (midi_queue.empty())
-		return;
-
-	u8 midi = midi_queue.front();
-	midi_queue.pop();
-	// logerror("midi_in %02x\n", midi);
-	m_cpu->serial_w(midi);
-}
-
 u8 roland_d70_state::port0_r() {
-	return 0x00;
+	// LP EINT is wired to the CPU's digital P0.7 input.  The separate XINT
+	// signal on the schematic is the legacy EXTINT pin used by the effects
+	// path; treating LP EINT as EXTINT leaves its completion queue unserviced.
+	// EINT is active-low at the CPU pin; devcb line assertion is logical-high.
+	// SENS0/SENS1 have pull-ups on the main board.  EINT is also pulled high
+	// and the LP asserts it low when an envelope segment completes.
+	return 0x60 | (m_lp_eint ? 0x00 : 0x80);
 }
 
-bool debugButtonLast = false;
+void roland_d70_state::lp_eint_w(int state) {
+	m_lp_eint = bool(state);
+}
 
 u8 roland_d70_state::roland_d70_state::port1_r() {
 	u8 result = 0xff;
@@ -352,21 +583,6 @@ u8 roland_d70_state::roland_d70_state::port1_r() {
 			result &= ~(SO_MASK);
 		}
 
-		if (m_sw_scan_bank == 7 && m_sw_scan_index == 7) {
-			if (buttonState != debugButtonLast) {
-				debugButtonLast = buttonState;
-				// logerror("DEBUG BUTTON %x\n", buttonState);
-				if (!buttonState) {
-					midi_queue.push(0x90);
-					midi_queue.push(0x36);
-					midi_queue.push(0x7f);
-				} else {
-					midi_queue.push(0x80);
-					midi_queue.push(0x36);
-					midi_queue.push(0x00);
-				}
-			}
-		}
 	}
 
 	return result;
@@ -418,40 +634,19 @@ void roland_d70_state::port2_w(u8 data) {
 }
 
 u8 roland_d70_state::dsp_io_r(offs_t offset) {
-	return m_dsp_io_buffer[offset];
+	return m_rcc->read(offset);
 }
 
 void roland_d70_state::dsp_io_w(offs_t offset, u8 data) {
-	m_dsp_io_buffer[offset] = data;
-	// do read/write to some external memory, makes the RCC-CPU check pass.
-	// (routine at 0x4679)
-	switch (offset) {
-	case 0x04:
-		// write to partials?? (written in loop at 0x4375)
-		break;
-
-	case 0x06:
-		m_dsp_ram[0x000 | data] = m_dsp_io_buffer[0x00] & 0x03;
-		m_dsp_ram[0x100 | data] = m_dsp_io_buffer[0x01];
-		m_dsp_ram[0x200 | data] = m_dsp_io_buffer[0x02];
-		break;
-
-	case 0x0a:
-		m_dsp_io_buffer[0x00] = m_dsp_ram[0x000 | data];
-		m_dsp_io_buffer[0x01] = m_dsp_ram[0x100 | data];
-		m_dsp_io_buffer[0x02] = m_dsp_ram[0x200 | data];
-		break;
-	}
+	m_rcc->write(offset, data);
 }
 
 u8 roland_d70_state::tvf_io_r(offs_t offset) {
-	printf("tvf read %04x\n", offset);
-	return 0;
+	return m_tvf->read(offset);
 }
 
 void roland_d70_state::tvf_io_w(offs_t offset, u8 data) {
-	printf("tvf write %04x= %02x\n", offset, data);
-	m_tvf_ram[offset] = data;
+	m_tvf->write(offset, data);
 }
 
 u8 roland_d70_state::snd_io_r(offs_t offset) {
@@ -507,14 +702,14 @@ void roland_d70_state::snd_io_w(offs_t offset, u8 data) {
 	m_sound_io_buffer[offset] = data;
 }
 
-u8 roland_d70_state::ach0_r() {
-	return m_sliders[m_selected_slider & 7]->read();
+u16 roland_d70_state::ach0_r() {
+	return u16(m_sliders[m_selected_slider & 7]->read()) * 0x3ff / 0xff;
 }
 
-u8 roland_d70_state::ach1_r() { return 128; } // TODO: EXT PEDAL
-u8 roland_d70_state::ach2_r() { return 128; } // TODO: BENDER
-u8 roland_d70_state::ach3_r() { return 128; } // TODO: BATTERY
-u8 roland_d70_state::ach4_r() { return 128; } // TODO: RAM CARD (VBB)
+u16 roland_d70_state::ach1_r() { return 512; } // TODO: EXT PEDAL
+u16 roland_d70_state::ach2_r() { return 512; } // TODO: BENDER
+u16 roland_d70_state::ach3_r() { return 0x280; } // 3.1 V internal CR2032 on the 5 V ADC reference
+u16 roland_d70_state::ach4_r() { return 512; } // TODO: RAM CARD (VBB)
 
 TIMER_DEVICE_CALLBACK_MEMBER(roland_d70_state::test_timer_cb) {
 }
@@ -534,6 +729,7 @@ void roland_d70_state::d70_map(address_map &map) {
 	map(0x1000, 0x7fff).rom().region("maincpu", 0x1000);
 	map(0x8000, 0xbfff).view(m_bank_view);
 	m_bank_view[0](0x8000, 0xbfff).bankr(m_rom_bank);
+	m_bank_view[1](0x8000, 0xbfff).unmaprw();
 	m_bank_view[2](0x8000, 0xbfff).bankrw(m_ram_bank);
 	m_bank_view[3](0x8000, 0xbfff).bankrw(m_card_bank);
 	map(0xc000, 0xffff).ram().share("ram1");
@@ -554,12 +750,29 @@ void roland_d70_state::d70(machine_config &config) {
 	maincpu.ach3_cb().set(FUNC(roland_d70_state::ach3_r));
 	maincpu.ach4_cb().set(FUNC(roland_d70_state::ach4_r));
 
+	// IC5/IC6 are the battery-backed working SRAM.  The address decoder exposes
+	// it as a fixed 16 KiB window and two banked 16 KiB windows.  The separate
+	// IC26/IC27 DRAM belongs to the effects chip, not this CPU address space.
+	NVRAM(config, "ram1", nvram_device::DEFAULT_ALL_0);
+	NVRAM(config, "ram2", nvram_device::DEFAULT_ALL_0);
+
 	SPEAKER(config, "speaker", 2).front();
 
 	MB87419_MB87420(config, m_pcm, 32.768_MHz_XTAL);
-	m_pcm->int_callback().set_inputline(m_cpu, i8xc196_device::EXTINT_LINE);
-	m_pcm->add_route(0, "speaker", 1.0, 0);
-	m_pcm->add_route(1, "speaker", 1.0, 1);
+	m_pcm->int_callback().set(FUNC(roland_d70_state::lp_eint_w));
+	D70_TVF(config, m_tvf, 0);
+	ROLAND_RCC(config, m_rcc, 32'000);
+	m_rcc->set_program_voice_offset(4);
+	// DA is a 32-slot TDM stream, one slot per LP voice/context.  TVF performs
+	// the per-context resonant low-pass and VCA, then RCC applies the decoded
+	// firmware dry L/R coefficients. Effects remain incomplete. The 4x output
+	// makeup stands in for the unknown RCC/DAC fixed-point gain.
+	for (unsigned voice = 0; voice < mb87419_mb87420_device::NUM_CHANNELS; voice++) {
+		m_pcm->add_route(voice, "tvf", 1.0, voice);
+		m_tvf->add_route(voice, "rcc", 1.0, voice);
+	}
+	m_rcc->add_route(0, "speaker", 4.0, 0);
+	m_rcc->add_route(1, "speaker", 4.0, 1);
 
 	T6963C(config, m_lcd);
 	m_lcd->set_addrmap(0, &roland_d70_state::lcd_map);
@@ -572,8 +785,6 @@ void roland_d70_state::d70(machine_config &config) {
 	screen.set_palette("palette");
 
 	PALETTE(config, "palette", FUNC(roland_d70_state::lcd_palette), 2);
-
-	TIMER(config, m_midi_timer).configure_periodic(FUNC(roland_d70_state::midi_timer_cb), attotime::from_hz(1250));
 
 	TIMER(config, "test_timer").configure_periodic(FUNC(roland_d70_state::test_timer_cb), attotime::from_hz(1));
 
@@ -617,7 +828,7 @@ ROM_START(d70)
 	ROM_SYSTEM_BIOS( 0, "v119", "Version 1.19 - March 9, 1993" )
 	ROM_SYSTEM_BIOS( 1, "v116", "Version 1.16 - January 28, 1991" )
 	ROM_SYSTEM_BIOS( 2, "v114", "Version 1.14 - September 20, 1990" )
-	ROM_SYSTEM_BIOS( 3, "v112", "Version 1.12 - August 8, 1990" )
+	ROM_SYSTEM_BIOS( 3, "v112", "Version 1.12" )
 	ROM_SYSTEM_BIOS( 4, "v110", "Version 1.10 - April 19, 1990" )
 	ROM_SYSTEM_BIOS( 5, "v100", "Version 1.00 - March 10, 1990" )
 

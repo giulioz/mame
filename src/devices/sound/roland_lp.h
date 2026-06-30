@@ -6,6 +6,7 @@
 #pragma once
 
 #include "dirom.h"
+#include "wavwrite.h"
 
 class mb87419_mb87420_device : public device_t, public device_sound_interface, public device_rom_interface<22>
 {
@@ -48,6 +49,14 @@ private:
 
 		bool enable = false;
 		int8_t play_dir = 0;    // playing direction, -1 [backwards] / 0 [stopped] / +1 [forwards]
+		int32_t loop_reference = 0;
+		bool loop_reference_valid = false;
+		bool dlm_checked = false;
+		bool dlm = false;
+		uint8_t dlm_reference = 0;
+		uint8_t dlm_loop_sum = 0;
+		int16_t dlm_bias = 0;
+		bool dlm_alt_cycle_phase = false;
 		bool irq = false;
 		int tempReference = 0;
 	};
@@ -68,6 +77,8 @@ private:
 	bool m_irq_current_valid;
 	uint16_t m_readback;
 	u8 m_sound_io_buffer[0x100];
+	util::wav_file_ptr m_debug_wav;
+	std::vector<s16> m_debug_buffer;
 
 	void signal_envelope_complete(uint8_t channel);
 };

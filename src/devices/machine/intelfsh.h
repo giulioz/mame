@@ -387,6 +387,12 @@ public:
 	fujitsu_29lv800b_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock = 0);
 };
 
+class fujitsu_29f800b_16bit_device : public intelfsh16_device
+{
+public:
+	fujitsu_29f800b_16bit_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock = 0);
+};
+
 class amd_29f800b_16bit_device : public intelfsh16_device
 {
 public:
@@ -432,6 +438,7 @@ DECLARE_DEVICE_TYPE(FUJITSU_29F016A,         fujitsu_29f016a_device)
 DECLARE_DEVICE_TYPE(FUJITSU_29DL164BD,       fujitsu_29dl164bd_device)
 DECLARE_DEVICE_TYPE(FUJITSU_29LV002TC,       fujitsu_29lv002tc_device)
 DECLARE_DEVICE_TYPE(FUJITSU_29LV800B,        fujitsu_29lv800b_device)
+DECLARE_DEVICE_TYPE(FUJITSU_29F800B_16BIT,   fujitsu_29f800b_16bit_device)
 DECLARE_DEVICE_TYPE(INTEL_E28F400B,          intel_e28f400b_device)
 DECLARE_DEVICE_TYPE(MACRONIX_29F008TC,       macronix_29f008tc_device)
 DECLARE_DEVICE_TYPE(MACRONIX_29F1610MC,      macronix_29f1610mc_device)

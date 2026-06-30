@@ -26,6 +26,11 @@ fetch
 		inst_state = OP1;
 
 fetch_196
+	if(powerdown || (idle && !irq_requested && !irq_requested_1)) {
+		icount = bcount;
+		return;
+	}
+	idle = false;
 	if(irq_requested_1) {
 		int level;
 		for(level = 7; level >= 0 && !((mask_irq_1 | IRQ_NMI) & pending_irq_1 & (1<<level)); level--);
@@ -38,6 +43,7 @@ fetch_196
 		reg_w16(0x18, TMP);
 		any_w16(TMP, PC);
 		PC = any_r16(0x2030+2*OP1);
+		icount -= cycles_scaling * (TMP < 0x100 ? 16 : 18);
 		check_irq();
 	} else if(irq_requested) {
 		int level;
@@ -51,6 +57,7 @@ fetch_196
 		reg_w16(0x18, TMP);
 		any_w16(TMP, PC);
 		PC = any_r16(0x2000+2*OP1);
+		icount -= cycles_scaling * (TMP < 0x100 ? 16 : 18);
 		check_irq();
 	}
 	PPC = PC;
@@ -221,16 +228,23 @@ eadr  indirect_3w
 macro post_indirect $size $cycles1 $cycles2
 	if(OPI & 0x01) {
 		reg_w16(OPI, OP1 + $size);
-		next($cycles2); // +4 when external
+		next($cycles2 + (is_196() && OP1 >= 0x100 ? ($cycles1 == 7 ? 3 : 2) : 0));
 	} else {
-		next($cycles1); // +4 when external
+		next($cycles1 + (is_196() && OP1 >= 0x100 ? ($cycles1 == 7 ? 3 : 2) : 0));
+	}
+
+macro post_indirect_196 $size $old_normal $old_inc $new_normal $new_inc $ext_normal $ext_inc
+	if(OPI & 0x01) {
+		reg_w16(OPI, OP1 + $size);
+		next_196($old_inc, OP1 < 0x100 ? $new_inc : $ext_inc);
+	} else {
+		next_196($old_normal, OP1 < 0x100 ? $new_normal : $ext_normal);
 	}
 
 eadr  indexed_2b
 	OPI = read_pc();
 	OP1 = read_pc();
 	if(OPI & 0x01) {
-		OPI &= 0xfe;
 		OP1 |= read_pc() << 8;
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
@@ -243,7 +257,6 @@ eadr  indexed_3b
 	OPI = read_pc();
 	OP1 = read_pc();
 	if(OPI & 0x01) {
-		OPI &= 0xfe;
 		OP1 |= read_pc() << 8;
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
@@ -257,7 +270,6 @@ eadr  indexed_3e
 	OPI = read_pc();
 	OP1 = read_pc();
 	if(OPI & 0x01) {
-		OPI &= 0xfe;
 		OP1 |= read_pc() << 8;
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
@@ -271,7 +283,6 @@ eadr  indexed_1w
 	OPI = read_pc();
 	OP1 = read_pc();
 	if(OPI & 0x01) {
-		OPI &= 0xfe;
 		OP1 |= read_pc() << 8;
 	} else
 		OP1 = int8_t(OP1);
@@ -283,7 +294,6 @@ eadr  indexed_2w
 	OPI = read_pc();
 	OP1 = read_pc();
 	if(OPI & 0x01) {
-		OPI &= 0xfe;
 		OP1 |= read_pc() << 8;
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
@@ -296,7 +306,6 @@ eadr  indexed_3w
 	OPI = read_pc();
 	OP1 = read_pc();
 	if(OPI & 0x01) {
-		OPI &= 0xfe;
 		OP1 |= read_pc() << 8;
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
@@ -307,36 +316,34 @@ eadr  indexed_3w
 	OP3 = read_pc();
 
 macro post_indexed $cycles1 $cycles2
-	next(OPI & 0x01 ? $cycles2 : $cycles1);
+	next((OPI & 0x01 ? $cycles2 : $cycles1) + (is_196() && OP1 >= 0x100 ? ($cycles1 == 7 ? 3 : 2) : 0));
+
+macro post_indexed_196 $old_short $old_long $new_short $new_long $ext_short $ext_long
+	next_196(OPI & 0x01 ? $old_long : $old_short, OPI & 0x01 ? (OP1 < 0x100 ? $new_long : $ext_long) : (OP1 < 0x100 ? $new_short : $ext_short));
 
 00    skip  immed_1b
-	next(4);
+	next_196(4, 3);
 
 01    clr   direct_1w
+	set_nz16(0);
 	reg_w16(OP1, 0x0000);
-	next(4);
+	next_196(4, 3);
 
 02    not   direct_1w
 	TMP = ~reg_r16(OP1);
 	set_nz16(TMP);
 	reg_w16(OP1, TMP);
-	next(4);
+	next_196(4, 3);
 
 03    neg   direct_1w
 	TMP = reg_r16(OP1);
 	reg_w16(OP1, do_sub(0, TMP));
-	next(4);
-
-04    xch   direct_2w
-	TMP = reg_r16(OP1);
-	reg_w16(OP1, reg_r16(OP2));
-	reg_w16(OP2, TMP);
-	next(5);
+	next_196(4, 3);
 
 05    dec   direct_1w
 	TMP = reg_r16(OP1);
 	reg_w16(OP1, do_sub(TMP, 1));
-	next(4);
+	next_196(4, 3);
 
 06    ext   direct_1w
 	OP1 &= 0xfc;
@@ -348,7 +355,7 @@ macro post_indexed $cycles1 $cycles2
 07    inc   direct_1w
 	TMP = reg_r16(OP1);
 	reg_w16(OP1, do_add(TMP, 1));
-	next(4);
+	next_196(4, 3);
 
 08    shr   immed_or_reg_2w
 	TMP = reg_r16(OP2);
@@ -363,13 +370,11 @@ macro post_indexed $cycles1 $cycles2
 	else if(int16_t(TMP) < 0)
 		PSW |= F_N;
 	reg_w16(OP2, TMP);
-	next(OP1 ? 7+OP1 : 8);
+	next_196(OP1 ? 7+OP1 : 8, OP1 ? 6+OP1 : 7);
 
 09    shl   immed_or_reg_2w
 	TMP = reg_r16(OP2);
-	PSW &= ~(F_Z|F_N|F_C|F_V|F_ST);
-	if(OP1 >= 2 && (TMP & (0xffff << (OP1 <= 16 ? 17-OP1 : 0))))
-		PSW |= F_ST;
+	PSW &= ~(F_Z|F_N|F_C|F_V);
 	if(OP1 >= 1 && OP1 <= 16 && (TMP & (0x8000 >> (OP1-1))))
 		PSW |= F_C;
 	set_shift_left_overflow(TMP, 16, OP1);
@@ -379,7 +384,7 @@ macro post_indexed $cycles1 $cycles2
 	else if(int16_t(TMP) < 0)
 		PSW |= F_N;
 	reg_w16(OP2, TMP);
-	next(OP1 ? 7+OP1 : 8);
+	next_196(OP1 ? 7+OP1 : 8, OP1 ? 6+OP1 : 7);
 
 0a    shra  immed_or_reg_2w
 	TMP = reg_r16(OP2);
@@ -388,18 +393,20 @@ macro post_indexed $cycles1 $cycles2
 		PSW |= F_ST;
 	if(OP1 >= 1 && OP1 <= 16 && (TMP & (0x0001 << (OP1-1))))
 		PSW |= F_C;
+	else if(OP1 > 16 && (TMP & 0x8000))
+		PSW |= F_C;
 	TMP = int16_t(TMP) >> OP1;
 	if(!TMP)
 		PSW |= F_Z;
 	else if(int16_t(TMP) < 0)
 		PSW |= F_N;
 	reg_w16(OP2, TMP);
-	next(OP1 ? 7+OP1 : 8);
+	next_196(OP1 ? 7+OP1 : 8, OP1 ? 6+OP1 : 7);
 
 0c    shrl  immed_or_reg_2w
 	OP2 &= 0xfc;
 	TMP = reg_r16(OP2);
-	TMP |= reg_r16(OP2+2) << 16;
+	TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 	PSW &= ~(F_Z|F_N|F_C|F_V|F_ST);
 	if(OP1 >= 2 && (TMP & (0xffffffff >> (33-OP1))))
 		PSW |= F_ST;
@@ -417,10 +424,8 @@ macro post_indexed $cycles1 $cycles2
 0d    shll  immed_or_reg_2w
 	OP2 &= 0xfc;
 	TMP = reg_r16(OP2);
-	TMP |= reg_r16(OP2+2) << 16;
-	PSW &= ~(F_Z|F_N|F_C|F_V|F_ST);
-	if(OP1 >= 2 && (TMP & (0xffffffff << (33-OP1))))
-		PSW |= F_ST;
+	TMP |= uint32_t(reg_r16(OP2+2)) << 16;
+	PSW &= ~(F_Z|F_N|F_C|F_V);
 	if(OP1 >= 1 && (TMP & (0x80000000 >> (OP1-1))))
 		PSW |= F_C;
 	set_shift_left_overflow(TMP, 32, OP1);
@@ -436,7 +441,7 @@ macro post_indexed $cycles1 $cycles2
 0e    shral immed_or_reg_2w
 	OP2 &= 0xfc;
 	TMP = reg_r16(OP2);
-	TMP |= reg_r16(OP2+2) << 16;
+	TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 	PSW &= ~(F_Z|F_N|F_C|F_V|F_ST);
 	if(OP1 >= 2 && (TMP & (0xffffffff >> (33-OP1))))
 		PSW |= F_ST;
@@ -454,41 +459,38 @@ macro post_indexed $cycles1 $cycles2
 0f    norml direct_2e
 	OP2 &= 0xfc;
 	TMP = reg_r16(OP2);
-	TMP |= reg_r16(OP2+2) << 16;
+	TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 	for(OP3 = 0; OP3 < 31 && int32_t(TMP) >= 0; TMP <<= 1, OP3++);
 	PSW &= ~(F_Z|F_N|F_C);
 	if(!TMP)
 		PSW |= F_Z;
+	else if(int32_t(TMP) < 0)
+		PSW |= F_N;
 	reg_w8(OP1, OP3);
 	reg_w16(OP2, TMP);
 	reg_w16(OP2+2, TMP >> 16);
-	next(11+OP3);
+	next_196(11+OP3, OP3 ? 8+OP3 : 9);
 
 11    clrb  direct_1b
+	set_nz8(0);
 	reg_w8(OP1, 0x00);
-	next(4);
+	next_196(4, 3);
 
 12    notb  direct_1b
 	TMP = ~reg_r8(OP1);
 	set_nz8(TMP);
 	reg_w8(OP1, TMP);
-	next(4);
+	next_196(4, 3);
 
 13    negb  direct_1b
 	TMP = reg_r8(OP1);
 	reg_w8(OP1, do_subb(0, TMP));
-	next(4);
-
-14    xchb  direct_2b
-	TMP = reg_r8(OP1);
-	reg_w8(OP1, reg_r8(OP2));
-	reg_w8(OP2, TMP);
-	next(5);
+	next_196(4, 3);
 
 15    decb  direct_1b
 	TMP = reg_r8(OP1);
 	reg_w8(OP1, do_subb(TMP, 1));
-	next(4);
+	next_196(4, 3);
 
 16    extb  direct_1b
 	OP1 &= 0xfe;
@@ -500,7 +502,7 @@ macro post_indexed $cycles1 $cycles2
 17    incb  direct_1b
 	TMP = reg_r8(OP1);
 	reg_w8(OP1, do_addb(TMP, 1));
-	next(4);
+	next_196(4, 3);
 
 18    shrb  immed_or_reg_2b
 	TMP = reg_r8(OP2);
@@ -515,13 +517,11 @@ macro post_indexed $cycles1 $cycles2
 	else if(int8_t(TMP) < 0)
 		PSW |= F_N;
 	reg_w8(OP2, TMP);
-	next(OP1 ? 7+OP1 : 8);
+	next_196(OP1 ? 7+OP1 : 8, OP1 ? 6+OP1 : 7);
 
 19    shlb  immed_or_reg_2b
 	TMP = reg_r8(OP2);
-	PSW &= ~(F_Z|F_N|F_C|F_V|F_ST);
-	if(OP1 >= 2 && (TMP & (0xff << (OP1 <= 8 ? 9-OP1 : 0))))
-		PSW |= F_ST;
+	PSW &= ~(F_Z|F_N|F_C|F_V);
 	if(OP1 >= 1 && OP1 <= 8 && (TMP & (0x80 >> (OP1-1))))
 		PSW |= F_C;
 	set_shift_left_overflow(TMP, 8, OP1);
@@ -531,7 +531,7 @@ macro post_indexed $cycles1 $cycles2
 	else if(int8_t(TMP) < 0)
 		PSW |= F_N;
 	reg_w8(OP2, TMP);
-	next(OP1 ? 7+OP1 : 8);
+	next_196(OP1 ? 7+OP1 : 8, OP1 ? 6+OP1 : 7);
 
 1a    shrab immed_or_reg_2b
 	TMP = reg_r8(OP2);
@@ -540,17 +540,19 @@ macro post_indexed $cycles1 $cycles2
 		PSW |= F_ST;
 	if(OP1 >= 1 && OP1 <= 8 && (TMP & (0x01 << (OP1-1))))
 		PSW |= F_C;
+	else if(OP1 > 8 && (TMP & 0x80))
+		PSW |= F_C;
 	TMP = uint8_t(int8_t(TMP) >> OP1);
 	if(!TMP)
 		PSW |= F_Z;
 	else if(int8_t(TMP) < 0)
 		PSW |= F_N;
 	reg_w8(OP2, TMP);
-	next(OP1 ? 7+OP1 : 8);
+	next_196(OP1 ? 7+OP1 : 8, OP1 ? 6+OP1 : 7);
 
 20-27 sjmp  rel11
 	PC += OP1;
-	next(8);
+	next_196(8, 7);
 
 28-2f scall rel11
 	TMP = reg_r16(0x18);
@@ -558,7 +560,7 @@ macro post_indexed $cycles1 $cycles2
 	reg_w16(0x18, TMP);
 	any_w16(TMP, PC);
 	PC += OP1;
-	next(13); // real is 13/16 depending on sp's position
+	next_196(13, TMP < 0x100 ? 11 : 13);
 
 30-37 jbc   brrel8
 	TMP = reg_r8(OP2);
@@ -657,14 +659,14 @@ macro post_indexed $cycles1 $cycles2
 	OP3 &= 0xfc;
 	reg_w16(OP3, TMP);
 	reg_w16(OP3+2, TMP >> 16);
-	next(26);
+	next_196(26, 14);
 
 4d    mulu  immed_3w
 	TMP = OP1 * reg_r16(OP2);
 	OP3 &= 0xfc;
 	reg_w16(OP3, TMP);
 	reg_w16(OP3+2, TMP >> 16);
-	next(27);
+	next_196(27, 15);
 
 4e    mulu  indirect_3w
 	TMP = any_r16(OP1);
@@ -672,7 +674,7 @@ macro post_indexed $cycles1 $cycles2
 	OP3 &= 0xfc;
 	reg_w16(OP3, TMP);
 	reg_w16(OP3+2, TMP >> 16);
-	post_indirect 2 28 29 // +5 when external
+	post_indirect_196 2 28 29 16 17 19 19
 
 4f    mulu  indexed_3w
 	TMP = any_r16(OP1);
@@ -680,7 +682,7 @@ macro post_indexed $cycles1 $cycles2
 	OP3 &= 0xfc;
 	reg_w16(OP3, TMP);
 	reg_w16(OP3+2, TMP >> 16);
-	post_indexed 28 29 // +5 when external
+	post_indexed_196 28 29 17 18 20 21
 
 fe4c  mul   direct_3w
 	TMP = reg_r16(OP1);
@@ -688,14 +690,14 @@ fe4c  mul   direct_3w
 	OP3 &= 0xfc;
 	reg_w16(OP3, TMP);
 	reg_w16(OP3+2, TMP >> 16);
-	next(30);
+	next_196(30, 16);
 
 fe4d  mul   immed_3w
 	TMP = int16_t(OP1) * int16_t(reg_r16(OP2));
 	OP3 &= 0xfc;
 	reg_w16(OP3, TMP);
 	reg_w16(OP3+2, TMP >> 16);
-	next(31);
+	next_196(31, 17);
 
 fe4e  mul   indirect_3w
 	TMP = any_r16(OP1);
@@ -703,7 +705,7 @@ fe4e  mul   indirect_3w
 	OP3 &= 0xfc;
 	reg_w16(OP3, TMP);
 	reg_w16(OP3+2, TMP >> 16);
-	post_indirect 2 32 33 // +5 when external
+	post_indirect_196 2 32 33 18 19 21 22
 
 fe4f  mul   indexed_3w
 	TMP = any_r16(OP1);
@@ -711,7 +713,7 @@ fe4f  mul   indexed_3w
 	OP3 &= 0xfc;
 	reg_w16(OP3, TMP);
 	reg_w16(OP3+2, TMP >> 16);
-	post_indexed 32 33 // +5 when external
+	post_indexed_196 32 33 19 20 22 23
 
 50    andb  direct_3b
 	TMP = reg_r8(OP1);
@@ -790,47 +792,47 @@ fe4f  mul   indexed_3w
 	TMP = reg_r8(OP1);
 	TMP *= reg_r8(OP2);
 	reg_w16(OP3, TMP);
-	next(18);
+	next_196(18, 10);
 
 5d    mulub immed_3e
 	TMP = OP1 * reg_r8(OP2);
 	reg_w16(OP3, TMP);
-	next(18);
+	next_196(18, 10);
 
 5e    mulub indirect_3e
 	TMP = any_r8(OP1);
 	TMP *= reg_r8(OP2);
 	reg_w16(OP3, TMP);
-	post_indirect 1 20 21 // +5 when external
+	post_indirect_196 1 20 21 12 12 15 16
 
 5f    mulub indexed_3e
 	TMP = any_r8(OP1);
 	TMP *= reg_r8(OP2);
 	reg_w16(OP3, TMP);
-	post_indexed 20 21 // +5 when external
+	post_indexed_196 20 21 12 14 16 17
 
 fe5c  mulb  direct_3e
 	TMP = reg_r8(OP1);
 	TMP = int8_t(reg_r8(OP2)) * int8_t(TMP);
 	reg_w16(OP3, TMP);
-	next(22);
+	next_196(22, 12);
 
 fe5d  mulb  immed_3e
 	TMP = int8_t(OP1) * int8_t(reg_r8(OP2));
 	reg_w16(OP3, TMP);
-	next(22);
+	next_196(22, 12);
 
 fe5e  mulb  indirect_3e
 	TMP = any_r8(OP1);
 	TMP = int8_t(reg_r8(OP2)) * int8_t(TMP);
 	reg_w16(OP3, TMP);
-	post_indirect 1 24 25 // +5 when external
+	post_indirect_196 1 24 25 14 13 17 15
 
 fe5f  mulb  indexed_3e
 	TMP = any_r8(OP1);
 	TMP = int8_t(reg_r8(OP2)) * int8_t(TMP);
 	reg_w16(OP3, TMP);
-	post_indexed 24 25 // +5 when external
+	post_indexed_196 24 25 15 16 18 19
 
 60    and   direct_2w
 	TMP = reg_r16(OP1);
@@ -911,14 +913,14 @@ fe5f  mulb  indexed_3e
 	TMP *= reg_r16(OP2);
 	reg_w16(OP2, TMP);
 	reg_w16(OP2+2, TMP >> 16);
-	next(25);
+	next_196(25, 14);
 
 6d    mulu  immed_2w
 	OP2 &= 0xfc;
 	TMP = OP1 * reg_r16(OP2);
 	reg_w16(OP2, TMP);
 	reg_w16(OP2+2, TMP >> 16);
-	next(26);
+	next_196(26, 15);
 
 6e    mulu  indirect_2w
 	OP2 &= 0xfc;
@@ -926,7 +928,7 @@ fe5f  mulb  indexed_3e
 	TMP *= reg_r16(OP2);
 	reg_w16(OP2, TMP);
 	reg_w16(OP2+2, TMP >> 16);
-	post_indirect 2 27 28 // +5 when external
+	post_indirect_196 2 27 28 16 17 19 19
 
 6f    mulu  indexed_2w
 	OP2 &= 0xfc;
@@ -934,7 +936,7 @@ fe5f  mulb  indexed_3e
 	TMP *= reg_r16(OP2);
 	reg_w16(OP2, TMP);
 	reg_w16(OP2+2, TMP >> 16);
-	post_indexed 27 28 // +5 when external
+	post_indexed_196 27 28 17 18 20 21
 
 fe6c  mul   direct_2w
 	OP2 &= 0xfc;
@@ -942,14 +944,14 @@ fe6c  mul   direct_2w
 	TMP = int16_t(reg_r16(OP2)) * int16_t(TMP);
 	reg_w16(OP2, TMP);
 	reg_w16(OP2+2, TMP >> 16);
-	next(29);
+	next_196(29, 16);
 
 fe6d  mul   immed_2w
 	OP2 &= 0xfc;
 	TMP = int16_t(OP1) * int16_t(reg_r16(OP2));
 	reg_w16(OP2, TMP);
 	reg_w16(OP2+2, TMP >> 16);
-	next(30);
+	next_196(30, 17);
 
 fe6e  mul   indirect_2w
 	OP2 &= 0xfc;
@@ -957,7 +959,7 @@ fe6e  mul   indirect_2w
 	TMP = int16_t(reg_r16(OP2)) * int16_t(TMP);
 	reg_w16(OP2, TMP);
 	reg_w16(OP2+2, TMP >> 16);
-	post_indirect 2 31 32 // +5 when external
+	post_indirect_196 2 31 32 18 19 21 22
 
 fe6f  mul   indexed_2w
 	OP2 &= 0xfc;
@@ -965,7 +967,7 @@ fe6f  mul   indexed_2w
 	TMP = int16_t(reg_r16(OP2)) * int16_t(TMP);
 	reg_w16(OP2, TMP);
 	reg_w16(OP2+2, TMP >> 16);
-	post_indexed 31 32 // +5 when external
+	post_indexed_196 31 32 19 20 22 23
 
 70    andb  direct_2b
 	TMP = reg_r8(OP1);
@@ -1045,52 +1047,52 @@ fe6f  mul   indexed_2w
 	TMP = reg_r8(OP1);
 	TMP *= reg_r8(OP2);
 	reg_w16(OP2, TMP);
-	next(17);
+	next_196(17, 10);
 
 7d    mulub immed_2b
 	OP2 &= 0xfe;
 	TMP = OP1 * reg_r8(OP2);
 	reg_w16(OP2, TMP);
-	next(17);
+	next_196(17, 10);
 
 7e    mulub indirect_2b
 	OP2 &= 0xfe;
 	TMP = any_r8(OP1);
 	TMP *= reg_r8(OP2);
 	reg_w16(OP2, TMP);
-	post_indirect 1 19 20 // +5 when external
+	post_indirect_196 1 19 20 12 13 15 15
 
 7f    mulub indexed_2b
 	OP2 &= 0xfe;
 	TMP = any_r8(OP1);
 	TMP *= reg_r8(OP2);
 	reg_w16(OP2, TMP);
-	post_indexed 19 20 // +5 when external
+	post_indexed_196 19 20 12 14 16 17
 
 fe7c  mulb  direct_2b
 	OP2 &= 0xfe;
 	TMP = int8_t(reg_r8(OP1)) * int8_t(reg_r8(OP2));
 	reg_w16(OP2, TMP);
-	next(21);
+	next_196(21, 12);
 
 fe7d  mulb  immed_2b
 	OP2 &= 0xfe;
 	TMP = int8_t(OP1) * int8_t(reg_r8(OP2));
 	reg_w16(OP2, TMP);
-	next(21);
+	next_196(21, 12);
 
 fe7e  mulb  indirect_2b
 	OP2 &= 0xfe;
 	TMP = any_r8(OP1);
 	TMP = int8_t(reg_r8(OP2)) * int8_t(TMP);
 	reg_w16(OP2, TMP);
-	post_indirect 1 23 24 // +5 when external
+	post_indirect_196 1 23 24 14 15 17 18
 
 fe7f  mulb  indexed_2b
 	OP2 &= 0xfe;
 	TMP = int8_t(any_r8(OP1)) * int8_t(reg_r8(OP2));
 	reg_w16(OP2, TMP);
-	post_indexed 23 24 // +5 when external
+	post_indexed_196 23 24 15 16 18 19
 
 80    or    direct_2w
 	TMP = reg_r16(OP1);
@@ -1171,7 +1173,7 @@ fe7f  mulb  indexed_2b
 	OP1 = reg_r16(OP1);
 	if(OP1) {
 		TMP = reg_r16(OP2);
-		TMP |= reg_r16(OP2+2) << 16;
+		TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 		uint32_t TMP2 = TMP / OP1;
 		if(TMP2 > 65535)
 			PSW |= F_V|F_VT;
@@ -1183,14 +1185,14 @@ fe7f  mulb  indexed_2b
 	else {
 		PSW |= F_V | F_VT;
 	}
-	next(25);
+	next_196(25, 24);
 
 8d    divu  immed_2w
 	OP2 &= 0xfc;
 	PSW &= ~F_V;
 	if(OP1) {
 		TMP = reg_r16(OP2);
-		TMP |= reg_r16(OP2+2) << 16;
+		TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 		uint32_t TMP2 = TMP / OP1;
 		if(TMP2 > 65535)
 			PSW |= F_V|F_VT;
@@ -1202,7 +1204,7 @@ fe7f  mulb  indexed_2b
 	else {
 		PSW |= F_V | F_VT;
 	}
-	next(26);
+	next_196(26, 25);
 
 8e    divu  indirect_2w
 	OP2 &= 0xfc;
@@ -1210,7 +1212,7 @@ fe7f  mulb  indexed_2b
 	uint32_t d = any_r16(OP1);
 	if(d) {
 		TMP = reg_r16(OP2);
-		TMP |= reg_r16(OP2+2) << 16;
+		TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 		uint32_t TMP2 = TMP / d;
 		if(TMP2 > 65535)
 			PSW |= F_V|F_VT;
@@ -1222,7 +1224,7 @@ fe7f  mulb  indexed_2b
 	else {
 		PSW |= F_V | F_VT;
 	}
-	post_indirect 2 28 29 // +4 when external
+	post_indirect_196 2 28 29 26 27 29 30
 
 8f    divu  indexed_2w
 	OP2 &= 0xfc;
@@ -1230,7 +1232,7 @@ fe7f  mulb  indexed_2b
 	uint32_t d = any_r16(OP1);
 	if(d) {
 		TMP = reg_r16(OP2);
-		TMP |= reg_r16(OP2+2) << 16;
+		TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 		uint32_t TMP2 = TMP / d;
 		if(TMP2 > 65535)
 			PSW |= F_V|F_VT;
@@ -1242,7 +1244,7 @@ fe7f  mulb  indexed_2b
 	else {
 		PSW |= F_V | F_VT;
 	}
-	post_indexed 28 29 // +4 when external
+	post_indexed_196 28 29 27 28 30 31
 
 fe8c  div   direct_2w
 	OP2 &= 0xfc;
@@ -1250,7 +1252,7 @@ fe8c  div   direct_2w
 	OP1 = reg_r16(OP1);
 	if(OP1) {
 		TMP = reg_r16(OP2);
-		TMP |= reg_r16(OP2+2) << 16;
+		TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 		int64_t const dividend = int32_t(TMP);
 		int64_t const divisor = int16_t(OP1);
 		int64_t const TMP2 = dividend / divisor;
@@ -1264,14 +1266,14 @@ fe8c  div   direct_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	next(30);
+	next_196(30, 26);
 
 fe8d  div   immed_2w
 	OP2 &= 0xfc;
 	PSW &= ~F_V;
 	if(OP1) {
 		TMP = reg_r16(OP2);
-		TMP |= reg_r16(OP2+2) << 16;
+		TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 		int64_t const dividend = int32_t(TMP);
 		int64_t const divisor = int16_t(OP1);
 		int64_t const TMP2 = dividend / divisor;
@@ -1285,7 +1287,7 @@ fe8d  div   immed_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	next(30);
+	next_196(30, 27);
 
 fe8e  div   indirect_2w
 	OP2 &= 0xfc;
@@ -1293,7 +1295,7 @@ fe8e  div   indirect_2w
 	int32_t d = int16_t(any_r16(OP1));
 	if(d) {
 		TMP = reg_r16(OP2);
-		TMP |= reg_r16(OP2+2) << 16;
+		TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 		int64_t const dividend = int32_t(TMP);
 		int64_t const TMP2 = dividend / d;
 		if(TMP2 > 32767 || TMP2 < -32768)
@@ -1306,7 +1308,7 @@ fe8e  div   indirect_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	post_indirect 2 32 33  // +4 when external
+	post_indirect_196 2 32 33 28 29 31 32
 
 fe8f  div   indexed_2w
 	OP2 &= 0xfc;
@@ -1314,7 +1316,7 @@ fe8f  div   indexed_2w
 	int32_t d = int16_t(any_r16(OP1));
 	if(d) {
 		TMP = reg_r16(OP2);
-		TMP |= reg_r16(OP2+2) << 16;
+		TMP |= uint32_t(reg_r16(OP2+2)) << 16;
 		int64_t const dividend = int32_t(TMP);
 		int64_t const TMP2 = dividend / d;
 		if(TMP2 > 32767 || TMP2 < -32768)
@@ -1327,7 +1329,7 @@ fe8f  div   indexed_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	post_indexed 32 33  // +4 when external
+	post_indexed_196 32 33 29 30 32 33
 
 90    orb   direct_2b
 	TMP = reg_r8(OP1);
@@ -1417,7 +1419,7 @@ fe8f  div   indexed_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	next(17);
+	next_196(17, 16);
 
 9d    divub immed_2e
 	PSW &= ~F_V;
@@ -1433,7 +1435,7 @@ fe8f  div   indexed_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	next(17);
+	next_196(17, 16);
 
 9e    divub indirect_2w
 	PSW &= ~F_V;
@@ -1450,7 +1452,7 @@ fe8f  div   indexed_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	post_indirect 1 20 21 // +4 when external
+	post_indirect_196 1 20 21 18 19 21 22
 
 9f    divub indexed_2w
 	PSW &= ~F_V;
@@ -1467,7 +1469,7 @@ fe8f  div   indexed_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	post_indexed 20 21 // +4 when external
+	post_indexed_196 20 21 19 20 22 23
 
 fe9c  divb  direct_2e
 	PSW &= ~F_V;
@@ -1484,7 +1486,7 @@ fe9c  divb  direct_2e
 	else {
 		PSW |= F_V | F_VT;
 	}
-	next(21);
+	next_196(21, 18);
 
 fe9d  divb  immed_2e
 	PSW &= ~F_V;
@@ -1500,7 +1502,7 @@ fe9d  divb  immed_2e
 	else {
 		PSW |= F_V | F_VT;
 	}
-	next(21);
+	next_196(21, 18);
 
 fe9e  divb  indirect_2w
 	PSW &= ~F_V;
@@ -1517,7 +1519,7 @@ fe9e  divb  indirect_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	post_indirect 1 24 25 // +4 when external
+	post_indirect_196 1 24 25 20 21 23 24
 
 fe9f  divb  indexed_2w
 	PSW &= ~F_V;
@@ -1534,7 +1536,7 @@ fe9f  divb  indexed_2w
 	else {
 		PSW |= F_V | F_VT;
 	}
-	post_indexed 24 25 // +4 when external
+	post_indexed_196 24 25 21 22 24 25
 
 a0    ld    direct_2w
 	reg_w16(OP2, reg_r16(OP1));
@@ -1546,11 +1548,11 @@ a1    ld    immed_2w
 
 a2    ld    indirect_2w
 	reg_w16(OP2, any_r16(OP1));
-	post_indirect 2 6 7 // +5 when external
+	post_indirect_196 2 6 7 5 6 8 8
 
 a3    ld    indexed_2w
 	reg_w16(OP2, any_r16(OP1));
-	post_indexed 6 7 // +5 when external
+	post_indexed_196 6 7 6 7 9 10
 
 a4    addc  direct_2w
 	TMP = reg_r16(OP1);
@@ -1608,11 +1610,11 @@ ad    ldbze immed_2e
 
 ae    ldbze indirect_2w
 	reg_w16(OP2, uint8_t(any_r8(OP1)));
-	post_indirect 1 6 7 // +5 when external
+	post_indirect_196 1 6 7 5 6 8 8
 
 af    ldbze indexed_2w
 	reg_w16(OP2, uint8_t(any_r8(OP1)));
-	post_indexed 6 7 // +5 when external
+	post_indexed_196 6 7 6 7 9 10
 
 b0    ldb   direct_2b
 	reg_w8(OP2, reg_r8(OP1));
@@ -1624,11 +1626,11 @@ b1    ldb   immed_2b
 
 b2    ldb   indirect_2b
 	reg_w8(OP2, any_r8(OP1));
-	post_indirect 1 6 7 // +5 when external
+	post_indirect_196 1 6 7 5 6 8 8
 
 b3    ldb   indexed_2b
 	reg_w8(OP2, any_r8(OP1));
-	post_indexed 6 7 // +5 when external
+	post_indexed_196 6 7 6 7 9 10
 
 b4    addcb direct_2b
 	TMP = reg_r8(OP1);
@@ -1686,25 +1688,41 @@ bd    ldbse immed_2e
 
 be    ldbse indirect_2w
 	reg_w16(OP2, int8_t(any_r8(OP1)));
-	post_indirect 1 6 7 // +5 when external
+	post_indirect_196 1 6 7 5 6 8 8
 
 bf    ldbse indexed_2w
 	reg_w16(OP2, int8_t(any_r8(OP1)));
-	post_indexed 6 7 // +5 when external
+	post_indexed_196 6 7 6 7 9 10
 
 c0    st    direct_2w
 	reg_w16(OP1, reg_r16(OP2));
 	next(4);
 
 c1    bmov  direct_2w 196
-
+	OP2 &= 0xfc;
+	u32 count = reg_r16(OP1);
+	if(!count)
+		count = 0x10000;
+	u16 source = reg_r16(OP2);
+	u16 destination = reg_r16(OP2+2);
+	u32 cycles = 6;
+	while(count--) {
+		const u16 value = any_r16(source);
+		any_w16(destination, value);
+		cycles += source < 0x100 ? (destination < 0x100 ? 8 : 11) : (destination < 0x100 ? 11 : 14);
+		source += 2;
+		destination += 2;
+	}
+	reg_w16(OP2, source);
+	reg_w16(OP2+2, destination);
+	next(int(cycles));
 c2    st    indirect_2w
 	any_w16(OP1, reg_r16(OP2));
-	post_indirect 2 7 8 // +4 when external
+	post_indirect_196 2 7 8 5 6 8 9
 
 c3    st    indexed_2w
 	any_w16(OP1, reg_r16(OP2));
-	post_indexed 7 8 // +4 when external
+	post_indexed_196 7 8 6 7 9 10
 
 c4    stb   direct_2b
 	reg_w8(OP1, reg_r8(OP2));
@@ -1712,90 +1730,104 @@ c4    stb   direct_2b
 
 c5    cmpl  direct_2w 196
 	TMP = reg_r32(OP1);
-	do_sub(reg_r32(OP2), TMP);
+	do_sub32(reg_r32(OP2), TMP);
 	next(7);
 
 c6    stb   indirect_2b
 	any_w8(OP1, reg_r8(OP2));
-	post_indirect 1 7 8 // +4 when external
+	post_indirect_196 1 7 8 5 6 8 9
 
 c7    stb   indexed_2b
 	any_w8(OP1, reg_r8(OP2));
-	post_indexed 7 8 // +5 when external
+	post_indexed_196 7 8 6 7 9 10
 
 c8    push  direct_1w
 	TMP = reg_r16(0x18);
+	const u16 old_sp = TMP;
 	TMP -= 2;
 	reg_w16(0x18, TMP);
-	OP1 = reg_r16(OP1);
+	OP1 = !is_196() && (OP1 & 0xfe) == 0x18 ? old_sp : reg_r16(OP1);
 	any_w16(TMP, OP1);
-	next(8); // +4 is external sp
+	next_196(8, TMP < 0x100 ? 6 : 8);
 
 c9    push  immed_1w
 	TMP = reg_r16(0x18);
 	TMP -= 2;
 	reg_w16(0x18, TMP);
 	any_w16(TMP, OP1);
-	next(8); // +4 is external sp
+	next_196(8, TMP < 0x100 ? 7 : 9);
 
 ca    push  indirect_1w
 	TMP = reg_r16(0x18);
 	TMP -= 2;
+	if(is_196() && (OPI & 0xfe) == 0x18)
+		OP1 -= 2;
+	const bool external_stack = TMP >= 0x100;
+	const bool external_operand = OP1 >= 0x100;
 	reg_w16(0x18, TMP);
 	uint16_t val = any_r16(OP1);
 	any_w16(TMP, val);
-	post_indirect 2 11 12 // +4 when external
+	if(OPI & 0x01)
+		reg_w16(OPI, OP1 + 2);
+	next_196(OPI & 0x01 ? 12 : 11, (OPI & 0x01 ? 10 : 9) + (external_stack ? 2 : 0) + (external_operand ? 3 : 0));
 
 cb    push  indexed_1w
 	TMP = reg_r16(0x18);
 	TMP -= 2;
+	if(is_196() && (OPI & 0xfe) == 0x18)
+		OP1 -= 2;
+	const bool external_stack = TMP >= 0x100;
+	const bool external_operand = OP1 >= 0x100;
 	reg_w16(0x18, TMP);
 	OP1 = any_r16(OP1);
 	any_w16(TMP, OP1);
-	post_indexed 11 12 // +4 when external
+	next_196(OPI & 0x01 ? 12 : 11, (OPI & 0x01 ? 11 : 10) + (external_stack ? 2 : 0) + (external_operand ? 3 : 0));
 
 cc    pop   direct_1w
 	TMP = reg_r16(0x18);
+	const bool external_stack = TMP >= 0x100;
 	reg_w16(0x18, TMP+2);
 	TMP = any_r16(TMP);
 	reg_w16(OP1, TMP);
-	next(12); // +2 when external sp
-
-cd    bmovi direct_2w 196
+	next_196(12, external_stack ? 11 : 8);
 
 ce    pop   indirect_1w
 	TMP = reg_r16(0x18);
 	reg_w16(0x18, TMP+2);
 	TMP = any_r16(TMP);
-	if((OPI & 0xfe) == 0x18)
-		OP1 += 2;
 	any_w16(OP1, TMP);
-	post_indirect 2 14 14 // +2 when external sp, +4 when external write
+	post_indirect 2 14 14
 
 ce    pop   indirect_1w 196
 	TMP = reg_r16(0x18);
+	const bool external_stack = TMP >= 0x100;
 	reg_w16(0x18, TMP+2);
 	TMP = any_r16(TMP);
 	if((OPI & 0xfe) == 0x18)
 		OP1 += 2;
+	const bool external_operand = OP1 >= 0x100;
 	any_w16(OP1, TMP);
-	post_indirect 2 14 14 // +2 when external sp, +4 when external write
+	if(OPI & 0x01)
+		reg_w16(OPI, OP1 + 2);
+	next_196(14, (OPI & 0x01 ? 11 : 10) + (external_stack ? 3 : 0) + (external_operand ? 2 : 0));
 
 cf    pop   indexed_1w
 	TMP = reg_r16(0x18);
 	reg_w16(0x18, TMP+2);
 	TMP = any_r16(TMP);
 	any_w16(OP1, TMP);
-	post_indexed 14 14 // +2 when external sp, +4 when external write
+	post_indexed 14 14
 
 cf    pop   indexed_1w 196
 	TMP = reg_r16(0x18);
+	const bool external_stack = TMP >= 0x100;
 	reg_w16(0x18, TMP+2);
 	TMP = any_r16(TMP);
 	if((OPI & 0xfe) == 0x18)
 		OP1 += 2;
+	const bool external_operand = OP1 >= 0x100;
 	any_w16(OP1, TMP);
-	post_indexed 14 14 // +2 when external sp, +4 when external write
+	next_196(14, (OPI & 0x01 ? 12 : 11) + (external_stack ? 3 : 0) + (external_operand ? 2 : 0));
 
 d0    jnst  rel8
 	if(!(PSW & F_ST)) {
@@ -1944,18 +1976,18 @@ e1    djnzw wrrel8 196
 	reg_w16(OP2, TMP);
 	if(TMP) {
 		PC += OP1;
-		next(10);
+		next(9);
 	} else {
-		next(6);
+		next(5);
 	}
 
 e3    br    indirect_1n
 	PC = OP1;
-	next(8);
+	next_196(8, 7);
 
 e7    ljmp  rel16
 	PC += OP1;
-	next(8);
+	next_196(8, 7);
 
 ef    lcall rel16
 	TMP = reg_r16(0x18);
@@ -1963,13 +1995,14 @@ ef    lcall rel16
 	reg_w16(0x18, TMP);
 	any_w16(TMP, PC);
 	PC += OP1;
-	next(13); // +3 for external sp
+	next_196(13, TMP < 0x100 ? 11 : 13);
 
 f0    ret   none
 	TMP = reg_r16(0x18);
+	const bool external_stack = TMP >= 0x100;
 	reg_w16(0x18, TMP+2);
 	PC = any_r16(TMP);
-	next(12); // +4 for external sp
+	next_196(12, external_stack ? 14 : 11);
 
 f2    pushf none
 	TMP = reg_r16(0x18);
@@ -1978,16 +2011,18 @@ f2    pushf none
 	any_w16(TMP, PSW);
 	PSW = 0x0000;
 	check_irq();
-	next_noirq(8); // +4 for external sp
+	next_noirq_196(8, TMP < 0x100 ? 6 : 8);
 
 f3    popf  none
 	TMP = reg_r16(0x18);
+	const bool external_stack = TMP >= 0x100;
 	reg_w16(0x18, TMP+2);
 	PSW = any_r16(TMP);
 	check_irq();
-	next_noirq(9); // +4 for external sp
+	next_noirq_196(9, external_stack ? 10 : 7);
 
 f4    pusha none 196
+	const bool external_stack = reg_r16(0x18) > 0x100;
 	TMP = reg_r16(0x18);
 	TMP -= 2;
 	reg_w16(0x18, TMP);
@@ -1996,24 +2031,35 @@ f4    pusha none 196
 	TMP = reg_r16(0x18);
 	TMP -= 2;
 	reg_w16(0x18, TMP);
-	any_w16(TMP, mask_irq_1 | (u16(wsr) << 8));
+	any_w16(TMP, mask_irq_1 | (u16(wsr_r()) << 8));
 	mask_irq_1 = 0x00;
 	check_irq();
-	next_noirq(12);
+	next_noirq(external_stack ? 18 : 12);
 
 f5    popa  none 196
 	TMP = reg_r16(0x18);
+	const bool external_stack = TMP >= 0x100;
 	reg_w16(0x18, TMP+2);
 	OP1 = any_r16(TMP);
 	mask_irq_1 = OP1;
-	wsr = OP1 >> 8;
+	wsr_w(OP1 >> 8);
 	TMP = reg_r16(0x18);
 	reg_w16(0x18, TMP+2);
 	PSW = any_r16(TMP);
 	check_irq();
-	next_noirq(12);
+	next_noirq(external_stack ? 18 : 12);
 
-f6    idlpd none 196
+f6    idlpd immed_1b 196
+	if(OP1 == 1) {
+		idle = true;
+		next(8);
+	} else if(OP1 == 2) {
+		next(8);
+		enter_powerdown();
+	} else {
+		device_reset();
+		next_noirq(25);
+	}
 
 f7    trap  none
 	TMP = reg_r16(0x18);
@@ -2021,33 +2067,33 @@ f7    trap  none
 	reg_w16(0x18, TMP);
 	any_w16(TMP, PC);
 	PC  = any_r16(0x2010);
-	next_noirq(21); // +3 for external sp
+	next_noirq_196(21, TMP < 0x100 ? 16 : 18);
 
 f8    clrc  none
 	PSW &= ~F_C;
-	next(4);
+	next_196(4, 2);
 
 f9    setc  none
 	PSW |= F_C;
-	next(4);
+	next_196(4, 2);
 
 fa    di    none
 	PSW &= ~F_I;
 	check_irq();
-	next_noirq(4);
+	next_noirq_196(4, 2);
 
 fb    ei    none
 	PSW |= F_I;
 	check_irq();
-	next_noirq(4);
+	next_noirq_196(4, 2);
 
 fc    clrvt none
 	PSW &= ~F_VT;
-	next(4);
+	next_196(4, 2);
 
 fd    nop   none
-	next(4);
+	next_196(4, 2);
 
 ff    rst   none
-	PC = 0x2080;
-	next(4);
+	device_reset();
+	next_noirq_196(4, 15);

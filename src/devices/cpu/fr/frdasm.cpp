@@ -272,7 +272,7 @@ offs_t fr_disassembler::dasm_07(std::ostream &stream, offs_t pc, const fr_disass
 		return 2 | SUPPORTED;
 
 	case 0x90:
-		util::stream_format(stream, "%-8s@R15+, PS", "MOV");
+		util::stream_format(stream, "%-8s@R15+, PS", "LD");
 		return 2 | SUPPORTED;
 
 	default:
@@ -802,7 +802,7 @@ offs_t fr_disassembler::disassemble(std::ostream &stream, offs_t pc, const fr_di
 		return dasm_rrop(stream, opcode, "CMP");
 
 	case 0xab:
-		return dasm_rrop(stream, opcode, "MULH");
+		return dasm_rrop(stream, opcode, "MULU");
 
 	case 0xac:
 		return dasm_rrop(stream, opcode, "SUB");
@@ -860,7 +860,7 @@ offs_t fr_disassembler::disassemble(std::ostream &stream, offs_t pc, const fr_di
 		return 2 | SUPPORTED;
 
 	case 0xbf:
-		return dasm_rrop(stream, opcode, "MULU");
+		return dasm_rrop(stream, opcode, "MULH");
 
 	case 0xc0: case 0xc1: case 0xc2: case 0xc3: case 0xc4: case 0xc5: case 0xc6: case 0xc7:
 	case 0xc8: case 0xc9: case 0xca: case 0xcb: case 0xcc: case 0xcd: case 0xce: case 0xcf: // LDI:8

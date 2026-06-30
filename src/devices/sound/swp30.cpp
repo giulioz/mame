@@ -1838,6 +1838,7 @@ void swp30_device::device_start()
 	save_item(NAME(m_melo));
 	save_item(NAME(m_meli));
 	save_item(NAME(m_adc));
+	save_item(NAME(m_unknown_register));
 
 	save_item(STRUCT_MEMBER(*m_meg, m_program));
 	save_item(STRUCT_MEMBER(*m_meg, m_const));
@@ -1935,11 +1936,16 @@ void swp30_device::device_reset()
 	std::fill(m_meli.begin(),  m_meli.end(),  0);
 	std::fill(m_melo.begin(),  m_melo.end(),  0);
 	std::fill(m_adc.begin(),   m_adc.end(),   0);
+	std::fill(m_unknown_register.begin(), m_unknown_register.end(), 0);
 }
 
 void swp30_device::map(address_map &map)
 {
-	map(0x0000, 0x1fff).w(FUNC(swp30_device::snd_w));
+	// Preserve all currently unknown registers as opaque latches.  This is
+	// important for software that reads them back (notably channel slot 0b),
+	// and makes new control-register use observable without guessing at the
+	// hardware function.  Known registers below override this catch-all.
+	map(0x0000, 0x1fff).rw(FUNC(swp30_device::snd_r), FUNC(swp30_device::snd_w));
 
 	rchan(map, 0x00).rw(FUNC(swp30_device::filter_1_a_r), FUNC(swp30_device::filter_1_a_w));
 	rchan(map, 0x01).rw(FUNC(swp30_device::level_1_r), FUNC(swp30_device::level_1_w));
@@ -2181,7 +2187,7 @@ void swp30_device::wave_access_w(u16 data)
 {
 	m_wave_access = data;
 	logerror("wave_access_w %04x\n", m_wave_access);
-	if(data == 0x8000) {
+	if((data == 0x8000 || data == 0x9000) && m_wave_size) {
 		m_wave_val = m_wave_cache.read_dword(m_wave_adr);
 		logerror("wave read adr=%08x size=%08x -> %08x\n", m_wave_adr, m_wave_size, m_wave_val);
 	}
@@ -2194,12 +2200,24 @@ u16 swp30_device::wave_access_r()
 
 u16 swp30_device::wave_busy_r()
 {
+	// Direct reads expose one ready dword at a time.  Direct writes use the
+	// inverse sense: zero means that the input register can accept data.
+	if(m_wave_access == 0x8000 || m_wave_access == 0x9000)
+		return m_wave_size ? 1 : 0xffff;
 	return m_wave_size ? 0 : 0xffff;
 }
 
 template<int Sel> u16 swp30_device::wave_val_r()
 {
-	return m_wave_val >> (16*Sel);
+	const u16 result = m_wave_val >> (16*Sel);
+	if(!Sel && !machine().side_effects_disabled() && m_wave_size &&
+			(m_wave_access == 0x8000 || m_wave_access == 0x9000)) {
+		m_wave_adr ++;
+		m_wave_size --;
+		if(m_wave_size)
+			m_wave_val = m_wave_cache.read_dword(m_wave_adr);
+	}
+	return result;
 }
 
 template<int Sel> void swp30_device::wave_val_w(u16 data)
@@ -2210,7 +2228,7 @@ template<int Sel> void swp30_device::wave_val_w(u16 data)
 		m_wave_val = (m_wave_val & 0xffff0000) |  data;
 	if(!Sel) {
 		//      logerror("wave_val_w %08x\n", m_wave_val);
-		if(m_wave_access == 0x5000) {
+		if(m_wave_access == 0x5000 && m_wave_size) {
 			m_wave_cache.write_dword(m_wave_adr, m_wave_val);
 			m_wave_adr ++;
 			m_wave_size --;
@@ -2565,15 +2583,20 @@ u16 swp30_device::internal_r()
 }
 
 
-// Catch-all
+// Catch-all for registers whose function is not understood yet
+
+u16 swp30_device::snd_r(offs_t offset)
+{
+	const u16 data = m_unknown_register[offset & 0xfff];
+	if (machine().options().verbose())
+		logerror("%s: unknown SWP30 register read [%04x] -> %04x\n", machine().describe_context(), offset * 2, data);
+	return data;
+}
 
 void swp30_device::snd_w(offs_t offset, u16 data)
 {
 	int chan = (offset >> 6) & 0x3f;
 	int slot = offset & 0x3f;
-
-	if(slot == 0x0b)
-		return;
 
 	std::string preg = "-";
 	if(slot >= 0x21 && slot <= 0x2b && (slot & 1))
@@ -2591,7 +2614,10 @@ void swp30_device::snd_w(offs_t offset, u16 data)
 	else
 		preg = util::string_format("%02x.%02x", chan, slot);
 
-	logerror("snd_w [%04x %04x] %-5s, %04x\n", offset, offset*2, preg, data);
+	u16 &value = m_unknown_register[offset & 0xfff];
+	if (machine().options().verbose() && value != data)
+		logerror("%s: unknown SWP30 register write [%04x] %-12s %04x -> %04x\n", machine().describe_context(), offset * 2, preg, value, data);
+	value = data;
 }
 
 
@@ -4008,4 +4034,3 @@ void swp30_device::sound_stream_update(sound_stream &stream)
 }
 
 DEFINE_DEVICE_TYPE(SWP30, swp30_device, "swp30", "Yamaha SWP30 sound chip")
-

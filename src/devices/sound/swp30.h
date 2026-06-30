@@ -341,6 +341,7 @@ private:
 	std::array<s32,  0x10> m_melo;
 	std::array<s32,  0x10> m_meli;
 	std::array<s32,     4> m_adc;
+	std::array<u16, 0x1000> m_unknown_register;
 
 	meg_state *m_meg;
 	drc_cache m_drccache;

@@ -118,6 +118,7 @@ la32_device::la32_device(const machine_config &mconfig, const char *tag, device_
 	, m_update_timer(nullptr)
 	, m_stream(nullptr)
 	, m_int_callback(*this)
+	, m_rom_address_xor(0)
 	, m_cycle(0)
 	, m_reg_1c0(0)
 	, m_reg_1c1(0)
@@ -143,6 +144,7 @@ void la32_device::device_start()
 
 	memset(m_reg_file, 0, sizeof(m_reg_file));
 	memset(m_counters, 0, sizeof(m_counters));
+	memset(m_pcm_end, 0, sizeof(m_pcm_end));
 	memset(m_accum, 0, sizeof(m_accum));
 
 	m_stream = stream_alloc(0, 8, 32000, STREAM_SYNCHRONOUS);
@@ -155,6 +157,7 @@ void la32_device::device_start()
 	save_item(NAME(m_reg_data_l));
 	save_item(NAME(m_reg_file));
 	save_item(NAME(m_counters));
+	save_item(NAME(m_pcm_end));
 	save_item(NAME(m_accum));
 	save_item(NAME(m_inactive));
 	save_item(NAME(m_prev));
@@ -175,6 +178,7 @@ void la32_device::device_reset()
 	m_reg_data_l = 0;
 	memset(m_reg_file, 0, sizeof(m_reg_file));
 	memset(m_counters, 0, sizeof(m_counters));
+	memset(m_pcm_end, 0, sizeof(m_pcm_end));
 	memset(m_accum, 0, sizeof(m_accum));
 	m_inactive = 0;
 	m_prev = 0;
@@ -197,9 +201,6 @@ void la32_device::sound_stream_update(sound_stream &stream)
 
 void la32_device::write(offs_t offset, u8 data)
 {
-	static unsigned trace_count;
-	if (machine().time() >= attotime::from_seconds(10) && machine().time() < attotime::from_msec(10'100) && trace_count++ < 1'000)
-		logerror("LA32 write %03X=%02X at %s\n", offset, data, machine().time().to_string());
 	if ((offset & 0x1c0) == 0x1c0)
 	{
 		switch (offset & 3)
@@ -363,12 +364,6 @@ TIMER_CALLBACK_MEMBER(la32_device::update)
 	{
 		memcpy(m_accum[0], m_accum[1], sizeof(m_accum[0]));
 		memset(m_accum[1], 0, sizeof(m_accum[1]));
-		static unsigned accum_trace_count;
-		if (machine().time() >= attotime::from_seconds(10) && accum_trace_count++ < 64)
-			logerror("LA32 accum %d %d %d %d %d %d %d %d at %s\n",
-				m_accum[0][0], m_accum[0][1], m_accum[0][2], m_accum[0][3],
-				m_accum[0][4], m_accum[0][5], m_accum[0][6], m_accum[0][7],
-				machine().time().to_string());
 	}
 
 	// tva/tvf ramp
@@ -438,7 +433,10 @@ TIMER_CALLBACK_MEMBER(la32_device::update)
 	phase += p;
 
 	if ((m_inactive & 1) != 0)
+	{
 		phase = 0;
+		m_pcm_end[m_cycle] = 0;
+	}
 
 	m_counters[2][m_cycle] = phase & 0x3ffffff;
 
@@ -481,32 +479,32 @@ TIMER_CALLBACK_MEMBER(la32_device::update)
 
 		u32 ph = (phase >> 8) & 0x3ffff;
 
+		// Bits 2:0 encode log2(length in 0x800-sample pages); bit 3
+		// suppresses the boundary event and makes the page counter wrap.
 		u32 wave_cfg = (ctrl >> 12) & 15;
 
 		u32 w271 = (127 << (wave_cfg & 7)) & 127;
 
-		bool w282 = (wave_cfg & 8) != 0;
-		bool end = ((ph >> 11) & (w271 & 127)) != 0 && !w282;
+		bool const loop1 = BIT(wave_cfg, 3);
+		bool const boundary1 = ((ph >> 11) & (w271 & 127)) != 0 && !loop1;
 
-		if (end && !m_int_state)
-		{
-			m_int_state = true;
-
-			m_int_status = (m_cycle + 1) & 31;
-
-			m_int_callback(ASSERT_LINE);
-		}
+		if (boundary1 && !BIT(m_pcm_end[m_cycle], 0))
+			m_pcm_end[m_cycle] |= 0x05; // ended + boundary notification pending
+		bool const end = BIT(m_pcm_end[m_cycle], 0);
 
 		u32 base = m_reg_file[1][m_cycle];
 		u32 base_l = base & 255;
 		u32 base_h = (base >> 8) & 255;
 
+		// The base is a 4 KiB ROM-page code.  Masking its low size bits
+		// aligns the power-of-two sample window; phase supplies those bits.
 		u32 wa1 = (ph & 0x7ff) << 1;
 		wa1 |= (w271 & base_h) << 12;
 		wa1 |= ((w271 ^ 127) & (ph >> 11)) << 12;
 		if (base_h & 0x80)
 			wa1 |= 0x80000;
 
+		bool loop2 = loop1;
 		if (mode)
 			ph = (ph + 1) & 0x3ffff;
 		else
@@ -514,16 +512,34 @@ TIMER_CALLBACK_MEMBER(la32_device::update)
 			wave_cfg = (ctrl >> 8) & 15;
 
 			w271 = (127 << (wave_cfg & 7)) & 127;
+			loop2 = BIT(wave_cfg, 3);
 		}
 
-		bool end2 = ((ph >> 11) & (w271 & 127)) != 0 && !w282;
+		// In dual-wave mode each read has its own size and loop descriptor.
+		// Reusing read 1's loop bit here made a looping second PCM terminate
+		// (or a one-shot second PCM repeat) when the descriptors differed.
+		bool const boundary2 = ((ph >> 11) & (w271 & 127)) != 0 && !loop2;
 
-		if (end2 && !m_int_state)
+		if (boundary2 && !BIT(m_pcm_end[m_cycle], 1))
+			m_pcm_end[m_cycle] |= 0x0a; // ended + boundary notification pending
+		bool const end2 = BIT(m_pcm_end[m_cycle], 1);
+
+		// A completed one-shot remains silent even after the firmware sets the
+		// control loop bit to acknowledge its boundary.  Keep notifications
+		// pending while another LA32 event owns the shared interrupt latch.
+		if (!m_int_state && (m_pcm_end[m_cycle] & 0x0c))
 		{
 			m_int_state = true;
-
-			m_int_status = ((m_cycle + 1) & 31) | 0x20;
-
+			if (BIT(m_pcm_end[m_cycle], 2))
+			{
+				m_pcm_end[m_cycle] &= ~0x04;
+				m_int_status = (m_cycle + 1) & 31;
+			}
+			else
+			{
+				m_pcm_end[m_cycle] &= ~0x08;
+				m_int_status = ((m_cycle + 1) & 31) | 0x20;
+			}
 			m_int_callback(ASSERT_LINE);
 		}
 
@@ -542,8 +558,8 @@ TIMER_CALLBACK_MEMBER(la32_device::update)
 				wa2 |= 0x80000;
 		}
 
-		u8 s1l = read_byte(wa1);
-		u8 s1h = read_byte(wa1 | 1);
+		u8 s1l = pcm_rom_r(wa1);
+		u8 s1h = pcm_rom_r(wa1 | 1);
 
 		u32 s1d = 0;
 
@@ -569,8 +585,8 @@ TIMER_CALLBACK_MEMBER(la32_device::update)
 		if (!zero1 && (sign_flip ^ sign1))
 			w1 = ~w1;
 
-		u8 s2l = read_byte(wa2);
-		u8 s2h = read_byte(wa2 | 1);
+		u8 s2l = pcm_rom_r(wa2);
+		u8 s2h = pcm_rom_r(wa2 | 1);
 
 		u32 s2d = 0;
 

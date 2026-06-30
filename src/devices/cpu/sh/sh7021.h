@@ -22,19 +22,27 @@ public:
 
 	void write_padr(uint16_t data);
 	void write_pbdr(uint16_t data);
+	void write_pcdr(uint8_t data);
+	auto tpc_out_cb() { return m_tpc_out.bind(); }
+	auto wdtovf_cb() { return m_wdtovf.bind(); }
 	template <int Line> void write_padr_bit(int state);
 	template <int Line> void write_pbdr_bit(int state);
+	template <unsigned Channel> auto an_in_cb() { return m_an_in[Channel].bind(); }
+	template <unsigned Channel> auto sci_tx_cb() { return m_sci_tx[Channel].bind(); }
+	void sci_receive_byte(unsigned channel, uint8_t data, bool framing_error = false, bool parity_error = false);
 
 protected:
 	sh7021_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, address_map_constructor internal_map = address_map_constructor());
 
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
+	virtual void sh2_exception_internal(const char *message, int irqline, int vector) override;
 
 	virtual void execute_run() override;
 
 	void execute_dma(int ch);
 	void execute_peripherals(int peripheral_cycles);
+	void consume_bus_cycles(offs_t offset, bool write);
 
 	// Interrupt Controller (INTC)
 	void intc_ipra_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
@@ -61,6 +69,7 @@ protected:
 	void ubc_bamrl_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
 	uint16_t ubc_bbr_r();
 	void ubc_bbr_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
+	void ubc_check(uint32_t address, bool is_dma, bool is_instruction, bool is_write, unsigned size);
 
 	// Bus State Controller (BSC)
 	uint16_t bsc_bcr_r();
@@ -83,6 +92,9 @@ protected:
 	void bsc_rtcnt_w(uint16_t data);
 	uint16_t bsc_rtcor_r();
 	void bsc_rtcor_w(uint16_t data);
+	TIMER_CALLBACK_MEMBER(bsc_refresh_timer);
+	void bsc_refresh_schedule();
+	unsigned bsc_refresh_divider() const;
 
 	// DMA Controller (DMAC)
 	template <int Channel> uint32_t dma_sar_r();
@@ -144,14 +156,17 @@ protected:
 	void tpc_ndrb_w(uint8_t data);
 	uint8_t tpc_ndrb_alt_r();
 	void tpc_ndrb_alt_w(uint8_t data);
+	void tpc_trigger(unsigned itu_channel);
 
 	// Watchdog Timer (WDT)
-	uint8_t wdt_tcsr_r(); // TODO: Readable only in 8-bit mode
-	void wdt_tcsr_w(uint8_t data); // TODO: Writable only in 16-bit mode
-	uint8_t wdt_tcnt_r(); // TODO: Readable only in 8-bit mode
-	void wdt_tcnt_w(uint8_t data); // TODO: Writable only in 16-bit mode
+	uint8_t wdt_tcsr_r();
+	uint8_t wdt_tcnt_r();
 	uint8_t wdt_rstcsr_r();
-	void wdt_rstcsr_w(uint8_t data); // TODO: Writable only in 16-bit mode
+	void wdt_tcsr_tcnt_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
+	void wdt_rstcsr_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
+	TIMER_CALLBACK_MEMBER(wdt_overflow);
+	void wdt_schedule();
+	unsigned wdt_divider() const;
 
 	// Serial Communication Interface (SCI)
 	template <int Channel> uint8_t sci_smr_r();
@@ -165,6 +180,16 @@ protected:
 	template <int Channel> uint8_t sci_ssr_r();
 	template <int Channel> void sci_ssr_w(uint8_t data);
 	template <int Channel> uint8_t sci_rdr_r();
+	void sci_start_tx(unsigned channel);
+
+	// A/D Converter
+	uint16_t adc_addr_r(offs_t offset);
+	uint8_t adc_adcsr_r();
+	void adc_adcsr_w(uint8_t data);
+	uint8_t adc_adcr_r();
+	void adc_adcr_w(uint8_t data);
+	TIMER_CALLBACK_MEMBER(adc_conversion_complete);
+	void adc_start();
 
 	// Pin Function Controller (PFC)
 	uint16_t pfc_paior_r();
@@ -185,6 +210,12 @@ protected:
 	void pfc_pbdr_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
 	uint16_t pfc_cascr_r();
 	void pfc_cascr_w(offs_t offset, uint16_t data, uint16_t mem_mask = ~0);
+	uint16_t pfc_pcdr_r();
+	void pfc_recalc_gpio_masks();
+
+	// Power-down control
+	uint8_t sbycr_r();
+	void sbycr_w(uint8_t data);
 
 	void internal_map(address_map &map) ATTR_COLD;
 
@@ -202,6 +233,8 @@ protected:
 
 	// Interrupt Controller (INTC)
 	uint8_t m_ext_irq_pending = 0; // bits 0-7 for IRQ0-IRQ7
+	uint8_t m_ext_irq_state = 0;   // asserted state of IRQ0-IRQ7 pins
+	bool m_nmi_input_state = false;
 	uint16_t m_ipra = 0;
 	uint16_t m_iprb = 0;
 	uint16_t m_iprc = 0;
@@ -217,6 +250,7 @@ protected:
 		uint16_t bamrh = 0;
 		uint16_t bamrl = 0;
 		uint16_t bbr = 0;
+		bool pending = false;
 	} m_ubc;
 
 	// Bus State Controller (BSC)
@@ -233,6 +267,7 @@ protected:
 		bool rtcsr_read = false;
 		uint8_t rtcnt = 0;
 		uint8_t rtcor = 0;
+		emu_timer *et = nullptr;
 	} m_bsc;
 
 	// DMA Controller (DMAC)
@@ -242,6 +277,7 @@ protected:
 		uint32_t dar = 0;   // Destination Address Register
 		uint16_t tcr = 0;   // Transfer Count Register
 		uint16_t chcr = 0;  // Channel Control Register
+		bool te_read = false;
 	} m_dma[4];
 	uint16_t m_dmaor = 0;   // DMA Operation Register (status flags)
 	int m_dma_cycles;
@@ -261,6 +297,7 @@ protected:
 			uint8_t tior = 0;
 			uint8_t tier = 0;
 			uint8_t tsr = 0;
+			uint8_t tsr_read = 0;
 			uint16_t tcnt = 0;
 			uint16_t gra = 0;
 			uint16_t grb = 0;
@@ -284,7 +321,9 @@ protected:
 		uint8_t nderb = 0;
 		uint8_t ndra = 0;
 		uint8_t ndrb = 0;
+		uint16_t output = 0;
 	} m_tpc;
+	devcb_write16 m_tpc_out;
 
 	// Watchdog Timer (WDT)
 	struct
@@ -292,7 +331,11 @@ protected:
 		uint8_t tcsr = 0;
 		uint8_t tcnt = 0;
 		uint8_t rstcsr = 0;
+		bool ovf_read = false;
+		bool wovf_read = false;
+		emu_timer *et = nullptr;
 	} m_wdt;
+	devcb_write_line m_wdtovf;
 
 	// Serial Communication Interface (SCI)
 	struct
@@ -306,8 +349,22 @@ protected:
 		uint8_t ssr_read = 0;
 		uint8_t rsr = 0;
 		uint8_t rdr = 0;
+		bool tx_busy = false;
 		emu_timer *et = nullptr;
 	} m_sci[2];
+	devcb_write8::array<2> m_sci_tx;
+
+	// A/D Converter
+	struct
+	{
+		uint16_t addr[4]{};
+		uint8_t adcsr = 0;
+		uint8_t adcr = 0x7f;
+		uint8_t channel = 0;
+		bool adf_read = false;
+		emu_timer *et = nullptr;
+	} m_adc;
+	devcb_read16::array<8> m_an_in;
 
 	// Pin Function Controller (PFC)
 	struct
@@ -327,11 +384,15 @@ protected:
 		uint8_t pbfunc[16];
 		uint16_t pa_gpio_mask = 0;
 		uint16_t pb_gpio_mask = 0;
+		uint8_t pcdr_in = 0;
 	} m_pfc;
 	devcb_write16 m_pa_out;
 	devcb_write16 m_pb_out;
 	devcb_write_line::array<16> m_pa_bit_out;
 	devcb_write_line::array<16> m_pb_bit_out;
+
+	uint8_t m_sbycr = 0;
+	bool m_has_internal_rom = true;
 };
 
 DECLARE_DEVICE_TYPE(SH7021, sh7021_device)

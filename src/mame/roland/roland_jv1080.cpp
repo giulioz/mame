@@ -10,10 +10,10 @@
       Generates multiplexed IRQ5 with status byte in register 0x3C:
         Index 0: Button key event (key code in reg 0x3E, bit 7 = press)
         Index 1: Encoder rotation (signed delta in reg 0x3D)
-        Index 8: Button/ADC scan complete
+        Index 8: Voice/control update tick (~10ms)
         Index 9: Timer tick (~1ms, drives cooperative scheduler)
-      Register 0x3A: PORT input (active-low: bit1=PREVIEW, bit2=INC, bit3=DEC, bit4=ENC_SW)
-      Register 0x3B: Matrix scan state (active-low)
+      Register 0x3A: PORT input 0 (active-low: bit1=PREVIEW, bit2=INC, bit3=DEC)
+      Register 0x3B: PORT input 1 (active-low: bit0=ENC_SW)
       Registers 0x38/0x39: LCD command/data (HD44780 via DMA ch0)
     - LCD: Optrex DMC-2079 (40x2 chars, HD44780-compatible)
     - XP: Roland custom sound generator (14-bit address bus)
@@ -25,6 +25,8 @@
 ****************************************************************************/
 
 #include "emu.h"
+#include "bus/midi/midi.h"
+#include "diserial.h"
 #include "machine/nvram.h"
 #include "cpu/sh/sh7032.h"
 #include "video/hd44780.h"
@@ -40,15 +42,19 @@
 
 namespace {
 
-class roland_jv1080_state : public driver_device
+class roland_jv1080_state : public driver_device, public device_serial_interface
 {
 public:
 	roland_jv1080_state(const machine_config &mconfig, device_type type, const char *tag)
 		: driver_device(mconfig, type, tag)
+		, device_serial_interface(mconfig, *this)
 		, m_maincpu(*this, "maincpu")
 		, m_lcdc(*this, "lcdc")
 		, m_xp(*this, "xp")
+		, m_midi_out(*this, "mdout")
 		, m_buttons(*this, "BUTTONS%u", 1U)
+		, m_midi_loopback(*this, "MIDI_LOOPBACK")
+		, m_leds(*this, "led%u", 0U)
 	{
 	}
 
@@ -66,31 +72,54 @@ private:
 	uint8_t xp_r(offs_t offset);
 	TIMER_CALLBACK_MEMBER(ga_tick_cb);
 	TIMER_CALLBACK_MEMBER(ga_button_scan_cb);
+	TIMER_CALLBACK_MEMBER(ga_control_tick_cb);
 	TIMER_CALLBACK_MEMBER(xp_dump_cb);
 
 	void ga_deliver_next_irq();
-	void ga_queue_irq(uint8_t index);
+	void ga_acknowledge_irq();
+	void ga_queue_irq(uint8_t index, uint8_t reg_3d = 0, uint8_t reg_3e = 0);
 	void ga_send_key_event(uint8_t keycode);
 	void ga_send_encoder_delta(int8_t delta);
+	void midi_rx_w(int state) { device_serial_interface::rx_w(state); }
+	void midi_tx_byte(uint8_t data);
 
 	virtual void machine_start() override ATTR_COLD;
+	virtual void machine_reset() override ATTR_COLD;
+	virtual void tra_callback() override;
+	virtual void rcv_complete() override;
 
 	void lcd_palette(palette_device &palette) const ATTR_COLD;
 	void descramble_waverom(u8 *dst, const u8 *src, offs_t size) ATTR_COLD;
 
-	required_device<sh7032_device> m_maincpu;
+	required_device<sh7034_device> m_maincpu;
 	required_device<hd44780_device> m_lcdc;
 	required_device<roland_xp_device> m_xp;
+	required_device<midi_port_device> m_midi_out;
 	required_ioport_array<5> m_buttons;
+	required_ioport m_midi_loopback;
+	output_finder<64> m_leds;
 
 	uint8_t m_xp_regs[0x4000];  // debug shadow of XP register writes
 
 	uint8_t m_ga_regs[64];
 	emu_timer *m_ga_tick_timer = nullptr;
 	emu_timer *m_ga_button_scan_timer = nullptr;
+	emu_timer *m_ga_control_timer = nullptr;
 	emu_timer *m_xp_dump_timer = nullptr;
 
 	static constexpr int GA_IRQ_QUEUE_SIZE = 64;
+	static constexpr uint8_t GA_KEYMAP[] = {
+		// BUTTONS1
+		0xff, 0x10, 0x08, 0x00, 0x01, 0x09, 0x11, 0x02,
+		// BUTTONS2
+		0x0a, 0x12, 0x03, 0x0b, 0x06, 0x0e, 0x16, 0x13,
+		// BUTTONS3
+		0x04, 0x07, 0x0f, 0x17, 0x14, 0x05, 0x0d, 0x15,
+		// BUTTONS4
+		0x0c, 0x1d, 0x1e, 0x1f, 0xff, 0xff, 0x1b, 0x18,
+		// BUTTONS5
+		0x19, 0x1c, 0xff
+	};
 	struct ga_irq_entry { uint8_t index; uint8_t reg_3d; uint8_t reg_3e; };
 	ga_irq_entry m_ga_irq_queue[GA_IRQ_QUEUE_SIZE];
 	uint8_t m_ga_irq_queue_head = 0;
@@ -111,6 +140,7 @@ void roland_jv1080_state::jv1080_mem_map(address_map &map)
 	// Area 2: CS2 — address decoding by GA using A19-A21
 	map(0x02000000, 0x020fffff).rom().region("progrom", 0).mirror(0x08000000);
 	map(0x02280000, 0x022fffff).ram().mirror(0x08000000); // CS2 ECS2 (card related)
+	map(0x02300000, 0x0230ffff).ram().mirror(0x08000000); // 64KB work SRAM
 	map(0x02380000, 0x0238ffff).ram().share("nvram").mirror(0x08000000);
 
 	// Area 4: CS4 — XP PCM+DSP (14-bit register address space)
@@ -135,7 +165,12 @@ void roland_jv1080_state::machine_start()
 	save_item(NAME(m_ga_irq_queue_head));
 	save_item(NAME(m_ga_irq_queue_tail));
 	save_item(NAME(m_ga_irq_pending));
+	save_item(NAME(m_ga_tick_pending));
+	save_item(NAME(m_ga_scan_pending));
 	save_item(NAME(m_button_prev_state));
+
+	set_data_frame(1, 8, PARITY_NONE, STOP_BITS_1);
+	set_rate(31'250);
 
 	m_ga_tick_timer = timer_alloc(FUNC(roland_jv1080_state::ga_tick_cb), this);
 	m_ga_tick_timer->adjust(attotime::from_msec(1), 0, attotime::from_msec(1));
@@ -143,8 +178,43 @@ void roland_jv1080_state::machine_start()
 	m_ga_button_scan_timer = timer_alloc(FUNC(roland_jv1080_state::ga_button_scan_cb), this);
 	m_ga_button_scan_timer->adjust(attotime::from_seconds(3), 0, attotime::from_msec(10));
 
+	// GA status 8 paces the firmware voice-control pass.  It is independent of
+	// both the 1 ms RTOS tick above and the front-panel scan.  The firmware LFO
+	// phase increments are calibrated for 100 updates per second.
+	m_ga_control_timer = timer_alloc(FUNC(roland_jv1080_state::ga_control_tick_cb), this);
+	m_ga_control_timer->adjust(attotime::from_seconds(3), 0, attotime::from_hz(100));
+
 	m_xp_dump_timer = timer_alloc(FUNC(roland_jv1080_state::xp_dump_cb), this);
 	m_xp_dump_timer->adjust(attotime::from_msec(10), 0, attotime::from_msec(10));
+}
+
+void roland_jv1080_state::machine_reset()
+{
+	receive_register_reset();
+	transmit_register_reset();
+}
+
+void roland_jv1080_state::midi_tx_byte(uint8_t data)
+{
+	// The SH7034 SCI model exposes completed bytes rather than a TX pin.  Turn
+	// them back into the 31.25 kbaud serial stream expected by MAME MIDI ports.
+	transmit_register_setup(data);
+
+	// The factory test requires a physical OUT-to-IN cable, followed by its
+	// removal.  This switch supplies that fixture without changing normal MIDI.
+	if (BIT(m_midi_loopback->read(), 0))
+		m_maincpu->sci_receive_byte(0, data);
+}
+
+void roland_jv1080_state::tra_callback()
+{
+	m_midi_out->write_txd(transmit_register_get_data_bit());
+}
+
+void roland_jv1080_state::rcv_complete()
+{
+	receive_register_extract();
+	m_maincpu->sci_receive_byte(0, get_received_char());
 }
 
 // --- XP register access (pass-through to XP device, shadow for debugging) ---
@@ -191,7 +261,14 @@ void roland_jv1080_state::ga_deliver_next_irq()
 	}
 }
 
-void roland_jv1080_state::ga_queue_irq(uint8_t index)
+void roland_jv1080_state::ga_acknowledge_irq()
+{
+	m_ga_irq_pending = false;
+	m_maincpu->set_input_line(5, CLEAR_LINE);
+	ga_deliver_next_irq();
+}
+
+void roland_jv1080_state::ga_queue_irq(uint8_t index, uint8_t reg_3d, uint8_t reg_3e)
 {
 	if (index == 0x09)
 		m_ga_tick_pending = true;
@@ -202,7 +279,7 @@ void roland_jv1080_state::ga_queue_irq(uint8_t index)
 		uint8_t next_tail = (m_ga_irq_queue_tail + 1) % GA_IRQ_QUEUE_SIZE;
 		if (next_tail == m_ga_irq_queue_head)
 			return;
-		m_ga_irq_queue[m_ga_irq_queue_tail] = { index, m_ga_regs[0x3d], m_ga_regs[0x3e] };
+		m_ga_irq_queue[m_ga_irq_queue_tail] = { index, reg_3d, reg_3e };
 		m_ga_irq_queue_tail = next_tail;
 	}
 
@@ -212,14 +289,12 @@ void roland_jv1080_state::ga_queue_irq(uint8_t index)
 
 void roland_jv1080_state::ga_send_key_event(uint8_t keycode)
 {
-	m_ga_regs[0x3e] = keycode;
-	ga_queue_irq(0x00);
+	ga_queue_irq(0x00, m_ga_regs[0x3d], keycode);
 }
 
 void roland_jv1080_state::ga_send_encoder_delta(int8_t delta)
 {
-	m_ga_regs[0x3d] = (uint8_t)delta;
-	ga_queue_irq(0x01);
+	ga_queue_irq(0x01, uint8_t(delta), m_ga_regs[0x3e]);
 }
 
 // --- GA register access ---
@@ -232,27 +307,59 @@ uint8_t roland_jv1080_state::ga_r(offs_t offset)
 	{
 		switch (offset)
 		{
+		case 0x00:
+		case 0x01:
+		case 0x02:
+		case 0x03:
+		{
+			// Four active-high raw switch-matrix rows.  Key event codes are
+			// row * 8 + column; the factory-test chord checks row 3 directly.
+			data = 0;
+			const unsigned row = offset;
+			for (unsigned index = 0; index < std::size(GA_KEYMAP); index++)
+			{
+				const uint8_t keycode = GA_KEYMAP[index];
+				if (keycode != 0xff && (keycode >> 3) == row && BIT(m_buttons[index >> 3]->read(), index & 7))
+					data |= 1U << (keycode & 7);
+			}
+			break;
+		}
 		case 0x3a:
 		{
 			// PORT register — active-low button inputs
 			data = 0xfe; // idle: bits 1-7 high, bit 0 low (LED output)
 			uint8_t buttons1 = m_buttons[0]->read();
 			uint8_t buttons4 = m_buttons[3]->read();
-			uint8_t buttons5 = m_buttons[4]->read();
 			if (buttons1 & 0x01) data &= ~0x02; // PREVIEW
 			if (buttons4 & 0x20) data &= ~0x04; // INC
 			if (buttons4 & 0x10) data &= ~0x08; // DEC
-			if (buttons5 & 0x04) data &= ~0x10; // Encoder push
 			break;
 		}
 		case 0x3b:
-			data = 0xff; // matrix scan state: all released
+		{
+			// The firmware combines (0x3a & 0x0f) with (0x3b << 4).
+			// Consequently the VALUE encoder switch is bit 0 of this second
+			// directly-polled port, not bit 4 of register 0x3a.
+			data = 0xff;
+			if (m_buttons[4]->read() & 0x04) data &= ~0x01;
+			break;
+		}
+		case 0x3d:
+			// Encoder IRQ payload.  Keep it stable until the firmware consumes it.
+			if (m_ga_irq_pending && m_ga_regs[0x3c] == 0x01)
+				ga_acknowledge_irq();
+			break;
+		case 0x3e:
+			// Key IRQ payload.  Status is read first, so acknowledging at 0x3c
+			// would expose the following queued key before this read occurs.
+			if (m_ga_irq_pending && m_ga_regs[0x3c] == 0x00)
+				ga_acknowledge_irq();
 			break;
 		case 0x3c:
-			// Acknowledge current IRQ, deliver next
-			m_ga_irq_pending = false;
-			m_maincpu->set_input_line(5, CLEAR_LINE);
-			ga_deliver_next_irq();
+			// Scan/tick and other data-less IRQs acknowledge with their status.
+			// Key and encoder IRQs remain asserted until 0x3e/0x3d respectively.
+			if (m_ga_irq_pending && m_ga_regs[0x3c] != 0x00 && m_ga_regs[0x3c] != 0x01)
+				ga_acknowledge_irq();
 			break;
 		}
 	}
@@ -263,6 +370,12 @@ uint8_t roland_jv1080_state::ga_r(offs_t offset)
 void roland_jv1080_state::ga_w(offs_t offset, uint8_t data)
 {
 	m_ga_regs[offset] = data;
+	if (offset >= 0x10 && offset <= 0x17)
+	{
+		const unsigned base = (offset - 0x10) * 8;
+		for (unsigned bit = 0; bit < 8; bit++)
+			m_leds[base + bit] = BIT(data, bit);
+	}
 
 	switch (offset)
 	{
@@ -292,24 +405,13 @@ TIMER_CALLBACK_MEMBER(roland_jv1080_state::ga_tick_cb)
 	ga_queue_irq(0x09);
 }
 
+TIMER_CALLBACK_MEMBER(roland_jv1080_state::ga_control_tick_cb)
+{
+	ga_queue_irq(0x08);
+}
+
 TIMER_CALLBACK_MEMBER(roland_jv1080_state::ga_button_scan_cb)
 {
-	// Button matrix key codes (GA scans SS0-SS3 × D0-D7):
-	// Bit 7 (0x80) = press, bit 7 clear = release
-	// 0xFF = PORT button (handled via GA reg 0x3A, not key events)
-	static const uint8_t keymap[] = {
-		// BUTTONS1: PREVIEW(PORT), PALETTE, PARAMETER, 1-8/9-16, 1/9, 2/10, 3/11, 4/12
-		0xFF, 0x10, 0x08, 0x00, 0x01, 0x09, 0x11, 0x02,
-		// BUTTONS2: 5/13, 6/14, 7/15, 8/16, PERFORM, PATCH, RHYTHM, SYSTEM
-		0x0A, 0x12, 0x03, 0x0B, 0x06, 0x0E, 0x16, 0x13,
-		// BUTTONS3: UTILITY, USER/CARD, PRESET, EXP, SOUND_A, SOUND_B, SOUND_C, SOUND_D
-		0x04, 0x07, 0x0F, 0x17, 0x14, 0x05, 0x0D, 0x15,
-		// BUTTONS4: EFX, SHIFT, EXIT, ENTER, DEC(PORT), INC(PORT), CUR_U, CUR_D
-		0x0C, 0x1D, 0x1E, 0x1F, 0xFF, 0xFF, 0x1B, 0x18,
-		// BUTTONS5: CUR_L, CUR_R, ENC_SW(PORT)
-		0x19, 0x1C, 0xFF,
-	};
-
 	uint64_t current_state = 0;
 	for (int i = 0; i < 5; i++)
 		current_state |= (uint64_t)m_buttons[i]->read() << (i * 8);
@@ -321,7 +423,7 @@ TIMER_CALLBACK_MEMBER(roland_jv1080_state::ga_button_scan_cb)
 	{
 		if (BIT(changed, i))
 		{
-			uint8_t keycode = keymap[i];
+			uint8_t keycode = GA_KEYMAP[i];
 			if (keycode == 0xFF)
 				continue;
 			if (BIT(current_state, i))
@@ -336,14 +438,6 @@ TIMER_CALLBACK_MEMBER(roland_jv1080_state::ga_button_scan_cb)
 		ga_send_encoder_delta(1);
 	if (BIT(changed, 36) && BIT(current_state, 36))
 		ga_send_encoder_delta(-1);
-
-	// Periodic ADC scan complete
-	static int scan_div = 0;
-	if (++scan_div >= 5)
-	{
-		scan_div = 0;
-		ga_queue_irq(0x08);
-	}
 }
 
 // --- XP DSP program dump ---
@@ -354,30 +448,20 @@ TIMER_CALLBACK_MEMBER(roland_jv1080_state::xp_dump_cb)
 	if (!f)
 		return;
 
-	// PRAM + CRAM
-	fprintf(f, "Program 0 (0x3400/0x2C00)\n");
-	for (offs_t addr = 0x3400; addr < 0x3600; addr += 4)
+	// The DSP has 288 paired PRAM/CRAM slots.  Firmware replaces slots 0-103
+	// for RFX and retains slots 104-255 as the fixed system-effects program;
+	// 256-287 are reserve.  These boundaries are instruction indices, not
+	// 0x200-byte address banks.
+	fprintf(f, "XP DSP: 288 PRAM/CRAM slots (RFX 0-103, system 104-255, reserve 256-287)\n");
+	for (unsigned slot = 0; slot < 288; slot++)
 	{
-		int cram_addr = ((addr - 0x3400) / 4) * 2 + 0x2C00;
-		int full_op = (m_xp_regs[addr] << 24) | (m_xp_regs[addr + 1] << 16) | (m_xp_regs[addr + 2] << 8) | m_xp_regs[addr + 3];
-		int eram_op = full_op >> 16;
-		int alu_op = (full_op >> 12) & 0xf;
-		int mem_slot = (full_op >> 6) & 0x3f;
-		int unk_op = full_op & 0x3f;
-		fprintf(f, "%04X: %02X%02X%02X%02X %02X%02X    eram:%04X alu:%X mem:%02X unk:%02X\n", addr, m_xp_regs[addr], m_xp_regs[addr + 1], m_xp_regs[addr + 2], m_xp_regs[addr + 3], m_xp_regs[cram_addr], m_xp_regs[cram_addr + 1], eram_op, alu_op, mem_slot, unk_op);
-	}
-	fprintf(f, "\n\n");
-	
-	fprintf(f, "Program 1 (0x3600/0x2D00)\n");
-	for (offs_t addr = 0x3600; addr < 0x3800; addr += 4)
-	{
-		int cram_addr = ((addr - 0x3600) / 4) * 2 + 0x2D00;
-		int full_op = (m_xp_regs[addr] << 24) | (m_xp_regs[addr + 1] << 16) | (m_xp_regs[addr + 2] << 8) | m_xp_regs[addr + 3];
-		int eram_op = full_op >> 16;
-		int alu_op = (full_op >> 12) & 0xf;
-		int mem_slot = (full_op >> 6) & 0x3f;
-		int unk_op = full_op & 0x3f;
-		fprintf(f, "%04X: %02X%02X%02X%02X %02X%02X    eram:%04X alu:%X mem:%02X unk:%02X\n", addr, m_xp_regs[addr], m_xp_regs[addr + 1], m_xp_regs[addr + 2], m_xp_regs[addr + 3], m_xp_regs[cram_addr], m_xp_regs[cram_addr + 1], eram_op, alu_op, mem_slot, unk_op);
+		const offs_t pram_addr = 0x3400 + slot * 4;
+		const offs_t cram_addr = 0x2c00 + slot * 2;
+		const u32 full_op = (m_xp_regs[pram_addr] << 24) | (m_xp_regs[pram_addr + 1] << 16) |
+			(m_xp_regs[pram_addr + 2] << 8) | m_xp_regs[pram_addr + 3];
+		const char *const section = slot < 104 ? "rfx" : (slot < 256 ? "system" : "reserve");
+		fprintf(f, "%03u %-7s P=%04X:%08X C=%04X:%02X%02X\n", slot, section,
+			pram_addr, full_op, cram_addr, m_xp_regs[cram_addr], m_xp_regs[cram_addr + 1]);
 	}
 	fprintf(f, "\n\n");
 	
@@ -509,14 +593,31 @@ static INPUT_PORTS_START(jv1080)
 	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_OTHER ) PORT_NAME("Encoder CW")   PORT_CODE(KEYCODE_CLOSEBRACE)
 	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_OTHER ) PORT_NAME("Encoder CCW")  PORT_CODE(KEYCODE_OPENBRACE)
 	PORT_BIT( 0xe0, IP_ACTIVE_HIGH, IPT_UNUSED )
+
+	PORT_START("MIDI_LOOPBACK")
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_OTHER ) PORT_NAME("Factory MIDI loopback cable") PORT_CODE(KEYCODE_F12) PORT_TOGGLE
 INPUT_PORTS_END
 
 // --- Machine config ---
 
 void roland_jv1080_state::jv1080(machine_config &config)
 {
-	SH7032(config, m_maincpu, 20_MHz_XTAL / 2); // SH7034 internal clock φ = EXTAL/2
+	SH7034(config, m_maincpu, 20_MHz_XTAL);
 	m_maincpu->set_addrmap(AS_PROGRAM, &roland_jv1080_state::jv1080_mem_map);
+	// AN0 monitors a memory-card battery (absent); AN1 monitors the internal
+	// backup battery.  The firmware accepts 0x1ff-0x2cc as a healthy voltage.
+	m_maincpu->an_in_cb<0>().set_constant(0x000);
+	m_maincpu->an_in_cb<1>().set_constant(0x266);
+	m_maincpu->an_in_cb<2>().set_constant(0x000);
+	m_maincpu->an_in_cb<3>().set_constant(0x000);
+	m_maincpu->an_in_cb<4>().set_constant(0x000);
+	m_maincpu->an_in_cb<5>().set_constant(0x000);
+	m_maincpu->an_in_cb<6>().set_constant(0x000);
+	m_maincpu->an_in_cb<7>().set_constant(0x000);
+	m_maincpu->sci_tx_cb<0>().set(FUNC(roland_jv1080_state::midi_tx_byte));
+
+	MIDI_PORT(config, "mdin", midiin_slot, "midiin").rxd_handler().set(FUNC(roland_jv1080_state::midi_rx_w));
+	MIDI_PORT(config, m_midi_out, midiout_slot, "midiout");
 
 	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);
 
@@ -538,7 +639,7 @@ void roland_jv1080_state::jv1080(machine_config &config)
 	SPEAKER(config, "rspeaker").front_right();
 
 	ROLAND_XP(config, m_xp, 24.576_MHz_XTAL);
-	// TODO: m_xp->int_callback().set_inputline(m_maincpu, ...);
+	m_xp->int_callback().set_inputline(m_maincpu, 7);
 	m_xp->add_route(0, "lspeaker", 1.0);
 	m_xp->add_route(1, "rspeaker", 1.0);
 

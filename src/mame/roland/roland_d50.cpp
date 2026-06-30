@@ -7,13 +7,14 @@
 ****************************************************************************/
 
 #include "emu.h"
+#include "emuopts.h"
 #include "bus/midi/midiinport.h"
 #include "cpu/upd78k/upd78k3.h"
 #include "machine/bankdev.h"
 #include "mb63h149.h"
 #include "machine/nvram.h"
-#include "machine/timer.h"
-// #include "sound/roland_la32.h"
+#include "sound/roland_d50fx.h"
+#include "sound/roland_la32.h"
 #include "speaker.h"
 #include "emupal.h"
 #include "screen.h"
@@ -31,7 +32,10 @@ public:
 		, m_eram(*this, "eram")
 		, m_lcd(*this, "lcd")
 		, m_keyscan(*this, "keyscan")
-		// , m_la32(*this, "la32")
+		, m_la32(*this, "la32")
+		, m_effects(*this, "effects")
+		, m_toneram(*this, "toneram")
+		, m_panel_rows(*this, "ROW%u", 0U)
 	{
 	}
 
@@ -39,6 +43,9 @@ public:
 	void d550(machine_config &config);
 
 private:
+	virtual void machine_start() override ATTR_COLD;
+	virtual void machine_reset() override ATTR_COLD;
+
 	void d50_mem_map(address_map &map) ATTR_COLD;
 	void d550_mem_map(address_map &map) ATTR_COLD;
 	void eram_map(address_map &map) ATTR_COLD;
@@ -51,18 +58,107 @@ private:
 	void lcd_data_w(uint8_t data);
 	uint8_t gate_array_status_r();
 	void gate_array_end_w(uint8_t data);
+	void gate_array_w(offs_t offset, uint8_t data);
+	uint8_t gate_array_input_r();
+	void gate_array_input_w(uint8_t data);
 	void port0_w(uint8_t data);
-	TIMER_DEVICE_CALLBACK_MEMBER(la32_irq_tick);
+	void port1_w(uint8_t data);
+	uint8_t port2_r();
+	void update_eram_bank();
+	void la32_irq_w(int state);
+	void midi_rx_w(int state);
 
 	void la32_w(offs_t address, uint8_t data);
 	uint8_t la32_r(offs_t address);
+	void chorus_w(offs_t address, uint8_t data);
+	uint8_t chorus_r(offs_t address);
+	void reverb_w(offs_t address, uint8_t data);
+	uint8_t reverb_r(offs_t address);
 
 	required_device<upd78312_device> m_maincpu;
 	required_device<address_map_bank_device> m_eram;
 	required_device<hd44780_device> m_lcd;
 	optional_device<mb63h149_device> m_keyscan;
-	// required_device<la32_device> m_la32;
+	required_device<la32_device> m_la32;
+	required_device<roland_d50_effects_device> m_effects;
+	required_shared_ptr<u8> m_toneram;
+	optional_ioport_array<7> m_panel_rows;
+	u8 m_gate_array_input = 0xff;
+	u8 m_gate_array_registers[0x40]{};
+	u16 m_gate_array_words[2][0x80]{};
+	u8 m_port0 = 0xff;
+	u8 m_port1 = 0xff;
+	bool m_la32_irq = false;
+	bool m_midi_idle = true;
+	u8 m_midi_count = 0;
+	u8 m_midi_byte = 0;
+	u8 m_la32_data_l = 0;
+	u16 m_la32_registers[6][32]{};
+	u8 m_chorus_registers[8]{};
+	u8 m_reverb_address = 0;
+	u8 m_reverb_data_h = 0;
+	u16 m_reverb_registers[256]{};
 };
+
+void roland_d50_state::machine_start()
+{
+	save_item(NAME(m_port0));
+	save_item(NAME(m_port1));
+	save_item(NAME(m_la32_irq));
+	save_item(NAME(m_midi_idle));
+	save_item(NAME(m_midi_count));
+	save_item(NAME(m_midi_byte));
+	save_item(NAME(m_gate_array_input));
+	save_item(NAME(m_gate_array_registers));
+	save_item(NAME(m_gate_array_words));
+	save_item(NAME(m_la32_data_l));
+	save_item(NAME(m_la32_registers));
+	save_item(NAME(m_chorus_registers));
+	save_item(NAME(m_reverb_address));
+	save_item(NAME(m_reverb_data_h));
+	save_item(NAME(m_reverb_registers));
+}
+
+void roland_d50_state::machine_reset()
+{
+	// The D-50 board straps LA32 global control for packed 14-bit PCM and
+	// two pairs of partial slots (0/8 and 16/24).  The pairing propagates
+	// inactive/key-on state so both oscillators restart at phase zero.
+	// These pins are not exposed in the D-50 MCU address map.
+	m_la32->write(0x1c1, 0x60);
+
+	// A real battery failure leaves indeterminate SRAM.  MAME previously
+	// initialized it to zero, which happens to pass the firmware's range
+	// validation while disabling panel/MIDI patch selection (system byte 9,
+	// bit 0).  The 22-byte system block is at physical tone-RAM offset 7f00.
+	// Repair only an artificial all-zero block, using the firmware's own
+	// v2.x defaults; never replace an existing user setup.
+	static constexpr u8 system_defaults[22] = {
+		0x3a, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01,
+		0x01, 0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+		0x00, 0x0c, 0x00, 0x00, 0x00, 0x00
+	};
+	u8 *const system = &m_toneram[0x7f00];
+	if (std::all_of(system, system + std::size(system_defaults), [](u8 value) { return value == 0; }))
+		std::copy(std::begin(system_defaults), std::end(system_defaults), system);
+
+	m_port0 = 0xff;
+	m_port1 = 0xff;
+	m_la32_irq = false;
+	m_midi_idle = true;
+	m_midi_count = 0;
+	m_midi_byte = 0;
+	m_gate_array_input = 0xff;
+	std::fill(std::begin(m_gate_array_registers), std::end(m_gate_array_registers), 0);
+	std::fill(&m_gate_array_words[0][0], &m_gate_array_words[0][0] + 2 * 0x80, 0);
+	m_la32_data_l = 0;
+	std::fill(&m_la32_registers[0][0], &m_la32_registers[0][0] + 6 * 32, 0);
+	std::fill(std::begin(m_chorus_registers), std::end(m_chorus_registers), 0);
+	m_reverb_address = 0;
+	m_reverb_data_h = 0;
+	std::fill(std::begin(m_reverb_registers), std::end(m_reverb_registers), 0);
+	update_eram_bank();
+}
 
 void roland_d50_state::lcd_palette(palette_device &palette) const
 {
@@ -78,7 +174,6 @@ HD44780_PIXEL_UPDATE(roland_d50_state::pixel_update)
 
 void roland_d50_state::lcd_ctrl_w(uint8_t data)
 {
-	logerror("LCD control %02X\n", data);
 	m_lcd->control_w(data);
 }
 
@@ -89,47 +184,208 @@ uint8_t roland_d50_state::lcd_ctrl_r()
 
 void roland_d50_state::lcd_data_w(uint8_t data)
 {
-	logerror("LCD data %02X '%c'\n", data, data >= 0x20 && data < 0x7f ? data : '.');
 	m_lcd->data_w(data);
 }
 
 uint8_t roland_d50_state::gate_array_status_r()
 {
-	logerror("IC28 status read\n");
 	m_maincpu->set_input_line(upd78312_device::INT1_LINE, CLEAR_LINE);
-	return 0x04; // LCD transfer complete
+	return 0x07; // panel phases and LCD transfer complete
 }
 
-void roland_d50_state::gate_array_end_w(uint8_t data)
+void roland_d50_state::gate_array_end_w(uint8_t)
 {
-	logerror("IC28 transfer end %02X\n", data);
 	m_maincpu->set_input_line(upd78312_device::INT1_LINE, ASSERT_LINE);
+}
+
+void roland_d50_state::gate_array_w(offs_t offset, uint8_t data)
+{
+	offset &= 0x3f;
+	m_gate_array_registers[offset] = data;
+
+	// F800 selects one of the 128 D-50-visible IC28 words.  F801/F802 and
+	// F803/F804 supply two 14-bit values; F804.6 is the transfer marker and
+	// F804.7 is parity.  At the MB87126 this becomes a 30-bit parameter word:
+	// a 16-bit relative delay operand (the D-50 forces its top two bits low),
+	// a signed 12-bit multiplier, and a two-bit MAC range.  Firmware builds
+	// the values in DC00-DDFF, using bit 15 of each word as a CPU-side dirty
+	// flag.  IC28 then serializes them to the downstream effect hardware.
+	if (offset == 4)
+	{
+		u8 const selector = m_gate_array_registers[0] & 0x7f;
+		u16 const word0 = (u16(m_gate_array_registers[2] & 0x3f) << 8) | m_gate_array_registers[1];
+		u16 const word1 = (u16(data & 0x3f) << 8) | m_gate_array_registers[3];
+		if (machine().options().verbose() &&
+			(m_gate_array_words[0][selector] != word0 || m_gate_array_words[1][selector] != word1))
+		{
+			logerror("D50 IC28 pc=%04X selector=%02X dc=%04X dd=%04X parity=%u\n",
+				m_maincpu->pc(), selector, word0, word1, BIT(data, 7));
+		}
+		m_gate_array_words[0][selector] = word0;
+		m_gate_array_words[1][selector] = word1;
+		m_effects->ic28_write(selector, word0, word1);
+		address_space &program = m_maincpu->space(AS_PROGRAM);
+		m_effects->patch_mixer_write(program.read_byte(0xc592), program.read_byte(0xc59d),
+			program.read_byte(0xc59e), program.read_byte(0xc59f), program.read_byte(0xc5a0),
+			program.read_byte(0xc5a1), program.read_byte(0xc4ae), program.read_byte(0xc4af),
+			program.read_byte(0xc56e), program.read_byte(0xc56f),
+			program.read_byte(0xc4ad), program.read_byte(0xc56d));
+	}
+	m_maincpu->set_input_line(upd78312_device::INT1_LINE, ASSERT_LINE);
+}
+
+uint8_t roland_d50_state::gate_array_input_r()
+{
+	// IC28 scans an 8x8 matrix by writing a rotating zero in bits 7 to 0.
+	// Reads return the active-low column inputs, not the row-select latch.
+	// Bit 7 is the unused eighth row on the D-50 panel.
+	for (unsigned row = 0; row < 7; row++)
+		if (!BIT(m_gate_array_input, row) && m_panel_rows[row])
+			return ~m_panel_rows[row]->read();
+	return 0xff;
+}
+
+void roland_d50_state::gate_array_input_w(uint8_t data)
+{
+	m_gate_array_input = data;
 }
 
 void roland_d50_state::port0_w(uint8_t data)
 {
-	// P0.7 and P0.5 select one of the four IC21 outputs; P0.6 is
-	// the high address bit for tone/card RAM.  Each bank is 0x4000 bytes.
-	u8 const select = (BIT(data, 5) << 1) | BIT(data, 7);
-	m_eram->set_bank((select << 1) | BIT(data, 6));
+	m_port0 = data;
+	update_eram_bank();
 }
 
-TIMER_DEVICE_CALLBACK_MEMBER(roland_d50_state::la32_irq_tick)
+void roland_d50_state::port1_w(uint8_t data)
 {
-	m_maincpu->set_input_line(upd78312_device::INT0_LINE, HOLD_LINE);
+	if (machine().options().verbose() && m_port1 != data)
+		logerror("D50 P1 pc=%04X value=%02X changed=%02X\n", m_maincpu->pc(), data, m_port1 ^ data);
+	m_port1 = data;
+}
+
+uint8_t roland_d50_state::port2_r()
+{
+	// P2.2 is IC28 BUSY (idle low here); P2.1 is the active-low LA32 IRQ.
+	return m_la32_irq ? 0xf9 : 0xfb;
+}
+
+void roland_d50_state::update_eram_bank()
+{
+	// P0.7 and P0.5 select the external device or program-ROM quarter;
+	// P0.6 is the high address bit for the 32 KiB RAM devices.
+	u8 const select = (BIT(m_port0, 5) << 1) | BIT(m_port0, 7);
+	m_eram->set_bank((select << 1) | BIT(m_port0, 6));
+}
+
+void roland_d50_state::la32_irq_w(int state)
+{
+	m_la32_irq = bool(state);
+	m_maincpu->set_input_line(upd78312_device::INT0_LINE, state ? ASSERT_LINE : CLEAR_LINE);
+}
+
+void roland_d50_state::midi_rx_w(int state)
+{
+	if (!state && m_midi_idle)
+	{
+		m_midi_idle = false;
+		m_midi_count = 0;
+		m_midi_byte = 0;
+	}
+	else if (!m_midi_idle)
+	{
+		if (m_midi_count < 8)
+		{
+			m_midi_byte |= bool(state) << m_midi_count;
+			m_midi_count++;
+		}
+		else
+		{
+			if (state)
+			{
+				machine().scheduler().synchronize();
+				m_maincpu->serial_rx(m_midi_byte);
+			}
+			m_midi_idle = true;
+		}
+	}
 }
 
 void roland_d50_state::la32_w(offs_t address, uint8_t data)
 {
-	// m_la32->write(address, data);
+	// The D-50 presents each of the LA32's six 0x40-byte register files in
+	// a separate 0x100-byte page.
+	m_la32->write(((address >> 8) * 0x40) | (address & 0x3f), data);
+
+	// Keep a shadow solely to make -verbose register traces useful.  The
+	// LA32 latches the low byte globally and commits a word on an odd write.
+	if (!BIT(address, 0))
+		m_la32_data_l = data;
+	else if ((address >> 8) < 6 && (address & 0x3f) < 0x40)
+	{
+		u16 const value = (u16(data) << 8) | m_la32_data_l;
+		u8 const file = address >> 8;
+		u8 const slot = (address >> 1) & 0x1f;
+		if (machine().options().verbose() && m_la32_registers[file][slot] != value)
+			logerror("D50 LA32 at=%s pc=%04X file=%u slot=%02u value=%04X\n",
+				machine().time().as_string(), m_maincpu->pc(), file, slot, value);
+		m_la32_registers[file][slot] = value;
+	}
 }
 
 uint8_t roland_d50_state::la32_r(offs_t address)
 {
-	// return m_la32->read(address);
-	return 0xff;
+	return m_la32->read(((address >> 8) * 0x40) | (address & 0x3f));
 }
 
+void roland_d50_state::chorus_w(offs_t address, uint8_t data)
+{
+	address &= 7;
+	if (machine().options().verbose() && m_chorus_registers[address] != data)
+		logerror("D50 CHORUS pc=%04X reg=%u value=%02X\n", m_maincpu->pc(), unsigned(address), data);
+	m_chorus_registers[address] = data;
+	m_effects->ic8_write(address, data);
+}
+
+uint8_t roland_d50_state::chorus_r(offs_t address)
+{
+	return m_chorus_registers[address & 7];
+}
+
+void roland_d50_state::reverb_w(offs_t address, uint8_t data)
+{
+	switch (address & 7)
+	{
+	case 0:
+		m_reverb_data_h = data;
+		break;
+
+	case 1:
+	{
+		u16 const value = (u16(m_reverb_data_h) << 8) | data;
+		if (machine().options().verbose() && m_reverb_registers[m_reverb_address] != value)
+			logerror("D50 IC9 at=%s pc=%04X reg=%02X value=%04X\n",
+				machine().time().as_string(), m_maincpu->pc(), m_reverb_address, value);
+		m_reverb_registers[m_reverb_address] = value;
+		m_effects->ic9_write(m_reverb_address, value);
+		break;
+	}
+
+	case 7:
+		m_reverb_address = data;
+		break;
+	}
+}
+
+uint8_t roland_d50_state::reverb_r(offs_t address)
+{
+	switch (address & 7)
+	{
+	case 0: return m_reverb_registers[m_reverb_address] >> 8;
+	case 1: return m_reverb_registers[m_reverb_address];
+	case 7: return 0x00; // IC9 BUSY is bit 7, active high
+	default: return 0xff;
+	}
+}
 
 void roland_d50_state::d50_mem_map(address_map &map)
 {
@@ -138,14 +394,16 @@ void roland_d50_state::d50_mem_map(address_map &map)
 	map(0x2000, 0x7fff).rom().region("progrom", 0x2000);
 	map(0x8000, 0xbfff).m(m_eram, FUNC(address_map_bank_device::amap8));
 	map(0xc000, 0xdfff).ram();
-	map(0xe000, 0xe3ff).rw(FUNC(roland_d50_state::la32_r), FUNC(roland_d50_state::la32_w));
-	map(0xe700, 0xe707).noprw(); // chorus ASIC
+	map(0xe000, 0xe5ff).rw(FUNC(roland_d50_state::la32_r), FUNC(roland_d50_state::la32_w));
+	map(0xe700, 0xe707).rw(FUNC(roland_d50_state::chorus_r), FUNC(roland_d50_state::chorus_w));
+	map(0xf000, 0xf007).rw(FUNC(roland_d50_state::reverb_r), FUNC(roland_d50_state::reverb_w));
 	map(0xf400, 0xf7ff).rw("keyscan", FUNC(mb63h149_device::read), FUNC(mb63h149_device::write));
-	map(0xf800, 0xf83f).nopw(); // IC28 panel output registers
+	map(0xf800, 0xf83f).w(FUNC(roland_d50_state::gate_array_w));
 	map(0xf840, 0xf840).rw(FUNC(roland_d50_state::lcd_ctrl_r), FUNC(roland_d50_state::lcd_ctrl_w));
 	map(0xf841, 0xf87e).w(FUNC(roland_d50_state::lcd_data_w));
 	map(0xf87f, 0xf87f).w(FUNC(roland_d50_state::gate_array_end_w));
-	map(0xf880, 0xf9be).noprw(); // IC28 panel input/register area
+	map(0xf880, 0xf9be).ram(); // IC28 panel input/register area (preliminary)
+	map(0xf93f, 0xf93f).rw(FUNC(roland_d50_state::gate_array_input_r), FUNC(roland_d50_state::gate_array_input_w));
 	map(0xf9bf, 0xf9bf).r(FUNC(roland_d50_state::gate_array_status_r));
 	map(0xf9c0, 0xfbff).noprw();
 }
@@ -157,13 +415,15 @@ void roland_d50_state::d550_mem_map(address_map &map)
 	map(0x2000, 0x7fff).rom().region("progrom", 0x2000);
 	map(0x8000, 0xbfff).m(m_eram, FUNC(address_map_bank_device::amap8));
 	map(0xc000, 0xdfff).ram();
-	map(0xe000, 0xe3ff).rw(FUNC(roland_d50_state::la32_r), FUNC(roland_d50_state::la32_w));
-	map(0xe700, 0xe707).noprw(); // chorus ASIC
-	map(0xf800, 0xf83f).nopw(); // IC28 panel output registers
+	map(0xe000, 0xe5ff).rw(FUNC(roland_d50_state::la32_r), FUNC(roland_d50_state::la32_w));
+	map(0xe700, 0xe707).rw(FUNC(roland_d50_state::chorus_r), FUNC(roland_d50_state::chorus_w));
+	map(0xf000, 0xf007).rw(FUNC(roland_d50_state::reverb_r), FUNC(roland_d50_state::reverb_w));
+	map(0xf800, 0xf83f).w(FUNC(roland_d50_state::gate_array_w));
 	map(0xf840, 0xf840).rw(FUNC(roland_d50_state::lcd_ctrl_r), FUNC(roland_d50_state::lcd_ctrl_w));
 	map(0xf841, 0xf87e).w(FUNC(roland_d50_state::lcd_data_w));
 	map(0xf87f, 0xf87f).w(FUNC(roland_d50_state::gate_array_end_w));
-	map(0xf880, 0xf9be).noprw(); // IC28 panel input/register area
+	map(0xf880, 0xf9be).ram(); // IC28 panel input/register area (preliminary)
+	map(0xf93f, 0xf93f).rw(FUNC(roland_d50_state::gate_array_input_r), FUNC(roland_d50_state::gate_array_input_w));
 	map(0xf9bf, 0xf9bf).r(FUNC(roland_d50_state::gate_array_status_r));
 	map(0xf9c0, 0xfbff).noprw();
 }
@@ -244,6 +504,11 @@ static INPUT_PORTS_START(d50)
 	PORT_BIT(0x20, IP_ACTIVE_HIGH, IPT_OTHER) PORT_CODE(KEYCODE_6) PORT_NAME("Patch Bank 6")
 	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_CODE(KEYCODE_7) PORT_NAME("Patch Bank 7")
 	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_CODE(KEYCODE_8) PORT_NAME("Patch Bank 8")
+
+	PORT_START("REVERB_MODEL")
+	PORT_CONFNAME(0x01, 0x01, "Reverb implementation")
+	PORT_CONFSETTING(0x00, "Legacy floating-point graph")
+	PORT_CONFSETTING(0x01, "MB87126 fixed-point reconstruction")
 INPUT_PORTS_END
 
 static INPUT_PORTS_START(d550)
@@ -294,6 +559,11 @@ static INPUT_PORTS_START(d550)
 	PORT_BIT(0x20, IP_ACTIVE_HIGH, IPT_OTHER) PORT_CODE(KEYCODE_Y) PORT_NAME("Patch number 6")
 	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_CODE(KEYCODE_U) PORT_NAME("Patch number 7")
 	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_CODE(KEYCODE_I) PORT_NAME("Patch number 8")
+
+	PORT_START("REVERB_MODEL")
+	PORT_CONFNAME(0x01, 0x01, "Reverb implementation")
+	PORT_CONFSETTING(0x00, "Legacy floating-point graph")
+	PORT_CONFSETTING(0x01, "MB87126 fixed-point reconstruction")
 INPUT_PORTS_END
 
 
@@ -302,8 +572,9 @@ void roland_d50_state::d50(machine_config &config)
 	UPD78312(config, m_maincpu, 12_MHz_XTAL);
 	m_maincpu->set_addrmap(AS_PROGRAM, &roland_d50_state::d50_mem_map);
 	m_maincpu->port_out_cb<0>().set(FUNC(roland_d50_state::port0_w));
-	// IC28 BUSY is presented on P2.2; the unimplemented gate array is idle.
-	m_maincpu->port_in_cb<2>().set_constant(0xfb);
+	m_maincpu->port_out_cb<1>().set(FUNC(roland_d50_state::port1_w));
+	m_maincpu->port_in_cb<2>().set(FUNC(roland_d50_state::port2_r));
+	m_maincpu->serial_tx_cb().set("mdout", FUNC(midi_port_device::write_txd));
 
 	ADDRESS_MAP_BANK(config, m_eram);
 	m_eram->set_addrmap(0, &roland_d50_state::eram_map);
@@ -312,8 +583,7 @@ void roland_d50_state::d50(machine_config &config)
 	m_eram->set_addr_width(17);
 	m_eram->set_stride(0x4000);
 
-	NVRAM(config, "toneram", nvram_device::DEFAULT_ALL_0); // HM62256LP-12 + battery
-	TIMER(config, "la32_irq").configure_periodic(FUNC(roland_d50_state::la32_irq_tick), attotime::from_hz(1'000));
+	NVRAM(config, "toneram", nvram_device::DEFAULT_ALL_1); // HM62256LP-12 + battery
 
 	MB63H149(config, m_keyscan, 32.768_MHz_XTAL / 2); // on Dyna Scan Board
 	// m_keyscan.int_callback().set_inputline(m_maincpu, upd78312_device::INT2_LINE);
@@ -321,10 +591,14 @@ void roland_d50_state::d50(machine_config &config)
 	SPEAKER(config, "lspeaker").front_left();
 	SPEAKER(config, "rspeaker").front_right();
 
-	// LA32(config, m_la32, 16.384_MHz_XTAL);
-	// // m_la32->int_callback().set_inputline(cpu, i8x9x_device::EXTINT_LINE);
-	// m_la32->add_route(2, "lspeaker", 1.0); m_la32->add_route(3, "lspeaker", 1.0);
-	// m_la32->add_route(6, "rspeaker", 1.0); m_la32->add_route(7, "rspeaker", 1.0);
+	LA32(config, m_la32, 16.384_MHz_XTAL);
+	m_la32->set_rom_address_xor(0x40000); // PCM ROM A18 is inverted on the D-50 board
+	m_la32->int_callback().set(FUNC(roland_d50_state::la32_irq_w));
+	ROLAND_D50_EFFECTS(config, m_effects, 0);
+	for (unsigned output = 0; output < 8; output++)
+		m_la32->add_route(output, "effects", 3.0, output);
+	m_effects->add_route(0, "lspeaker", 1.0);
+	m_effects->add_route(1, "rspeaker", 1.0);
 
 	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_LCD));
 	screen.set_refresh_hz(50);
@@ -340,7 +614,8 @@ void roland_d50_state::d50(machine_config &config)
 	m_lcd->set_lcd_size(2, 40);
 	m_lcd->set_pixel_update_cb(FUNC(roland_d50_state::pixel_update));
 
-	MIDI_PORT(config, "mdin", midiin_slot, "midiin");
+	midi_port_device &mdin(MIDI_PORT(config, "mdin", midiin_slot, "midiin"));
+	mdin.rxd_handler().set(FUNC(roland_d50_state::midi_rx_w));
 	MIDI_PORT(config, "mdout", midiout_slot, "midiout");
 }
 
@@ -378,7 +653,7 @@ ROM_START(d50) // Newer PCB with silkscreen "Roland || D-50, D-550 || MAIN BOARD
 	ROM_REGION(0x2000, "maincpu", 0)
 	ROM_LOAD("d78312g-022_15179266.ic25", 0x0000, 0x2000, CRC(9564903f) SHA1(f68ed97a06764ee000fe6e9d7b39017165f0efc4)) // 8-digit Roland part number not printed on IC
 
-	ROM_REGION(0x80000, "pcm", 0)
+	ROM_REGION(0x80000, "la32", 0)
 	ROM_LOAD("roland__r15179858_8801ebi__tc534000p-7477.ic30", 0x00000, 0x80000, CRC(e2aed2d9) SHA1(e9f5b38b9b5fce04beb4cf871401e821a42edacb)) // A+B "Roland || R15179858 8801EBI || TC534000P-7477" 512KiB Mask ROM @ ic30
 	// ic29 is empty on boards with tc534000-sized Mask ROMs
 ROM_END
@@ -398,7 +673,7 @@ ROM_START(d50o) // Older PCB with silkscreen "Roland || D-50 MAIN BOARD || ASSY 
 	ROM_LOAD("d78312g-017_15179261.ic25", 0x0000, 0x2000, NO_DUMP) // not compatible with newer firmware
 	ROM_COPY("progrom", 0x0000, 0x0000, 0x2000)
 
-	ROM_REGION(0x80000, "pcm", 0)
+	ROM_REGION(0x80000, "la32", 0)
 	ROM_LOAD("roland_a__r15179835_8710eai__tc532000p-7469.ic30", 0x00000, 0x40000, CRC(1461c0fb) SHA1(55257e70bcf003439b76f96b7ae7e45a3cf24276)) // A "Roland A || R15179835 8710EAI || TC532000P-7469" 256KiB Mask ROM @ ic30; this is identical to the first half of the 512KiB ROM; verified from original ic; also seen with 8736 datecode
 	ROM_LOAD("roland_b__r15179836_8710eai__tc532000p-7470.ic29", 0x40000, 0x40000, CRC(e50599bf) SHA1(487c62f2ef7baccf2421059a940fa707e27aefb2)) // B "Roland B || R15179836 8710EAI || TC532000P-7470" 256KiB Mask ROM @ ic29; this is identical to the second half of the 512KiB ROM; verified from original ic; also seen with 8736 datecode
 ROM_END
@@ -416,7 +691,7 @@ ROM_START(d550) // Newer PCB with silkscreen "Roland || D-50, D-550 || MAIN BOAR
 	ROM_LOAD("d78312g-022_15179266.ic25", 0x0000, 0x2000, NO_DUMP)
 	ROM_COPY("progrom", 0x0000, 0x0000, 0x2000)
 
-	ROM_REGION(0x80000, "pcm", 0)
+	ROM_REGION(0x80000, "la32", 0)
 	ROM_LOAD("roland__r15179858_8801ebi__tc534000p-7477.ic30", 0x00000, 0x80000, CRC(e2aed2d9) SHA1(e9f5b38b9b5fce04beb4cf871401e821a42edacb)) // A+B "Roland || R15179858 8801EBI || TC534000P-7477" 512KiB Mask ROM @ ic30
 	// ic29 is empty on boards with tc534000-sized Mask ROMs
 ROM_END
@@ -424,6 +699,6 @@ ROM_END
 } // anonymous namespace
 
 
-SYST(1987, d50,  0,   0, d50,  d50, roland_d50_state, empty_init, "Roland", "D-50 Linear Synthesizer (Ver. 2.xx)", MACHINE_NOT_WORKING | MACHINE_NO_SOUND)
-SYST(1987, d50o, d50, 0, d50,  d50, roland_d50_state, empty_init, "Roland", "D-50 Linear Synthesizer (Ver. 1.xx)", MACHINE_NOT_WORKING | MACHINE_NO_SOUND)
-SYST(1987, d550, d50, 0, d550, d550, roland_d50_state, empty_init, "Roland", "D-550 Linear Synthesizer", MACHINE_NOT_WORKING | MACHINE_NO_SOUND)
+SYST(1987, d50,  0,   0, d50,  d50, roland_d50_state, empty_init, "Roland", "D-50 Linear Synthesizer (Ver. 2.xx)", MACHINE_NOT_WORKING)
+SYST(1987, d50o, d50, 0, d50,  d50, roland_d50_state, empty_init, "Roland", "D-50 Linear Synthesizer (Ver. 1.xx)", MACHINE_NOT_WORKING)
+SYST(1987, d550, d50, 0, d550, d550, roland_d50_state, empty_init, "Roland", "D-550 Linear Synthesizer", MACHINE_NOT_WORKING)

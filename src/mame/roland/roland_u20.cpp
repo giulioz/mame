@@ -27,10 +27,12 @@
 
 
 #include "emu.h"
+#include "bus/midi/midiinport.h"
 #include "cpu/mcs96/i8x9x.h"
 #include "machine/ram.h"
 #include "machine/timer.h"
 #include "sound/roland_lp.h"
+#include "sound/roland_rcc.h"
 #include "video/hd44780.h"
 #include "emupal.h"
 #include "screen.h"
@@ -142,97 +144,6 @@ namespace {
 #define UNSCRAMBLE_DATA(_data) \
 	bitswap<8>(_data,1,2,7,3,5,0,4,6)
 
-class u220_rcc_device : public device_t, public device_sound_interface
-{
-public:
-	u220_rcc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
-
-	void program_w(u8 index, u8 coefficient);
-
-protected:
-	virtual void device_start() override ATTR_COLD;
-	virtual void device_reset() override ATTR_COLD;
-	virtual void sound_stream_update(sound_stream &stream) override;
-
-private:
-	static constexpr unsigned NUM_VOICES = mb87419_mb87420_device::NUM_CHANNELS;
-
-	sound_stream *m_stream = nullptr;
-	float m_gain[NUM_VOICES][2]{};
-};
-
-} // anonymous namespace
-
-DEFINE_DEVICE_TYPE(U220_RCC, u220_rcc_device, "u220_rcc", "Roland U-220 temporary RCC dry mixer")
-
-u220_rcc_device::u220_rcc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
-	: device_t(mconfig, U220_RCC, tag, owner, clock)
-	, device_sound_interface(mconfig, *this)
-{
-}
-
-void u220_rcc_device::device_start()
-{
-	m_stream = stream_alloc(NUM_VOICES, 2, clock(), STREAM_SYNCHRONOUS);
-	save_item(NAME(m_gain));
-}
-
-void u220_rcc_device::device_reset()
-{
-	std::fill(&m_gain[0][0], &m_gain[0][0] + NUM_VOICES * 2, 0.0F);
-}
-
-void u220_rcc_device::program_w(u8 index, u8 coefficient)
-{
-	// These are the dry L/R coefficient instructions identified by cycling all
-	// voices in Sound Test (1).  Voice 28 has no dry coefficient pair in the
-	// firmware program and is deliberately not mixed here.
-	static constexpr u8 gain_program[NUM_VOICES][2] = {
-		{ 0x04, 0x05 }, { 0x0c, 0x0d }, { 0x15, 0x16 }, { 0x20, 0x21 },
-		{ 0x24, 0x25 }, { 0x2a, 0x2b }, { 0x34, 0x35 }, { 0x3e, 0x40 },
-		{ 0x44, 0x45 }, { 0x4c, 0x50 }, { 0x55, 0x56 }, { 0x5e, 0x60 },
-		{ 0x64, 0x65 }, { 0x71, 0x72 }, { 0x76, 0x77 }, { 0x7d, 0x7e },
-		{ 0x85, 0x89 }, { 0x8c, 0x8f }, { 0x93, 0x96 }, { 0x9d, 0x9e },
-		{ 0xa4, 0xa7 }, { 0xab, 0xac }, { 0xb3, 0xb4 }, { 0xbf, 0xc0 },
-		{ 0xc3, 0xc4 }, { 0xcd, 0xce }, { 0xd7, 0xd8 }, { 0xdf, 0xe0 },
-		{ 0xff, 0xff }, { 0xef, 0xf0 }, { 0xf5, 0xf6 }, { 0xfe, 0xff }
-	};
-
-	for (unsigned voice = 0; voice < NUM_VOICES; voice++)
-	{
-		for (unsigned side = 0; side < 2; side++)
-		{
-			if (gain_program[voice][side] != index || (voice == 28))
-				continue;
-
-			m_stream->update();
-			// Hardware tests identify coefficient 0x40 with the shifter set as
-			// unity.  Dry voice coefficients are non-negative; negative values
-			// belong to feedback/effect operations and are ignored here.
-			m_gain[voice][side] = std::clamp(float(s8(coefficient)) / 64.0F, 0.0F, 2.0F);
-		}
-	}
-}
-
-void u220_rcc_device::sound_stream_update(sound_stream &stream)
-{
-	for (int sample = 0; sample < stream.samples(); sample++)
-	{
-		float left = 0.0F;
-		float right = 0.0F;
-		for (unsigned voice = 0; voice < NUM_VOICES; voice++)
-		{
-			float const input = stream.get(voice, sample);
-			left += input * m_gain[voice][0];
-			right += input * m_gain[voice][1];
-		}
-		stream.put(0, sample, left);
-		stream.put(1, sample, right);
-	}
-}
-
-namespace {
-
 class roland_u20_state : public driver_device
 {
 public:
@@ -243,7 +154,6 @@ public:
 		, m_rcc(*this, "rcc")
 		, lcd(*this, "lcd")
 		, midi_timer(*this, "midi_timer")
-		, dsp_ram(*this, "dsp_ram")
 		, lp_ram(*this, "lp_ram")
 		, sw0(*this, "SW0")
 		, sw1(*this, "SW1")
@@ -267,6 +177,7 @@ private:
   HD44780_PIXEL_UPDATE(lcd_pixel_update);
 
 	void midi_w(u16 data);
+	void midi_in_w(int state);
 
 	u8 ga_bank_r(offs_t offset);
 	void ga_bank_w(offs_t offset, u8 data);
@@ -280,8 +191,6 @@ private:
 	u8 dsp_io_r(offs_t offset);
 	void dsp_io_w(offs_t offset, u8 data);
 
-	void dump_rcc();
-
 	TIMER_DEVICE_CALLBACK_MEMBER(midi_timer_cb);
 	TIMER_DEVICE_CALLBACK_MEMBER(test_timer_cb);
 
@@ -291,9 +200,8 @@ private:
 	void descramble_rom_external(u8* dst, const u8* src);
 
 	u8 midi;
-	int midi_pos;
-	u8 dsp_io_buffer[0x80];
-
+	u8 m_midi_rx = 0;
+	u8 m_midi_pos = 0;
 	u8 bank_00 = 0;
 	u8 bank_01 = 0;
 	u8 sram[0x8000];
@@ -302,10 +210,9 @@ private:
 
 	required_device<i8x9x_device> m_maincpu;
 	required_device<mb87419_mb87420_device> m_pcm;
-	required_device<u220_rcc_device> m_rcc;
+	required_device<roland_rcc_device> m_rcc;
 	required_device<hd44780_device> lcd;
 	required_device<timer_device> midi_timer;
-	required_device<ram_device> dsp_ram;
 	required_device<ram_device> lp_ram;
 	required_ioport sw0;
 	required_ioport sw1;
@@ -339,6 +246,8 @@ void roland_u20_state::machine_start()
 	save_item(NAME(bank_00));
 	save_item(NAME(bank_01));
 	save_item(NAME(sram));
+	save_item(NAME(m_midi_rx));
+	save_item(NAME(m_midi_pos));
 
 	serial_fd = open_serial("/dev/cu.usbmodem1101");
 
@@ -351,14 +260,41 @@ void roland_u20_state::machine_start()
 
 void roland_u20_state::machine_reset()
 {
-	// midi_timer->adjust(attotime::from_hz(1));
-	midi_pos = 0;
+	m_midi_rx = 0;
+	m_midi_pos = 0;
 }
 
 void roland_u20_state::midi_w(u16 data)
 {
 	logerror("midi_out %02x\n", data);
 	midi = data;
+}
+
+void roland_u20_state::midi_in_w(int state)
+{
+	// The MIDI slot supplies 31.25 kbaud 8-N-1.  Convert it to bytes for the
+	// current MCS-96 serial shim, then let midi_timer_cb pace delivery so SBUF
+	// cannot be overwritten while the firmware services its serial interrupt.
+	if (m_midi_pos == 0)
+	{
+		if (!state)
+		{
+			m_midi_rx = 0;
+			m_midi_pos = 1;
+		}
+	}
+	else if (m_midi_pos <= 8)
+	{
+		m_midi_rx |= state << (m_midi_pos - 1);
+		m_midi_pos++;
+	}
+	else
+	{
+		if (state)
+			midi_queue.push(m_midi_rx);
+		m_midi_rx = 0;
+		m_midi_pos = 0;
+	}
 }
 
 TIMER_DEVICE_CALLBACK_MEMBER(roland_u20_state::midi_timer_cb)
@@ -373,7 +309,6 @@ TIMER_DEVICE_CALLBACK_MEMBER(roland_u20_state::midi_timer_cb)
 	if (!midi_queue.empty()) {
 		midi = midi_queue.front();
 		midi_queue.pop();
-		logerror("midi_in %02x\n", midi);
 		m_maincpu->serial_w(midi);
 	}
 }
@@ -387,76 +322,12 @@ TIMER_DEVICE_CALLBACK_MEMBER(roland_u20_state::test_timer_cb)
 
 u8 roland_u20_state::dsp_io_r(offs_t offset)
 {
-	return dsp_io_buffer[offset];
-}
-
-void roland_u20_state::dump_rcc()
-{
-	FILE *fp = fopen("rcc_dump.txt", "w");
-	if (fp)
-	{
-		for (int i = 0; i < 0x100; i++)
-		{
-			u8* ram = dsp_ram->pointer();
-			offs_t ofs = i * 4;
-			fprintf(fp, "%03x: %x %02x %02x  eram:%02x opc:%02x shift:%x coef:%02x\n", i, ram[ofs+1], ram[ofs+2], ram[ofs+3], (ram[ofs+1]<<2) | ((ram[ofs+2]>>6)&3), (ram[ofs+2]&0x3f)>>1, ram[ofs+2]&1, ram[ofs+3]);
-		}
-
-		fprintf(fp, "\n\n");
-
-		for (int i = 0; i < 0x20; i++)
-		{
-			u8* ram = dsp_ram->pointer() + (0x100 * 5);
-			offs_t ofs = i * 4;
-			fprintf(fp, "%03x: %02x %02x %02x\n", i, ram[ofs+1], ram[ofs+2], ram[ofs+3]);
-		}
-
-		fclose(fp);
-	}
+	return m_rcc->read(offset);
 }
 
 void roland_u20_state::dsp_io_w(offs_t offset, u8 data)
 {
-	dsp_io_buffer[offset] = data;
-	// do read/write to some external memory, makes the RCC-CPU check pass. (routine at 0x4679)
-	switch(offset)
-	{
-	case 0x04:
-		// write to partials?? (written in loop at 0x4375)
-		{
-			u8* ram = dsp_ram->pointer() + (0x100 * 5);
-			offs_t ofs = data * 4;
-			ram[ofs+0] = 0x00;
-			ram[ofs+1] = dsp_io_buffer[0x00];
-			ram[ofs+2] = dsp_io_buffer[0x01];
-			ram[ofs+3] = dsp_io_buffer[0x02];
-		}
-		break;
-	case 0x06:
-		{
-			u8* ram = dsp_ram->pointer();
-			offs_t ofs = data * 4;
-			ram[ofs+0] = 0x00;
-			ram[ofs+1] = dsp_io_buffer[0x00];
-			ram[ofs+2] = dsp_io_buffer[0x01];
-			ram[ofs+3] = dsp_io_buffer[0x02];
-			m_rcc->program_w(data, dsp_io_buffer[0x02]);
-		}
-		break;
-	case 0x0A:
-		{
-			const u8* ram = dsp_ram->pointer();
-			offs_t ofs = data * 4;
-			dsp_io_buffer[0x00] = ram[ofs+1];
-			dsp_io_buffer[0x01] = ram[ofs+2];
-			dsp_io_buffer[0x02] = ram[ofs+3];
-		}
-		break;
-	case 0x0c:
-		break;
-	case 0x0d:
-		break;
-	}
+	m_rcc->write(offset, data);
 }
 
 u8 roland_u20_state::ga_bank_r(offs_t offset)
@@ -641,7 +512,7 @@ void roland_u20_state::u20(machine_config &config)
 
 	MB87419_MB87420(config, m_pcm, 32.768_MHz_XTAL);
 	m_pcm->int_callback().set_inputline(m_maincpu, i8x9x_device::EXTINT_LINE);
-	U220_RCC(config, m_rcc, 32'000);
+	ROLAND_RCC(config, m_rcc, 32'000);
 	// Preserve the LP time slots through the device boundary.  The temporary
 	// RCC decodes only the firmware's dry L/R coefficients; effects and the
 	// physical direct-output assignments are intentionally bypassed.
@@ -650,7 +521,6 @@ void roland_u20_state::u20(machine_config &config)
 	m_rcc->add_route(0, "speaker", 1.0, 0);
 	m_rcc->add_route(1, "speaker", 1.0, 1);
 
-	RAM(config, dsp_ram).set_default_size("16K");
 	RAM(config, lp_ram).set_default_size("16K");
 
 	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_LCD));
@@ -668,6 +538,9 @@ void roland_u20_state::u20(machine_config &config)
 	// current serial input API supplies complete bytes rather than bits,
 	// so minimum-spacing packets can otherwise overwrite SBUF.
 	TIMER(config, midi_timer).configure_periodic(FUNC(roland_u20_state::midi_timer_cb), attotime::from_hz(1000));
+
+	midi_port_device &mdin(MIDI_PORT(config, "mdin", midiin_slot, "midiin"));
+	mdin.rxd_handler().set(FUNC(roland_u20_state::midi_in_w));
 
 	TIMER(config, "test_timer").configure_periodic(FUNC(roland_u20_state::test_timer_cb), attotime::from_hz(10000));
 }

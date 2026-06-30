@@ -5,22 +5,43 @@
 #include "sh7032.h"
 
 DEFINE_DEVICE_TYPE(SH7032,  sh7032_device,  "sh7032",  "Hitachi SH-1 (SH7032)")
+DEFINE_DEVICE_TYPE(SH7034,  sh7034_device,  "sh7034",  "Hitachi SH-1 (SH7034)")
 
 
 sh7032_device::sh7032_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
-	: sh7021_device(mconfig, SH7032, tag, owner, clock, address_map_constructor(FUNC(sh7032_device::sh7032_map), this))
+	: sh7032_device(mconfig, SH7032, tag, owner, clock, address_map_constructor(FUNC(sh7032_device::sh7032_map), this))
+{
+}
+
+sh7032_device::sh7032_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, address_map_constructor internal_map)
+	: sh7021_device(mconfig, type, tag, owner, clock, internal_map)
+{
+	m_has_internal_rom = type == SH7034;
+}
+
+sh7034_device::sh7034_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
+	: sh7032_device(mconfig, SH7034, tag, owner, clock, address_map_constructor(FUNC(sh7034_device::sh7034_map), this))
 {
 }
 
 void sh7032_device::sh7032_map(address_map &map)
 {
-	map(0x00000000, 0x0000ffff).rom().region(DEVICE_SELF, 0).mirror(0x08000000); // 64KB internal ROM
+	sh703x_map(map);
+	map(0x07000000, 0x07001fff).ram().mirror(0x08ffe000); // 8KB internal RAM shadows
+}
 
-	// A/D Converter and power-down registers (SH7034, stub to avoid log spam)
-	// ADDRA-ADDRD at 0xEE0-0xEE7, ADCSR/ADCR at 0xEE8-0xEEB
-	// SBYCR at 0xEF8-0xEFB
-	map(0x05fffee0, 0x05fffeeb).ram();
-	map(0x05fffef8, 0x05fffefb).ram();
+void sh7034_device::sh7034_map(address_map &map)
+{
+	sh703x_map(map);
+	map(0x00000000, 0x0000ffff).rom().region(DEVICE_SELF, 0).mirror(0x08ff0000); // 64KB internal ROM shadows
+	map(0x07000000, 0x07000fff).ram().mirror(0x08fff000); // 4KB internal RAM shadows
+}
+
+void sh7032_device::sh703x_map(address_map &map)
+{
+	map(0x05fffee0, 0x05fffee7).r(FUNC(sh7032_device::adc_addr_r));
+	map(0x05fffef8, 0x05fffef8).rw(FUNC(sh7032_device::adc_adcsr_r), FUNC(sh7032_device::adc_adcsr_w));
+	map(0x05fffef9, 0x05fffef9).rw(FUNC(sh7032_device::adc_adcr_r), FUNC(sh7032_device::adc_adcr_w));
 
 	map(0x05fffec0, 0x05fffec0).rw(FUNC(sh7032_device::sci_smr_r<0>), FUNC(sh7032_device::sci_smr_w<0>));
 	map(0x05fffec1, 0x05fffec1).rw(FUNC(sh7032_device::sci_brr_r<0>), FUNC(sh7032_device::sci_brr_w<0>));
@@ -130,9 +151,12 @@ void sh7032_device::sh7032_map(address_map &map)
 	map(0x05ffffb0, 0x05ffffb1).rw(FUNC(sh7032_device::bsc_rtcnt_r), FUNC(sh7032_device::bsc_rtcnt_w));
 	map(0x05ffffb2, 0x05ffffb3).rw(FUNC(sh7032_device::bsc_rtcor_r), FUNC(sh7032_device::bsc_rtcor_w));
 
-	map(0x05ffffb8, 0x05ffffb8).rw(FUNC(sh7032_device::wdt_tcsr_r), FUNC(sh7032_device::wdt_tcsr_w));
-	map(0x05ffffb9, 0x05ffffb9).rw(FUNC(sh7032_device::wdt_tcnt_r), FUNC(sh7032_device::wdt_tcnt_w));
-	map(0x05ffffba, 0x05ffffba).rw(FUNC(sh7032_device::wdt_rstcsr_r), FUNC(sh7032_device::wdt_rstcsr_w));
+	map(0x05ffffb8, 0x05ffffb8).r(FUNC(sh7032_device::wdt_tcsr_r));
+	map(0x05ffffb9, 0x05ffffb9).r(FUNC(sh7032_device::wdt_tcnt_r));
+	map(0x05ffffb8, 0x05ffffb9).w(FUNC(sh7032_device::wdt_tcsr_tcnt_w));
+	map(0x05ffffbb, 0x05ffffbb).r(FUNC(sh7032_device::wdt_rstcsr_r));
+	map(0x05ffffba, 0x05ffffbb).w(FUNC(sh7032_device::wdt_rstcsr_w));
+	map(0x05ffffbc, 0x05ffffbc).rw(FUNC(sh7032_device::sbycr_r), FUNC(sh7032_device::sbycr_w));
 
 	map(0x05ffffc0, 0x05ffffc1).rw(FUNC(sh7032_device::pfc_padr_r), FUNC(sh7032_device::pfc_padr_w));
 	map(0x05ffffc2, 0x05ffffc3).rw(FUNC(sh7032_device::pfc_pbdr_r), FUNC(sh7032_device::pfc_pbdr_w));
@@ -142,6 +166,7 @@ void sh7032_device::sh7032_map(address_map &map)
 	map(0x05ffffca, 0x05ffffcb).rw(FUNC(sh7032_device::pfc_pacr2_r), FUNC(sh7032_device::pfc_pacr2_w));
 	map(0x05ffffcc, 0x05ffffcd).rw(FUNC(sh7032_device::pfc_pbcr1_r), FUNC(sh7032_device::pfc_pbcr1_w));
 	map(0x05ffffce, 0x05ffffcf).rw(FUNC(sh7032_device::pfc_pbcr2_r), FUNC(sh7032_device::pfc_pbcr2_w));
+	map(0x05ffffd0, 0x05ffffd1).r(FUNC(sh7032_device::pfc_pcdr_r));
 	map(0x05ffffee, 0x05ffffef).rw(FUNC(sh7032_device::pfc_cascr_r), FUNC(sh7032_device::pfc_cascr_w));
 
 	map(0x05fffff0, 0x05fffff0).rw(FUNC(sh7032_device::tpc_tpmr_r), FUNC(sh7032_device::tpc_tpmr_w));
@@ -153,5 +178,4 @@ void sh7032_device::sh7032_map(address_map &map)
 	map(0x05fffff6, 0x05fffff6).rw(FUNC(sh7032_device::tpc_ndrb_alt_r), FUNC(sh7032_device::tpc_ndrb_alt_w));
 	map(0x05fffff7, 0x05fffff7).rw(FUNC(sh7032_device::tpc_ndra_alt_r), FUNC(sh7032_device::tpc_ndra_alt_w));
 
-	map(0x07fff000, 0x07ffffff).ram().mirror(0x08000000); // 4KB internal RAM
 }
