@@ -118,6 +118,7 @@ protected:
 
 	void set_nz8(uint8_t v);
 	void set_nz16(uint16_t v);
+	void set_shift_left_overflow(uint32_t value, unsigned width, unsigned count);
 
 #define O(o) void o ## _full(); void o ## _partial()
 

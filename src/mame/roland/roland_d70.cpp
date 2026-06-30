@@ -612,8 +612,8 @@ void roland_d70_state::descramble_rom_internal(u8 *dst, const u8 *src) {
 
 ROM_START(d70)
 	ROM_REGION(0x20000, "maincpu", 0)
-	// ROM_DEFAULT_BIOS("v119")
-	ROM_DEFAULT_BIOS("v110")
+	ROM_DEFAULT_BIOS("v119")
+	// ROM_DEFAULT_BIOS("v110")
 	ROM_SYSTEM_BIOS( 0, "v119", "Version 1.19 - March 9, 1993" )
 	ROM_SYSTEM_BIOS( 1, "v116", "Version 1.16 - January 28, 1991" )
 	ROM_SYSTEM_BIOS( 2, "v114", "Version 1.14 - September 20, 1990" )

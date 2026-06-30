@@ -431,6 +431,23 @@ if opt_tool(CPUS, "ES5510") then
 end
 
 --------------------------------------------------
+-- Roland custom DSPs
+--@src/devices/cpu/roland/csp.h,CPUS["CSP"] = true
+--------------------------------------------------
+
+if CPUS["ROLAND"] then
+	files {
+		MAME_DIR .. "src/devices/cpu/roland/csp.cpp",
+		MAME_DIR .. "src/devices/cpu/roland/csp.h",
+	}
+end
+
+if opt_tool(CPUS, "ROLAND") then
+	table.insert(disasm_files , MAME_DIR .. "src/devices/cpu/roland/cspd.cpp")
+	table.insert(disasm_files , MAME_DIR .. "src/devices/cpu/roland/cspd.h")
+end
+
+--------------------------------------------------
 -- Entertainment Sciences AM29116-based RIP
 --@src/devices/cpu/esrip/esrip.h,CPUS["ESRIP"] = true
 --------------------------------------------------
@@ -2276,7 +2293,6 @@ end
 -- NEC V-series Intel-compatible
 --@src/devices/cpu/nec/nec.h,CPUS["NEC"] = true
 --@src/devices/cpu/nec/v25.h,CPUS["NEC"] = true
---@src/devices/cpu/nec/v55.h,CPUS["NEC"] = true
 --@src/devices/cpu/nec/v5x.h,CPUS["NEC"] = true
 --@src/devices/cpu/v30mz/v30mz.h,CPUS["V30MZ"] = true
 --------------------------------------------------
@@ -2299,11 +2315,6 @@ if CPUS["NEC"] then
 		MAME_DIR .. "src/devices/cpu/nec/v25.h",
 		MAME_DIR .. "src/devices/cpu/nec/v25sfr.cpp",
 		MAME_DIR .. "src/devices/cpu/nec/v25instr.h",
-		MAME_DIR .. "src/devices/cpu/nec/v55instr.hxx",
-		MAME_DIR .. "src/devices/cpu/nec/v55priv.ipp",
-		MAME_DIR .. "src/devices/cpu/nec/v55.cpp",
-		MAME_DIR .. "src/devices/cpu/nec/v55.h",
-		MAME_DIR .. "src/devices/cpu/nec/v55sfr.cpp",
 		MAME_DIR .. "src/devices/cpu/nec/v5x.cpp",
 		MAME_DIR .. "src/devices/cpu/nec/v5x.h",
 	}

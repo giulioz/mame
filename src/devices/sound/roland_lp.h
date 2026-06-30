@@ -10,12 +10,14 @@
 class mb87419_mb87420_device : public device_t, public device_sound_interface, public device_rom_interface<22>
 {
 public:
+	static constexpr unsigned NUM_CHANNELS = 32;
+
 	mb87419_mb87420_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock);
 
 	auto int_callback() { return m_int_callback.bind(); }
 
-	u8 read(offs_t offset);
-	void write(offs_t offset, u8 data);
+	uint8_t read(offs_t offset);
+	void write(offs_t offset, uint8_t data, offs_t pc = 0);
 
 protected:
 	// device_t implementation
@@ -29,30 +31,25 @@ protected:
 	virtual void rom_bank_pre_change() override;
 
 	static int16_t decode_sample(int8_t data);
-	static int16_t sample_interpolate(int16_t smp1, int16_t smp2, uint16_t frac);
 
 private:
-	static constexpr unsigned NUM_CHANNELS = 32;
-
 	struct pcm_channel
 	{
 		pcm_channel() { }
 
-		// registers
-		uint16_t mode = 0;
-		uint16_t bank = 0;
+		int32_t volume_cur = 0; // actually 26 bits
+		uint8_t bank_loopmode = 0;
 		uint16_t step = 0;      // 2.14 fixed point (0x4000 equals 32000 Hz)
-		uint16_t volume = 0;
-		uint32_t start = 0;     // start address (18.14 fixed point)
+		uint8_t volume_incr = 0;
+		uint8_t volume_dest = 0;
+		uint32_t addr = 0;      // current address (18.14 fixed point)
 		uint16_t end = 0;       // end offset (high word)
 		uint16_t loop = 0;      // loop offset (high word)
 
-		// work variables
 		bool enable = false;
 		int8_t play_dir = 0;    // playing direction, -1 [backwards] / 0 [stopped] / +1 [forwards]
-		uint32_t addr = 0;      // current address
-		int16_t smpl_cur = 0;   // current sample
-		int16_t smpl_nxt = 0;   // next sample
+		bool irq = false;
+		int tempReference = 0;
 	};
 
 	devcb_write_line m_int_callback;
@@ -62,6 +59,17 @@ private:
 	sound_stream* m_stream;             // stream handle
 	pcm_channel m_chns[NUM_CHANNELS];   // channel memory
 	uint8_t m_sel_chn;                  // selected channel
+
+	uint8_t m_int_channel;
+	uint8_t m_irq_queue[NUM_CHANNELS];
+	uint8_t m_irq_queue_read;
+	uint8_t m_irq_queue_write;
+	uint8_t m_irq_queue_count;
+	bool m_irq_current_valid;
+	uint16_t m_readback;
+	u8 m_sound_io_buffer[0x100];
+
+	void signal_envelope_complete(uint8_t channel);
 };
 
 DECLARE_DEVICE_TYPE(MB87419_MB87420, mb87419_mb87420_device)

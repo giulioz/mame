@@ -616,7 +616,7 @@ void sed1330_device::draw_text_scanline(bitmap_ind16 &bitmap, const rectangle &c
 			uint8_t data = m_cache.read_byte(0xf000 | (m_m2 ? u16(c) << 4 | r : u16(c) << 3 | (r & 7)));
 			for (int x = 0; x < m_fx; x++, data <<= 1)
 				if (BIT(data, 7))
-					p[x] = 1;
+					p[x] |= 1;
 		}
 
 		if (cursor && (va + sx) == m_csr)
@@ -654,7 +654,7 @@ void sed1330_device::draw_graphics_scanline(bitmap_ind16 &bitmap, const rectangl
 
 		for (int x = 0; x < m_fx; x++)
 		{
-			bitmap.pix(y, (sx * m_fx) + x) = BIT(data, 7);
+			bitmap.pix(y, (sx * m_fx) + x) |= BIT(data, 7);
 			data <<= 1;
 		}
 	}
@@ -667,6 +667,16 @@ void sed1330_device::draw_graphics_scanline(bitmap_ind16 &bitmap, const rectangl
 
 void sed1330_device::update_graphics(bitmap_ind16 &bitmap, const rectangle &cliprect)
 {
+	for (int y = 0; y < m_lf; y++)
+	{
+		uint16_t sad2 = m_sad2 + (y * m_ap);
+		// draw graphics display page 2 scanline
+		draw_graphics_scanline(bitmap, cliprect, y, sad2);
+
+		uint16_t sad1 = m_sad1 + ((y / m_fy) * m_ap);
+		// draw text display page 1 scanline
+		draw_text_scanline(bitmap, cliprect, y, y % m_fy, sad1, !m_ov && m_fc != FC_OFF);
+	}
 }
 
 

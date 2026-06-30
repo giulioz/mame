@@ -197,8 +197,8 @@ sh7021_device::sh7021_device(const machine_config &mconfig, const char *tag, dev
 	m_isdrc = false; // FIXME
 }
 
-sh7021_device::sh7021_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock)
-	: sh2_device(mconfig, type, tag, owner, clock, CPU_TYPE_SH2, address_map_constructor(FUNC(sh7021_device::internal_map), this), 28, 0xc7ffffff)
+sh7021_device::sh7021_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, address_map_constructor internal_map)
+	: sh2_device(mconfig, type, tag, owner, clock, CPU_TYPE_SH2, internal_map.isnull() ? address_map_constructor(FUNC(sh7021_device::internal_map), this) : internal_map, 28, 0xc7ffffff)
 	, m_pa_out(*this)
 	, m_pb_out(*this)
 	, m_pa_bit_out(*this)
@@ -396,17 +396,17 @@ void sh7021_device::device_reset()
 	m_dma_cycles = 0;
 
 	// 16-Bit Integrated-Timer Pulse Unit (ITU)
-	m_itu.tstr = 0x60;
-	m_itu.tsnc = 0x60;
+	m_itu.tstr = 0x00;
+	m_itu.tsnc = 0x00;
 	m_itu.tmdr = 0;
-	m_itu.tfcr = 0x40;
-	m_itu.tocr = 0x7f;
+	m_itu.tfcr = 0x00;
+	m_itu.tocr = 0xff;
 	for (uint32_t i = 0; i < 5; i++)
 	{
 		m_itu.timer[i].tcr = 0;
-		m_itu.timer[i].tior = 0x08;
-		m_itu.timer[i].tier = 0xf8;
-		m_itu.timer[i].tsr = 0xf8;
+		m_itu.timer[i].tior = 0x00;
+		m_itu.timer[i].tier = 0x00;
+		m_itu.timer[i].tsr = 0x00;
 		m_itu.timer[i].tcnt = 0;
 		m_itu.timer[i].gra = 0xffff;
 		m_itu.timer[i].grb = 0xffff;
@@ -548,10 +548,65 @@ void sh7021_device::write_long(offs_t offset, uint32_t data)
 	m_program->write_dword(offset & m_am, data);
 }
 
+void sh7021_device::execute_set_input(int inputnum, int state)
+{
+	if (inputnum == INPUT_LINE_NMI)
+	{
+		sh2_device::execute_set_input(inputnum, state);
+		return;
+	}
+
+	if (inputnum >= 0 && inputnum <= 7)
+	{
+		if (state == ASSERT_LINE)
+			m_ext_irq_pending |= (1 << inputnum);
+		else
+			m_ext_irq_pending &= ~(1 << inputnum);
+		recalc_irq();
+	}
+}
+
 void sh7021_device::recalc_irq()
 {
 	int irq = 0;
 	int vector = -1;
+
+	// External IRQs (IRQ0-IRQ7)
+	// IRQ0-3 priorities in IPRA, IRQ4-7 in IPRB
+	// Vectors 64-71
+	for (int i = 0; i < 8; i++)
+	{
+		if (!BIT(m_ext_irq_pending, i))
+			continue;
+
+		int level;
+		if (i < 4)
+			level = (m_ipra >> (12 - i * 4)) & 0xf;
+		else
+			level = (m_iprb >> (12 - (i - 4) * 4)) & 0xf;
+
+		if (level > irq)
+		{
+			irq = level;
+			vector = 64 + i;
+		}
+	}
+
+	// DMA IRQs
+	// DMAC0/1 priority in IPRC bits 15-12, DMAC2/3 in IPRC bits 11-8
+	for (int i = 0; i < 4; i++)
+	{
+		// Check if DMA transfer ended (TE flag) and interrupt enabled (IE flag)
+		if ((m_dma[i].chcr & 2) && (m_dma[i].chcr & 4))
+		{
+			int level = (i < 2) ? ((m_iprc >> 12) & 0xf) : ((m_iprc >> 8) & 0xf);
+			if (level > irq)
+			{
+				irq = level;
+				vector = 72 + i * 4; // DMAC0=72, DMAC1=74, DMAC2=76, DMAC3=78
+			}
+		}
+	}
 
 	// Serial IRQs
 	for (uint32_t i = 0; i < 2; ++i)
@@ -1207,7 +1262,11 @@ void sh7021_device::execute_dma(int ch)
 
 	m_dma[ch].chcr |= 2; // Transfer ended
 
-	// TODO: IRQs
+	// Fire DMA transfer end interrupt if enabled (CHCR bit 2 = IE)
+	if (m_dma[ch].chcr & 4)
+	{
+		recalc_irq();
+	}
 }
 
 void sh7021_device::execute_peripherals(int peripheral_cycles)

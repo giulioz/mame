@@ -279,7 +279,7 @@ offs_t upd78k3_disassembler::dasm_05xx(std::ostream &stream, u8 op2)
 	}
 	else if ((op2 & 0xfe) == 0xc8)
 	{
-		util::stream_format(stream, "%-8sSP", BIT(op2, 4) ? "DECW" : "INCW");
+		util::stream_format(stream, "%-8sSP", BIT(op2, 0) ? "DECW" : "INCW");
 		return 2 | SUPPORTED;
 	}
 	else if ((op2 & 0xf8) == 0xd8)

@@ -124,6 +124,7 @@ private:
 	struct hso_cam_entry {
 		u8 command;
 		u16 time;
+		u64 deadline;
 	};
 
 	devcb_read16::array<8> m_ach_cb;
@@ -141,7 +142,7 @@ private:
 	hso_cam_entry hso_info[8];
 	hso_cam_entry hso_cam_hold;
 
-	u64 base_timer2, ad_done;
+	u64 base_timer2, ad_done, timer1_expire, timer2_expire;
 	u8 hsi_mode, hsi_status, hso_command, ad_command, hso_active;
 	u16 hso_time, ad_result;
 	u8 pwm_control;

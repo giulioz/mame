@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<!--
+license:CC0-1.0
+authors:giulioz
+-->
+<mamelayout version="2">
+	<element name="digit">
+		<led7seg>
+			<color red="1.0" green="1.0" blue="1.0" />
+		</led7seg>
+	</element>
+
+	<element name="red_led" defstate="0">
+		<rect state="1">
+			<color red="1" green="0.0" blue="0.0" />
+		</rect>
+		<rect state="0">
+			<color red="0.2" green="0.0" blue="0.0" />
+		</rect>
+	</element>
+
+	<view name="Default Layout">
+		<element name="digit0" ref="digit">
+			<bounds x="00" y="6" width="10" height="16" />
+		</element>
+		<element name="digit1" ref="digit">
+			<bounds x="12" y="6" width="10" height="16" />
+		</element>
+		<element name="digit2" ref="digit">
+			<bounds x="38" y="6" width="10" height="16" />
+		</element>
+		<element name="digit3" ref="digit">
+			<bounds x="48" y="6" width="10" height="16" />
+		</element>
+		<element name="digit4" ref="digit">
+			<bounds x="60" y="6" width="10" height="16" />
+		</element>
+
+		<element name="led0" ref="red_led"><bounds x="24" y="6" width="1" height="1" /></element>
+		<element name="led1" ref="red_led"><bounds x="24" y="8" width="1" height="1" /></element>
+		<element name="led2" ref="red_led"><bounds x="24" y="10" width="1" height="1" /></element>
+		<element name="led3" ref="red_led"><bounds x="24" y="12" width="1" height="1" /></element>
+		<element name="led4" ref="red_led"><bounds x="24" y="14" width="1" height="1" /></element>
+		<element name="led5" ref="red_led"><bounds x="24" y="16" width="1" height="1" /></element>
+		<element name="led6" ref="red_led"><bounds x="24" y="18" width="1" height="1" /></element>
+		<element name="led7" ref="red_led"><bounds x="24" y="20" width="1" height="1" /></element>
+		
+		<element name="led8" ref="red_led"><bounds x="26" y="6" width="1" height="1" /></element>
+		<element name="led9" ref="red_led"><bounds x="26" y="8" width="1" height="1" /></element>
+		<element name="led10" ref="red_led"><bounds x="26" y="10" width="1" height="1" /></element>
+		<element name="led11" ref="red_led"><bounds x="26" y="12" width="1" height="1" /></element>
+		<element name="led12" ref="red_led"><bounds x="26" y="14" width="1" height="1" /></element>
+		<element name="led13" ref="red_led"><bounds x="26" y="16" width="1" height="1" /></element>
+		<element name="led14" ref="red_led"><bounds x="26" y="18" width="1" height="1" /></element>
+		<element name="led15" ref="red_led"><bounds x="26" y="20" width="1" height="1" /></element>
+	</view>
+</mamelayout>

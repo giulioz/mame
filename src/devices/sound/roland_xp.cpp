@@ -1,0 +1,849 @@
+// license:BSD-3-Clause
+// copyright-holders:giulioz
+
+#include "emu.h"
+#include "roland_xp.h"
+
+#include <cmath>
+#include <algorithm>
+
+
+DEFINE_DEVICE_TYPE(ROLAND_XP, roland_xp_device, "roland_xp", "Roland XP PCM+DSP")
+
+static constexpr int32_t interp_lut[3][128] = {
+    {3385, 3401, 3417, 3432, 3448, 3463, 3478, 3492, 3506, 3521, 3534, 3548, 3562, 3575, 3588, 3601,
+     3614, 3626, 3638, 3650, 3662, 3673, 3685, 3696, 3707, 3718, 3728, 3739, 3749, 3759, 3768, 3778,
+     3787, 3796, 3805, 3814, 3823, 3831, 3839, 3847, 3855, 3863, 3870, 3878, 3885, 3892, 3899, 3905,
+     3912, 3918, 3924, 3930, 3936, 3942, 3948, 3953, 3958, 3963, 3968, 3973, 3978, 3983, 3987, 3991,
+     3995, 4000, 4004, 4007, 4011, 4015, 4018, 4022, 4025, 4028, 4031, 4034, 4037, 4040, 4042, 4045,
+     4047, 4050, 4052, 4054, 4057, 4059, 4061, 4063, 4064, 4066, 4068, 4070, 4071, 4073, 4074, 4076,
+     4077, 4078, 4079, 4081, 4082, 4083, 4084, 4085, 4086, 4086, 4087, 4088, 4089, 4089, 4090, 4091,
+     4091, 4092, 4092, 4093, 4093, 4094, 4094, 4094, 4094, 4095, 4095, 4095, 4095, 4095, 4095, 4095},
+
+    { 710,  726,  742,  758,  775,  792,  809,  826,  844,  861,  879,  897,  915,  933,  952,  971,
+      990, 1009, 1028, 1047, 1067, 1087, 1106, 1126, 1147, 1167, 1188, 1208, 1229, 1250, 1271, 1292,
+     1314, 1335, 1357, 1379, 1400, 1423, 1445, 1467, 1489, 1512, 1534, 1557, 1580, 1602, 1625, 1648,
+     1671, 1695, 1718, 1741, 1764, 1788, 1811, 1835, 1858, 1882, 1906, 1929, 1953, 1977, 2000, 2024,
+     2048, 2069, 2095, 2119, 2143, 2166, 2190, 2214, 2237, 2261, 2284, 2308, 2331, 2355, 2378, 2401,
+     2425, 2448, 2471, 2494, 2517, 2539, 2562, 2585, 2607, 2630, 2652, 2674, 2696, 2718, 2740, 2762,
+     2783, 2805, 2826, 2847, 2868, 2889, 2910, 2931, 2951, 2971, 2991, 3011, 3031, 3051, 3070, 3089,
+     3108, 3127, 3146, 3164, 3182, 3200, 3218, 3236, 3253, 3271, 3288, 3304, 3321, 3338, 3354, 3370},
+
+    {  0,   0,   0,   1,   1,   1,   2,   2,   3,   3,   3,   4,   4,   5,   5,   6,
+       6,   7,   8,   8,   9,  10,  10,  11,  12,  13,  14,  15,  16,  17,  18,  19,
+      20,  22,  23,  24,  26,  27,  29,  30,  32,  34,  36,  38,  40,  42,  44,  46,
+      49,  51,  53,  56,  59,  62,  65,  68,  71,  74,  77,  81,  84,  88,  92,  96,
+     100, 104, 109, 113, 118, 122, 127, 132, 137, 143, 148, 154, 160, 165, 171, 178,
+     184, 191, 197, 204, 211, 219, 226, 234, 241, 249, 257, 266, 274, 283, 292, 301,
+     310, 319, 329, 339, 349, 359, 369, 380, 391, 402, 413, 424, 436, 448, 460, 472,
+     484, 497, 510, 523, 536, 549, 563, 577, 591, 605, 619, 634, 648, 663, 679, 694},
+};
+
+// Pitch/cutoff exponential LUT: 257 entries, implements 2^(index/256)
+// Entry 0 = 131072 (2^17), entry 256 = 262144 (2^18)
+static const int32_t s_log_table[257] = {
+	131072, 131425, 131780, 132136, 132493, 132851, 133210, 133570,
+	133930, 134292, 134655, 135018, 135383, 135749, 136115, 136483,
+	136851, 137221, 137592, 137963, 138336, 138709, 139084, 139460,
+	139836, 140214, 140593, 140972, 141353, 141735, 142118, 142501,
+	142886, 143272, 143659, 144047, 144436, 144826, 145217, 145610,
+	146003, 146397, 146793, 147189, 147587, 147985, 148385, 148786,
+	149187, 149590, 149994, 150399, 150806, 151213, 151621, 152031,
+	152441, 152853, 153266, 153680, 154095, 154511, 154928, 155347,
+	155766, 156187, 156609, 157032, 157456, 157881, 158307, 158735,
+	159164, 159593, 160024, 160457, 160890, 161325, 161760, 162197,
+	162635, 163074, 163515, 163956, 164399, 164843, 165288, 165735,
+	166182, 166631, 167081, 167532, 167985, 168439, 168894, 169350,
+	169807, 170266, 170725, 171187, 171649, 172112, 172577, 173043,
+	173511, 173979, 174449, 174920, 175393, 175866, 176341, 176818,
+	177295, 177774, 178254, 178736, 179218, 179702, 180188, 180674,
+	181162, 181651, 182142, 182634, 183127, 183622, 184118, 184615,
+	185113, 185613, 186115, 186617, 187121, 187627, 188133, 188642,
+	189151, 189662, 190174, 190688, 191203, 191719, 192237, 192756,
+	193277, 193799, 194322, 194847, 195373, 195901, 196430, 196960,
+	197492, 198026, 198560, 199097, 199634, 200173, 200714, 201256,
+	201800, 202345, 202891, 203439, 203989, 204539, 205092, 205646,
+	206201, 206758, 207316, 207876, 208438, 209001, 209565, 210131,
+	210699, 211268, 211838, 212410, 212984, 213559, 214136, 214714,
+	215294, 215876, 216459, 217043, 217629, 218217, 218807, 219397,
+	219990, 220584, 221180, 221777, 222376, 222977, 223579, 224183,
+	224788, 225395, 226004, 226614, 227226, 227840, 228455, 229072,
+	229691, 230311, 230933, 231557, 232182, 232810, 233438, 234069,
+	234701, 235335, 235970, 236608, 237247, 237887, 238530, 239174,
+	239820, 240468, 241117, 241768, 242421, 243076, 243732, 244391,
+	245051, 245713, 246376, 247042, 247709, 248378, 249048, 249721,
+	250396, 251072, 251750, 252430, 253111, 253795, 254481, 255168,
+	255857, 256548, 257241, 257936, 258632, 259331, 260031, 260733,
+	262144,
+};
+
+
+roland_xp_device::roland_xp_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
+	: device_t(mconfig, ROLAND_XP, tag, owner, clock)
+	, device_sound_interface(mconfig, *this)
+	, device_rom_interface(mconfig, *this)
+	, m_int_callback(*this)
+	, m_rate(0)
+	, m_stream(nullptr)
+{
+}
+
+
+//-------------------------------------------------
+//  pitch_to_increment - convert log pitch value
+//  to linear phase increment (32-bit, 16.16 format)
+//
+//  From CInterpP::Run_PitchLiner:
+//    bits 0-5: interpolation fraction (6 bits)
+//    bits 6-13: table index (8 bits)
+//    bits 14+: octave shift (inverted, 4 bits)
+//-------------------------------------------------
+
+int32_t roland_xp_device::pitch_to_increment(int32_t pitch_val)
+{
+	if (pitch_val <= 0)
+		return 0;
+
+	const unsigned tbl_idx = (pitch_val >> 6) & 0xff;
+	const int frac = pitch_val & 0x3f;
+	const int32_t v0 = s_log_table[tbl_idx];
+	const int32_t v1 = s_log_table[tbl_idx + 1];
+
+	// Linear interpolation with 6-bit fraction, then divide by 64
+	int32_t interp = int32_t((int64_t(frac) * v1 + int64_t(64 - frac) * v0));
+	// Rounding: add (1 << 5) before shift, matching reference's signed rounding
+	interp = (interp + ((interp >> 31) >> 26)) >> 6;
+
+	// Octave shift: ~(pitch_val >> 14) & 0xf
+	const int shift = (~(pitch_val >> 14)) & 0xf;
+	return interp >> shift;
+}
+
+uint16_t roland_xp_device::decode_interp_flags(uint32_t ctrl, bool force_log)
+{
+	static constexpr uint16_t flag_type[4] = { 0, 2, 4, 4 };
+	static constexpr uint16_t flag_interval[4] = { 0, 8, 16, 24 };
+
+	const uint16_t mode = force_log ? 2 : flag_type[(ctrl >> 14) & 3];
+	const uint16_t interval = flag_interval[(ctrl >> 12) & 3];
+	return mode | interval;
+}
+
+uint32_t roland_xp_device::interp_mask(uint16_t flags)
+{
+	switch ((flags >> 3) & 3)
+	{
+	case 0: return 0x00;
+	case 1: return 0x07;
+	case 2: return 0x1f;
+	default: return 0x7f;
+	}
+}
+
+int32_t roland_xp_device::clamp_s32(int32_t v, int32_t lo, int32_t hi)
+{
+	return std::min(std::max(v, lo), hi);
+}
+
+int16_t roland_xp_device::interp_q14_output(const interp_state &s)
+{
+	return (int16_t)(s.current >> 3);
+}
+
+void roland_xp_device::interp_start_linear(interp_state &s)
+{
+	const int32_t diff = s.target - s.current;
+	int32_t step = (int32_t)(((int64_t)s.rate * diff) >> 13);
+	if (diff > 0 && step == 0)
+		step = 1;
+	s.aux = step;
+	s.flags &= ~1;
+	if (s.current != s.target)
+		s.flags |= 1;
+}
+
+void roland_xp_device::interp_start_log(interp_state &s)
+{
+	s.aux = s.current << 10;
+	s.flags &= ~1;
+	if (s.current != s.target)
+		s.flags |= 1;
+}
+
+void roland_xp_device::interp_start_trunk(interp_state &s)
+{
+	s.aux = s.current / 2;
+	s.target = 0;
+	s.flags &= ~1;
+	if (s.current != 0)
+		s.flags |= 1;
+}
+
+void roland_xp_device::interp_set_newdist_linear(interp_state &s)
+{
+	const int32_t diff = s.target - s.current;
+	int32_t step = (int32_t)(((int64_t)s.rate * diff) >> 13);
+	if (diff > 0 && step == 0)
+		step = 1;
+	s.aux = step;
+	s.flags &= ~1;
+	if (s.current != s.target)
+		s.flags |= 1;
+}
+
+bool roland_xp_device::interp_tick_due(interp_state &s)
+{
+	s.counter++;
+	return (s.counter & interp_mask(s.flags)) == 0;
+}
+
+void roland_xp_device::interp_update_linear(interp_state &s)
+{
+	int32_t next = s.current + s.aux;
+	const bool overshoot = (s.aux >= 0) ? (next > s.target) : (next < s.target);
+	if (overshoot)
+		next = s.target;
+	s.current = next;
+	if (s.current == s.target)
+	{
+		s.flags &= ~1;
+		s.aux = 0;
+	}
+}
+
+void roland_xp_device::interp_update_log(interp_state &s)
+{
+	int32_t delta = (int32_t)s.rate * ((s.target * 1024 - s.aux) >> 13);
+	delta = clamp_s32(delta, -1024, 1024);
+	s.aux += delta;
+	s.current = s.aux >> 10;
+	if (s.current == s.target)
+		s.flags &= ~1;
+}
+
+void roland_xp_device::interp_update_trunk(interp_state &s)
+{
+	if (s.aux < s.current)
+	{
+		s.target -= s.rate;
+		s.current += s.target;
+	}
+	else
+	{
+		s.target += s.rate;
+		if (s.target < 1)
+			s.current += s.target;
+		else
+			s.current = 0;
+	}
+
+	if (s.current <= 0)
+	{
+		s.current = 0;
+		s.flags &= ~1;
+	}
+}
+
+void roland_xp_device::interp_update_pitch(interp_state &s)
+{
+	if (s.flags & 1 && interp_tick_due(s))
+		interp_update_linear(s);
+	s.output_i = pitch_to_increment(s.current);
+}
+
+void roland_xp_device::interp_update_f(interp_state &s)
+{
+	if (s.flags & 1 && interp_tick_due(s))
+		interp_update_linear(s);
+}
+
+void roland_xp_device::interp_update_q(interp_state &s)
+{
+	if (s.flags & 1 && interp_tick_due(s))
+		interp_update_log(s);
+}
+
+void roland_xp_device::interp_update_a(interp_state &s)
+{
+	if (s.flags & 1 && interp_tick_due(s))
+	{
+		switch (s.flags & 6)
+		{
+		case 0: interp_update_linear(s); break;
+		case 2: interp_update_log(s); break;
+		case 4: interp_update_trunk(s); break;
+		}
+	}
+}
+
+void roland_xp_device::interp_update_am(interp_state &s)
+{
+	if (s.flags & 1 && interp_tick_due(s))
+		interp_update_log(s);
+}
+
+void roland_xp_device::reload_pitch_interp(pcm_voice &v)
+{
+	v.pitch_interp.flags = decode_interp_flags(v.pitch_interp_ctrl);
+	v.pitch_interp.rate = v.pitch_interp_ctrl & 0x0fff;
+	v.pitch_interp.counter = 0;
+	v.pitch_interp.current = v.pitch_current_val;
+	v.pitch_interp.target = v.pitch_target_val;
+	interp_start_linear(v.pitch_interp);
+	v.pitch_interp.output_i = pitch_to_increment(v.pitch_interp.current);
+}
+
+void roland_xp_device::reload_amp_interp(pcm_voice &v)
+{
+	v.amp_interp.flags = decode_interp_flags(v.amp_interp_ctrl);
+	v.amp_interp.rate = v.amp_interp_ctrl & 0x0fff;
+	v.amp_interp.counter = 0;
+	v.amp_interp.current = v.amp_current_val;
+	v.amp_interp.target = v.amp_target_val;
+
+	switch (v.amp_interp.flags & 6)
+	{
+	case 0: interp_start_linear(v.amp_interp); break;
+	case 2: interp_start_log(v.amp_interp); break;
+	case 4: interp_start_trunk(v.amp_interp); break;
+	}
+}
+
+void roland_xp_device::reload_ampmod_interp(pcm_voice &v)
+{
+	v.ampmod_interp.flags = decode_interp_flags(v.ampmod_interp_ctrl, true);
+	v.ampmod_interp.rate = v.ampmod_interp_ctrl & 0x0fff;
+	v.ampmod_interp.counter = 0;
+	v.ampmod_interp.current = v.ampmod_current_val;
+	v.ampmod_interp.target = v.ampmod_target_val;
+	interp_start_log(v.ampmod_interp);
+}
+
+void roland_xp_device::reload_tvf_q_interp(pcm_voice &v)
+{
+	v.tvf_q_interp.flags = decode_interp_flags(v.tvf_q_interp_ctrl, true);
+	v.tvf_q_interp.rate = v.tvf_q_interp_ctrl & 0x0fff;
+	v.tvf_q_interp.counter = 0;
+	v.tvf_q_interp.current = v.tvf_q_current_val;
+	v.tvf_q_interp.target = v.tvf_q_target_val >> 2;
+	interp_start_log(v.tvf_q_interp);
+}
+
+void roland_xp_device::reload_tvf_f_interp(pcm_voice &v)
+{
+	v.tvf_f_interp.flags = decode_interp_flags(v.tvf_f_interp_ctrl);
+	v.tvf_f_interp.rate = v.tvf_f_interp_ctrl & 0x0fff;
+	v.tvf_f_interp.counter = 0;
+	v.tvf_f_interp.current = pitch_to_increment(v.tvf_f_current_val);
+	v.tvf_f_interp.target = pitch_to_increment(v.tvf_f_target_val);
+	interp_start_linear(v.tvf_f_interp);
+}
+
+void roland_xp_device::reload_all_interps(pcm_voice &v)
+{
+	reload_pitch_interp(v);
+	reload_amp_interp(v);
+	reload_ampmod_interp(v);
+	reload_tvf_q_interp(v);
+	reload_tvf_f_interp(v);
+}
+
+void roland_xp_device::retarget_pitch_interp(pcm_voice &v)
+{
+	v.pitch_interp.flags = decode_interp_flags(v.pitch_interp_ctrl);
+	v.pitch_interp.rate = v.pitch_interp_ctrl & 0x0fff;
+	v.pitch_interp.target = v.pitch_target_val;
+	interp_set_newdist_linear(v.pitch_interp);
+	v.pitch_interp.output_i = pitch_to_increment(v.pitch_interp.current);
+}
+
+void roland_xp_device::retarget_amp_interp(pcm_voice &v)
+{
+	v.amp_interp.flags = decode_interp_flags(v.amp_interp_ctrl);
+	v.amp_interp.rate = v.amp_interp_ctrl & 0x0fff;
+	v.amp_interp.target = v.amp_target_val;
+	v.amp_interp.flags &= ~1;
+	if (v.amp_interp.current != v.amp_interp.target)
+		v.amp_interp.flags |= 1;
+	if ((v.amp_interp.flags & 6) == 0)
+		interp_set_newdist_linear(v.amp_interp);
+}
+
+void roland_xp_device::retarget_ampmod_interp(pcm_voice &v)
+{
+	v.ampmod_interp.flags = decode_interp_flags(v.ampmod_interp_ctrl, true);
+	v.ampmod_interp.rate = v.ampmod_interp_ctrl & 0x0fff;
+	v.ampmod_interp.target = v.ampmod_target_val;
+	v.ampmod_interp.flags &= ~1;
+	if (v.ampmod_interp.current != v.ampmod_interp.target)
+		v.ampmod_interp.flags |= 1;
+}
+
+void roland_xp_device::retarget_tvf_q_interp(pcm_voice &v)
+{
+	v.tvf_q_interp.flags = decode_interp_flags(v.tvf_q_interp_ctrl, true);
+	v.tvf_q_interp.rate = v.tvf_q_interp_ctrl & 0x0fff;
+	v.tvf_q_interp.target = v.tvf_q_target_val >> 2;
+	v.tvf_q_interp.flags &= ~1;
+	if (v.tvf_q_interp.current != v.tvf_q_interp.target)
+		v.tvf_q_interp.flags |= 1;
+}
+
+void roland_xp_device::retarget_tvf_f_interp(pcm_voice &v)
+{
+	v.tvf_f_interp.flags = decode_interp_flags(v.tvf_f_interp_ctrl);
+	v.tvf_f_interp.rate = v.tvf_f_interp_ctrl & 0x0fff;
+	v.tvf_f_interp.target = pitch_to_increment(v.tvf_f_target_val);
+	interp_set_newdist_linear(v.tvf_f_interp);
+}
+
+//-------------------------------------------------
+//  device_start
+//-------------------------------------------------
+
+void roland_xp_device::device_start()
+{
+	m_rate = clock() / 768; // 24.576 MHz / 768 = 32 kHz
+
+	m_stream = stream_alloc(0, 2, m_rate);
+
+	m_dram = std::make_unique<uint8_t[]>(DRAM_SIZE);
+
+	save_item(NAME(m_reg));
+	save_item(NAME(m_dsp_program));
+	save_item(NAME(m_global_config));
+	save_pointer(NAME(m_dram), DRAM_SIZE);
+	
+	save_pointer(&m_reg[0x0000/4], "wave_ctrl", 64);
+	save_pointer(&m_reg[0x0100/4], "sample_start", 64);
+	save_pointer(&m_reg[0x0200/4], "sample_loop", 64);
+	save_pointer(&m_reg[0x0300/4], "sample_end", 64);
+	save_pointer(&m_reg[0x1100/4], "tvf_q_current_val", 64);
+	save_pointer(&m_reg[0x1200/4], "pitch_current_val", 64);
+	save_pointer(&m_reg[0x1300/4], "tvf_f_current_val", 64);
+	save_pointer(&m_reg[0x1400/4], "ampmod_current_val", 64);
+	save_pointer(&m_reg[0x1500/4], "amp_current_val", 64);
+	save_pointer(&m_reg[0x1600/4], "tvf_q_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1700/4], "pitch_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1800/4], "tvf_f_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1900/4], "ampmod_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1a00/4], "amp_interp_ctrl", 64);
+	save_pointer(&m_reg[0x1b00/4], "pitch_target_val", 64);
+	save_pointer(&m_reg[0x1c00/4], "tvf_f_target_val", 64);
+	save_pointer(&m_reg[0x1d00/4], "ampmod_target_val", 64);
+	save_pointer(&m_reg[0x1e00/4], "amp_target_val", 64);
+	save_pointer(&m_reg[0x2000/4], "filter_type_select", 64);
+	save_pointer(&m_reg[0x2100/4], "tvf_q_target_val", 64);
+
+	for (int i = 0; i < NUM_VOICES; i++)
+	{
+		save_item(NAME(m_voices[i].current_addr), i);
+		save_item(NAME(m_voices[i].dpcm_val), i);
+		save_item(NAME(m_voices[i].subphase), i);
+		save_item(NAME(m_voices[i].alt_loop_dir), i);
+		save_item(NAME(m_voices[i].tvf_bp), i);
+		save_item(NAME(m_voices[i].tvf_lp), i);
+
+		save_item(NAME(m_voices[i].pitch_interp.flags), i);
+		save_item(NAME(m_voices[i].pitch_interp.rate), i);
+		save_item(NAME(m_voices[i].pitch_interp.counter), i);
+		save_item(NAME(m_voices[i].pitch_interp.current), i);
+		save_item(NAME(m_voices[i].pitch_interp.target), i);
+		save_item(NAME(m_voices[i].pitch_interp.aux), i);
+		save_item(NAME(m_voices[i].pitch_interp.output_i), i);
+
+		save_item(NAME(m_voices[i].amp_interp.flags), i);
+		save_item(NAME(m_voices[i].amp_interp.rate), i);
+		save_item(NAME(m_voices[i].amp_interp.counter), i);
+		save_item(NAME(m_voices[i].amp_interp.current), i);
+		save_item(NAME(m_voices[i].amp_interp.target), i);
+		save_item(NAME(m_voices[i].amp_interp.aux), i);
+		save_item(NAME(m_voices[i].amp_interp.output_i), i);
+
+		save_item(NAME(m_voices[i].ampmod_interp.flags), i);
+		save_item(NAME(m_voices[i].ampmod_interp.rate), i);
+		save_item(NAME(m_voices[i].ampmod_interp.counter), i);
+		save_item(NAME(m_voices[i].ampmod_interp.current), i);
+		save_item(NAME(m_voices[i].ampmod_interp.target), i);
+		save_item(NAME(m_voices[i].ampmod_interp.aux), i);
+		save_item(NAME(m_voices[i].ampmod_interp.output_i), i);
+
+		save_item(NAME(m_voices[i].tvf_q_interp.flags), i);
+		save_item(NAME(m_voices[i].tvf_q_interp.rate), i);
+		save_item(NAME(m_voices[i].tvf_q_interp.counter), i);
+		save_item(NAME(m_voices[i].tvf_q_interp.current), i);
+		save_item(NAME(m_voices[i].tvf_q_interp.target), i);
+		save_item(NAME(m_voices[i].tvf_q_interp.aux), i);
+		save_item(NAME(m_voices[i].tvf_q_interp.output_i), i);
+
+		save_item(NAME(m_voices[i].tvf_f_interp.flags), i);
+		save_item(NAME(m_voices[i].tvf_f_interp.rate), i);
+		save_item(NAME(m_voices[i].tvf_f_interp.counter), i);
+		save_item(NAME(m_voices[i].tvf_f_interp.current), i);
+		save_item(NAME(m_voices[i].tvf_f_interp.target), i);
+		save_item(NAME(m_voices[i].tvf_f_interp.aux), i);
+		save_item(NAME(m_voices[i].tvf_f_interp.output_i), i);
+	}
+
+	logerror("Roland XP: Clock %u, Rate %u\n", clock(), m_rate);
+}
+
+//-------------------------------------------------
+//  device_reset
+//-------------------------------------------------
+
+void roland_xp_device::device_reset()
+{
+	m_int_callback(CLEAR_LINE);
+
+	for (auto &v : m_voices)
+	{
+		v.wave_ctrl = 0;
+		v.sample_start = 0;
+		v.sample_loop = 0;
+		v.sample_end = 0;
+		v.pitch_current_val = 0;
+		v.pitch_target_val = 0;
+		v.pitch_interp_ctrl = 0;
+		v.current_addr = 0;
+		v.dpcm_val = 0;
+		v.subphase = 0;
+		v.alt_loop_dir = false;
+		v.tvf_bp = 0;
+		v.tvf_lp = 0;
+		v.pitch_interp = {};
+		v.amp_interp = {};
+		v.ampmod_interp = {};
+		v.tvf_q_interp = {};
+		v.tvf_f_interp = {};
+		for (auto &s : v.mixer_send)
+			s = 0;
+	}
+
+	std::fill_n(m_reg, REG_ARRAY_SIZE, 0);
+	std::fill_n(m_dsp_program, DSP_PROGRAM_SIZE, 0);
+	std::fill_n(m_global_config, GLOBAL_CONFIG_SIZE, 0);
+	std::fill_n(m_dram.get(), DRAM_SIZE, 0);
+}
+
+//-------------------------------------------------
+//  rom_bank_pre_change
+//-------------------------------------------------
+
+void roland_xp_device::rom_bank_pre_change()
+{
+	m_stream->update();
+}
+
+
+//-------------------------------------------------
+//  read - register read
+//-------------------------------------------------
+
+u8 roland_xp_device::read(offs_t offset)
+{
+	// printf("XP: read %04x\n", offset);
+
+	if (offset < 0x2c00)
+	{
+		const unsigned reg_idx = offset >> 2;
+		const unsigned byte_idx = offset & 0x03;
+		const unsigned shift = (3 - byte_idx) * 8;
+		if (reg_idx < REG_ARRAY_SIZE)
+			return (m_reg[reg_idx] >> shift) & 0xff;
+		return 0;
+	}
+
+	if (offset >= 0x2c00 && offset < 0x3900)
+	{
+		return m_dsp_program[offset - 0x2c00];
+	}
+
+	if (offset >= 0x3900 && offset < 0x3a00)
+	{
+		return m_global_config[offset - 0x3900];
+	}
+
+	if (offset >= 0x3a00 && offset < 0x3c80)
+	{
+		const unsigned rel = offset - 0x3a00;
+		const unsigned send = rel / 0x80;
+		const unsigned voice = (rel % 0x80) >> 1;
+		const unsigned byte_idx = rel & 0x01;
+		if (send < NUM_MIXER_SENDS && voice < NUM_VOICES)
+			return (m_voices[voice].mixer_send[send] >> ((1 - byte_idx) * 8)) & 0xff;
+		return 0;
+	}
+
+	return 0;
+}
+
+//-------------------------------------------------
+//  write - register write
+//-------------------------------------------------
+
+void roland_xp_device::write(offs_t offset, u8 data)
+{
+	if (offset < 0x2c00)
+	{
+		m_stream->update();
+
+		const unsigned bank = offset & 0xff00;
+		const unsigned voice_idx = (offset & 0xff) >> 2;
+		const unsigned byte_idx = offset & 0x03;
+		const unsigned shift = (3 - byte_idx) * 8;
+		const uint32_t mask = ~(uint32_t(0xff) << shift);
+
+		if (voice_idx >= NUM_VOICES)
+			return;
+
+		const unsigned reg_idx = offset >> 2;
+		m_reg[reg_idx] = (m_reg[reg_idx] & mask) | (uint32_t(data) << shift);
+		const uint32_t reg_val = m_reg[reg_idx];
+
+			pcm_voice &v = m_voices[voice_idx];
+			switch (bank)
+			{
+			case 0x0000:
+				v.wave_ctrl = reg_val;
+				v.current_addr = v.sample_start & 0xfffff;
+				v.dpcm_val = 0;
+				v.subphase = 0;
+				v.alt_loop_dir = false;
+				v.tvf_bp = 0;
+				v.tvf_lp = 0;
+				break;
+			case 0x0100:
+				v.sample_start = reg_val;
+				v.current_addr = reg_val & 0xfffff;
+				break;
+			case 0x0200: v.sample_loop = reg_val; break;
+			case 0x0300: v.sample_end = reg_val; break;
+			case 0x0400: break;
+			case 0x0500: break;
+			case 0x0600: break;
+			case 0x0700: break;
+			case 0x0800: break;
+			case 0x0900: break;
+			case 0x0a00: break;
+			case 0x0b00: break;
+			case 0x0c00: break; // Voice state A
+			case 0x0d00: break;
+			case 0x0e00: break; // Voice state B
+			case 0x0f00: break;
+			
+			case 0x1000: break; // Voice init constant (set to 0x08 on start)
+			case 0x1100: v.tvf_q_current_val = reg_val; reload_tvf_q_interp(v); break;
+			case 0x1200: v.pitch_current_val = reg_val; reload_pitch_interp(v); break;
+			case 0x1300: v.tvf_f_current_val = reg_val; reload_tvf_f_interp(v); break;
+			case 0x1400: v.ampmod_current_val = reg_val; reload_ampmod_interp(v); break;
+			case 0x1500: v.amp_current_val = reg_val; reload_amp_interp(v); break;
+			case 0x1600: v.tvf_q_interp_ctrl = reg_val; retarget_tvf_q_interp(v); break;
+			case 0x1700: v.pitch_interp_ctrl = reg_val; retarget_pitch_interp(v); break;
+			case 0x1800: v.tvf_f_interp_ctrl = reg_val; retarget_tvf_f_interp(v); break;
+			case 0x1900: v.ampmod_interp_ctrl = reg_val; retarget_ampmod_interp(v); break;
+			case 0x1a00: v.amp_interp_ctrl = reg_val; retarget_amp_interp(v); break;
+			case 0x1b00: v.pitch_target_val = reg_val; retarget_pitch_interp(v); break;
+			case 0x1c00: v.tvf_f_target_val = reg_val; retarget_tvf_f_interp(v); break;
+			case 0x1d00: v.ampmod_target_val = reg_val; retarget_ampmod_interp(v); break;
+			case 0x1e00: v.amp_target_val = reg_val; retarget_amp_interp(v); break;
+			case 0x1f00: break;
+			
+			case 0x2000: v.filter_type_select = reg_val; break;
+			case 0x2100: v.tvf_q_target_val = reg_val; retarget_tvf_q_interp(v); break;
+			case 0x2200: break;
+			case 0x2300: break; // Amp modulation level
+			case 0x2400: break;
+			case 0x2500: break;
+			case 0x2600: break;
+			case 0x2700: break; // Amp modulation base
+			case 0x2800: break; // Voice state C
+			case 0x2900: break; // Voice state D
+			case 0x2a00: break;
+			case 0x2b00: break;
+		}
+		return;
+	}
+
+	if (offset >= 0x2c00 && offset < 0x3900)
+	{
+		m_dsp_program[offset - 0x2c00] = data;
+		return;
+	}
+
+	if (offset >= 0x3900 && offset < 0x3a00)
+	{
+		m_global_config[offset - 0x3900] = data;
+		// printf("XP: config write %04x = %02x\n", offset, data);
+		return;
+	}
+
+	if (offset >= 0x3a00 && offset < 0x3c80)
+	{
+		const unsigned rel = offset - 0x3a00;
+		const unsigned send = rel / 0x80;
+		const unsigned voice = (rel % 0x80) >> 1;
+		const unsigned byte_idx = rel & 0x01;
+		if (send < NUM_MIXER_SENDS && voice < NUM_VOICES)
+		{
+			uint16_t &val = m_voices[voice].mixer_send[send];
+			if (byte_idx)
+				val = (val & 0xff00) | data;
+			else
+				val = (val & 0x00ff) | (uint16_t(data) << 8);
+		}
+		return;
+	}
+}
+
+static inline int32_t mul_q27_q14(int32_t a_q27, int16_t b_q14)
+{
+    return (int32_t)(((int64_t)a_q27 * b_q14) >> 14);
+}
+
+static inline int32_t sat_q27(int64_t v)
+{
+	if (v > 0x07ffffff)
+		return 0x07ffffff;
+	if (v < -0x08000000)
+		return -0x08000000;
+	return (int32_t)v;
+}
+
+int32_t run_svf_sample(int32_t in_q27, int16_t f_q14, int16_t q_q14,
+                    int32_t &bp_q27, int32_t &lp_q27, int type)
+{
+    lp_q27 = sat_q27((int64_t)lp_q27 + mul_q27_q14(bp_q27, f_q14));
+    int32_t hp_q27 = sat_q27((int64_t)in_q27 - mul_q27_q14(bp_q27, q_q14) - lp_q27);
+    bp_q27 = sat_q27((int64_t)bp_q27 + mul_q27_q14(hp_q27, f_q14));
+
+    switch (type) {
+		case 0: return lp_q27;
+		case 1: return hp_q27;
+		case 2: return bp_q27;
+		case 3: return sat_q27((int64_t)lp_q27 - hp_q27);
+		default: return 0;
+    }
+}
+
+int32_t roland_xp_device::decode_sample(uint32_t sample_addr, uint32_t wave_ctrl)
+{
+	uint32_t rom_high = (wave_ctrl & 0b1111) << 20;
+	uint32_t exp_both = read_byte((sample_addr >> 5) | rom_high);
+	int32_t mantissa = int8_t(read_byte(sample_addr | rom_high));
+	uint32_t exp = ((sample_addr >> 4) & 1) == 1 ? ((exp_both >> 4) & 0x0f) : (exp_both & 0x0f);
+	const uint32_t shift = (10 - exp) & 0x0f;
+	return (mantissa << 11) >> shift;
+}
+
+int32_t roland_xp_device::do_voice(pcm_voice &v)
+{
+	interp_update_pitch(v.pitch_interp);
+	interp_update_a(v.amp_interp);
+	interp_update_am(v.ampmod_interp);
+	interp_update_f(v.tvf_f_interp);
+	interp_update_q(v.tvf_q_interp);
+
+	auto advance_sample_address = [&v](uint32_t &address, bool &alt_loop_dir)
+	{
+		const bool alt_loop = BIT(v.wave_ctrl, 12);
+		const bool reverse = BIT(v.wave_ctrl, 11);
+		const uint32_t loop_start = v.sample_loop & 0xfffff;
+		const uint32_t loop_end = v.sample_end & 0xfffff;
+		const uint32_t compare = alt_loop_dir ? loop_start : loop_end;
+		const bool at_boundary = ((compare ^ address) & 0xfffff) == 0;
+		
+		if (!alt_loop && at_boundary)
+			address = loop_start;
+
+		const int do_add = (!at_boundary && alt_loop && !alt_loop_dir) || (!at_boundary && !alt_loop);
+		const int do_sub = !at_boundary && alt_loop && alt_loop_dir;
+
+		if (reverse)
+			address -= do_add - do_sub;
+		else
+			address += do_add - do_sub;
+
+		address &= 0xfffff;
+		alt_loop_dir = alt_loop && (alt_loop_dir ^ at_boundary);
+	};
+
+	// increment phase
+	uint32_t old_subphase = v.subphase;
+	uint32_t subphase_full = old_subphase + v.pitch_interp.output_i;
+	uint32_t subphase_overflow = subphase_full >> 16;
+	int interp_ratio = (old_subphase >> 9) & 127;
+	v.subphase = subphase_full & 0xffff;
+
+	// dpcm
+	int32_t reference = v.dpcm_val;
+	int32_t temp_samples[4] = { 0 };
+	uint32_t address = v.current_addr & 0xfffff;
+	bool alt_loop_dir = v.alt_loop_dir;
+	for (uint32_t i = 0; i < 4; i++)
+	{
+		temp_samples[i] = decode_sample(address, v.wave_ctrl);
+
+		if (i < subphase_overflow)
+			reference += temp_samples[i];
+
+		advance_sample_address(address, alt_loop_dir);
+
+		if (i + 1 == subphase_overflow)
+		{
+			v.current_addr = address;
+			v.alt_loop_dir = alt_loop_dir;
+		}
+	}
+
+	// only for when the subphase is too big, technically not necessary
+	for (uint32_t i = 4; i < subphase_overflow; i++)
+	{
+		reference += decode_sample(address, v.wave_ctrl);
+		advance_sample_address(address, alt_loop_dir);
+		v.current_addr = address;
+		v.alt_loop_dir = alt_loop_dir;
+	}
+
+	// interpolation
+	int64_t interp_sum = v.dpcm_val; // s[n-1]
+	interp_sum += (temp_samples[0] * interp_lut[0][interp_ratio]) >> 12;
+	interp_sum += (temp_samples[1] * interp_lut[1][interp_ratio]) >> 12;
+	interp_sum += (temp_samples[2] * interp_lut[2][interp_ratio]) >> 12;
+	v.dpcm_val = reference;
+
+	int32_t f_q14 = interp_q14_output(v.tvf_f_interp);
+	int32_t q_q14 = interp_q14_output(v.tvf_q_interp);
+	int filter_type = (v.filter_type_select >> 10) & 3;
+	interp_sum = run_svf_sample(interp_sum, f_q14, q_q14, v.tvf_bp, v.tvf_lp, filter_type);
+
+	interp_sum = (int64_t)interp_sum * interp_q14_output(v.amp_interp) >> 14;
+	interp_sum = (int64_t)interp_sum * interp_q14_output(v.ampmod_interp) >> 14;
+
+	return interp_sum;
+}
+
+void roland_xp_device::sound_stream_update(sound_stream &stream)
+{
+	for (int smpl = 0; smpl < stream.samples(); smpl++)
+	{
+		int64_t mixL = 0;
+		int64_t mixR = 0;
+
+		for (unsigned v_idx = 0; v_idx < NUM_VOICES; v_idx++)
+		{
+			pcm_voice &v = m_voices[v_idx];
+
+			// skip inactive voices for now
+			if (v.sample_start == v.sample_end || v.amp_interp.current == 0)
+				continue;
+			
+			int32_t voice = do_voice(v);
+			mixL += (voice * (v.mixer_send[0] >> 10)) >> 10;
+			mixR += (voice * (v.mixer_send[1] >> 10)) >> 10;
+		}
+
+		stream.add_int(0, smpl, mixL, 1<<16);
+		stream.add_int(1, smpl, mixR, 1<<16);
+	}
+}

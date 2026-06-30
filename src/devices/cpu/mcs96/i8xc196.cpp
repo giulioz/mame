@@ -42,7 +42,7 @@ std::unique_ptr<util::disasm_interface> i8xc196_device::create_disassembler()
 void i8xc196_device::device_start()
 {
 	mcs96_device::device_start();
-	cycles_scaling = 3;
+	cycles_scaling = 2;
 
 	state_add(I8XC196_HSI_MODE,    "HSI_MODE",    hsi_mode);
 	state_add<u8>(I8XC196_HSI_STATUS, "HSI_STATUS",
@@ -89,6 +89,7 @@ void i8xc196_device::device_start()
 	save_item(NAME(pwm_control));
 	save_item(NAME(ios0));
 	save_item(NAME(ios1));
+	save_item(NAME(ios2));
 	save_item(NAME(ioc0));
 	save_item(NAME(ioc1));
 	save_item(NAME(extint));
@@ -100,6 +101,8 @@ void i8xc196_device::device_start()
 	save_item(NAME(serial_send_timer));
 	save_item(NAME(baud_reg));
 	save_item(NAME(brh));
+	save_item(NAME(pending_irq_1));
+	save_item(NAME(mask_irq_1));
 	save_item(NAME(wsr));
 	save_item(NAME(irq_requested_1));
 }
@@ -127,9 +130,14 @@ void i8xc196_device::device_reset()
 	m_out_p1_cb(0xff);
 	m_out_p2_cb(0xc1);
 	m_hso_cb(0);
+	extint = false;
+	extint1 = false;
+	pending_irq_1 = 0;
+	mask_irq_1 = 0;
+	wsr = 0;
 	irq_requested_1 = false;
-	timer1_expire = 0;
-	timer2_expire = 0;
+	timer1_expire = total_cycles() + (u64(cycles_scaling) << 3) * 0x10000;
+	timer2_expire = total_cycles() + (u64(cycles_scaling) << 3) * 0x10000;
 }
 
 void i8xc196_device::commit_hso_cam()
@@ -419,39 +427,35 @@ void i8xc196_device::serial_w(u8 val)
 	// logerror("check_irq %02x %02x\n", irq_requested, irq_requested_1);
 }
 
-#define TIMER_SCALING 7
+#define TIMER_SCALING 3
 u16 i8xc196_device::timer_value(int timer, u64 current_time) const
 {
 	if(timer == 2)
 		current_time -= base_timer2;
-	return current_time >> 3;
-	// return current_time / (cycles_scaling << TIMER_SCALING);
+	return current_time / (cycles_scaling << TIMER_SCALING);
 }
 
 u64 i8xc196_device::timer_time_until(int timer, u64 current_time, u16 timer_value) const
 {
 	u64 timer_base = timer == 2 ? base_timer2 : 0;
-	u64 delta = (current_time - timer_base) >> 3;
+	u64 delta = (current_time - timer_base) / (cycles_scaling << TIMER_SCALING);
 	u32 tdelta = u16(timer_value - delta);
 	if(!tdelta)
 		tdelta = 0x10000;
-	// return timer_base + ((delta + tdelta) * (cycles_scaling << TIMER_SCALING));
-	return timer_base + ((delta + tdelta) << 3);
+	return timer_base + ((delta + tdelta) * (cycles_scaling << TIMER_SCALING));
 }
 
 void i8xc196_device::timer2_reset(u64 current_time)
 {
 	base_timer2 = current_time;
-	timer2_expire = base_timer2 + 0x10000;
+	timer2_expire = base_timer2 + (cycles_scaling << TIMER_SCALING) * 0x10000;
 }
 
 void i8xc196_device::set_hsi_state(int pin, bool state)
 {
 	if(pin == 0 && !BIT(hsi_status, 1) && state) {
-		if(BIT(ioc1, 1)) {
-			pending_irq |= IRQ_HSI0;
-			check_irq();
-		}
+		pending_irq |= IRQ_HSI0;
+		check_irq();
 		if((ioc0 & 0x28) == 0x28)
 			timer2_reset(total_cycles());
 	}
@@ -521,8 +525,9 @@ void i8xc196_device::internal_update(u64 current_time)
 
 	if (current_time >= timer1_expire)
 	{
-		// printf("timer1 %02x %02x\n", ios1, ioc1);
-		timer1_expire += (cycles_scaling << TIMER_SCALING) * 0x10000;
+		do
+			timer1_expire += (cycles_scaling << TIMER_SCALING) * 0x10000;
+		while (current_time >= timer1_expire);
 		// if (!(ios1 & 0x20))
 		{
 			ios1 |= 0x20;
@@ -535,8 +540,9 @@ void i8xc196_device::internal_update(u64 current_time)
 	}
 	if (current_time >= timer2_expire)
 	{
-		// printf("timer2 %02x %02x\n", ios1, ioc1);
-		timer2_expire += (cycles_scaling << TIMER_SCALING) * 0x10000;
+		do
+			timer2_expire += (cycles_scaling << TIMER_SCALING) * 0x10000;
+		while (current_time >= timer2_expire);
 		// if (!(ios1 & 0x10))
 		{
 			ios1 |= 0x10;
@@ -567,7 +573,7 @@ void i8xc196_device::internal_update(u64 current_time)
 		check_irq();
 	}
 
-	if(current_time == serial_send_timer)
+	if(serial_send_timer && current_time >= serial_send_timer)
 		serial_send_done();
 
 	u64 event_time = 0;
@@ -604,33 +610,34 @@ void i8xc196_device::internal_update(u64 current_time)
 void i8xc196_device::check_irq()
 {
 	irq_requested = (PSW & pending_irq) && (PSW & F_I);
-	irq_requested_1 = (mask_irq_1 & pending_irq_1) && (PSW & F_I);
+	irq_requested_1 = (pending_irq_1 & IRQ_NMI) || ((mask_irq_1 & pending_irq_1) && (PSW & F_I));
 }
 
 void i8xc196_device::execute_set_input(int linenum, int state)
 {
 	switch(linenum) {
 	case EXTINT_LINE:
-		// FIXME
-		if(!extint && state) {
+		if(!extint && state && BIT(ioc1, 1)) {
 			pending_irq |= IRQ_EXTINT;
-			check_irq();
-		} else {
-			pending_irq &= ~IRQ_EXTINT;
 			check_irq();
 		}
 		extint = state;
 		break;
 	case EXTINT1_LINE:
-		// FIXME
 		if(!extint1 && state) {
 			pending_irq_1 |= IRQ_EXTINT1;
-			check_irq();
-		} else {
-			pending_irq_1 &= ~IRQ_EXTINT1;
+			if (!BIT(ioc1, 1))
+				pending_irq |= IRQ_EXTINT;
 			check_irq();
 		}
 		extint1 = state;
+		break;
+	case NMI_LINE:
+		if (state)
+		{
+			pending_irq_1 |= IRQ_NMI;
+			check_irq();
+		}
 		break;
 
 	case HSI0_LINE:

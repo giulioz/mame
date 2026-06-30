@@ -515,8 +515,13 @@ void cm32p_state::dsp_io_w(offs_t offset, u8 data)
 	// do read/write to some external memory, makes the RCC-CPU check pass. (routine at 0x4679)
 	switch(offset)
 	{
+	case 0x00:
+	case 0x01:
+	case 0x02:
+		break;
 	case 0x04:
 		// write to partials?? (written in loop at 0x4375)
+		printf("DSP partial w %02x: %02x%02x%02x\n", data, dsp_io_buffer[0x02], dsp_io_buffer[0x01], dsp_io_buffer[0x00]);
 		break;
 	case 0x06:
 		{
@@ -535,6 +540,15 @@ void cm32p_state::dsp_io_w(offs_t offset, u8 data)
 			dsp_io_buffer[0x01] = ram[0x100 | ofs];
 			dsp_io_buffer[0x02] = ram[0x200 | ofs];
 		}
+		break;
+	case 0x0c:
+		printf("DSP config 0c w %02x: %02x%02x%02x\n", data, dsp_io_buffer[0x02], dsp_io_buffer[0x01], dsp_io_buffer[0x00]);
+		break;
+	case 0x0d:
+		printf("DSP config 0d w %02x: %02x%02x%02x\n", data, dsp_io_buffer[0x02], dsp_io_buffer[0x01], dsp_io_buffer[0x00]);
+		break;
+	default:
+		printf("DSP unknown w %02x=%02x\n", offset, data);
 		break;
 	}
 }
@@ -637,7 +651,7 @@ void cm32p_state::cm32p(machine_config &config)
 	pcm->add_route(0, "speaker", 1.0, 0);
 	pcm->add_route(1, "speaker", 1.0, 1);
 
-	RAM(config, some_ram).set_default_size("8K");
+	RAM(config, some_ram).set_default_size("16K");
 
 	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_LCD));
 	screen.set_refresh_hz(50);

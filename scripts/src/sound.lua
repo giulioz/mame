@@ -1784,6 +1784,18 @@ if SOUNDS["ROLANDLP"] then
 end
 
 ---------------------------------------------------
+-- Roland XP PCM+DSP
+--@src/devices/sound/roland_xp.h,SOUNDS["ROLANDXP"] = true
+---------------------------------------------------
+
+if (SOUNDS["ROLANDXP"]~=null) then
+	files {
+		MAME_DIR .. "src/devices/sound/roland_xp.cpp",
+		MAME_DIR .. "src/devices/sound/roland_xp.h",
+	}
+end
+
+---------------------------------------------------
 --
 --@src/devices/sound/vgm_visualizer.h,SOUNDS["VGMVIZ"] = true
 ---------------------------------------------------

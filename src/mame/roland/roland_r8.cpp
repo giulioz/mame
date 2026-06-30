@@ -231,7 +231,7 @@ void roland_r8_base_state::mk1_map(address_map &map)
 {
 	map(0x00000, 0x1ffff).rom().region("maincpu", 0);
 	map(0x20000, 0x27fff).ram().share("nvram");
-	map(0x70000, 0x7001f).rw(m_pcm, FUNC(mb87419_mb87420_device::read), FUNC(mb87419_mb87420_device::write));
+	// map(0x70000, 0x7001f).rw(m_pcm, FUNC(mb87419_mb87420_device::read), FUNC(mb87419_mb87420_device::write));
 }
 
 void roland_r8_base_state::mk2_map(address_map &map)
@@ -239,7 +239,7 @@ void roland_r8_base_state::mk2_map(address_map &map)
 	map(0x00000, 0x1ffff).rom().region("maincpu", 0);
 	map(0x20000, 0x27fff).ram().share("nvram1");
 	map(0x28000, 0x2ffff).ram().share("nvram2");
-	map(0x70000, 0x7001f).rw(m_pcm, FUNC(mb87419_mb87420_device::read), FUNC(mb87419_mb87420_device::write));
+	// map(0x70000, 0x7001f).rw(m_pcm, FUNC(mb87419_mb87420_device::read), FUNC(mb87419_mb87420_device::write));
 }
 
 

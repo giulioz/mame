@@ -40014,6 +40014,9 @@ d550
 @source:roland/roland_d70.cpp
 d70
 
+@source:roland/roland_dep5.cpp
+dep5                            //
+
 @source:roland/roland_jd800.cpp
 jd800
 
@@ -40034,6 +40037,9 @@ jx10
 jx8p
 jx8po
 mks70
+
+@source:roland/roland_s760.cpp
+s760
 
 @source:roland/roland_mc50.cpp
 mc300
@@ -40115,10 +40121,6 @@ u110
 
 @source:roland/roland_rsp550.cpp
 rsp550
-
-@source:roland/roland_sd330.cpp
-sde330
-srv330
 
 @source:roland/roland_u20.cpp
 u20

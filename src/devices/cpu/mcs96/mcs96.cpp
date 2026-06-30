@@ -76,6 +76,7 @@ void mcs96_device::device_reset()
 	PC = 0x2080;
 	PPC = PC;
 	PSW = 0;
+	pending_irq = 0;
 	irq_requested = false;
 	inst_state = STATE_FETCH;
 }
@@ -212,7 +213,7 @@ uint16_t mcs96_device::reg_r16(uint8_t adr)
 
 uint32_t mcs96_device::reg_r32(uint8_t adr)
 {
-	return regs->read_dword(adr & 0xf8);
+	return regs->read_dword(adr & 0xfc);
 }
 
 void mcs96_device::any_w8(u16 adr, u8 data)
@@ -320,62 +321,49 @@ uint16_t mcs96_device::do_sub(uint16_t v1, uint16_t v2)
 
 uint8_t mcs96_device::do_addcb(uint8_t v1, uint8_t v2)
 {
-	uint16_t sum = v1+v2+(PSW & F_C ? 1 : 0);
-	PSW &= ~(F_Z|F_N|F_C|F_V);
-	if(!uint8_t(sum))
-		PSW |= F_Z;
-	else if(int8_t(sum) < 0)
-		PSW |= F_N;
-	if(~(v1^v2) & (v1^sum) & 0x80)
-		PSW |= F_V|F_VT;
-	if(sum & 0xff00)
-		PSW |= F_C;
-	return sum;
+	const uint16_t sum = v1 + v2 + ((PSW & F_C) ? 1 : 0);
+	// Do NOT touch Z yet; we'll only clear it if result != 0
+	PSW &= ~(F_N | F_C | F_V);
+	if (int8_t(uint8_t(sum)) < 0) PSW |= F_N;
+	if (~(v1 ^ v2) & (v1 ^ uint8_t(sum)) & 0x80) PSW |= F_V | F_VT; // VT sticks (see §3.3)
+	if (sum & 0x100) PSW |= F_C;
+	if (uint8_t(sum) != 0) PSW &= ~F_Z;  // never set Z here; only clear it if non-zero
+	return uint8_t(sum);
 }
 
 uint16_t mcs96_device::do_addc(uint16_t v1, uint16_t v2)
 {
-	uint32_t sum = v1+v2+(PSW & F_C ? 1 : 0);
-	PSW &= ~(F_Z|F_N|F_C|F_V);
-	if(!uint16_t(sum))
-		PSW |= F_Z;
-	else if(int16_t(sum) < 0)
-		PSW |= F_N;
-	if(~(v1^v2) & (v1^sum) & 0x8000)
-		PSW |= F_V|F_VT;
-	if(sum & 0xffff0000)
-		PSW |= F_C;
-	return sum;
+	const uint32_t sum = uint32_t(v1) + uint32_t(v2) + ((PSW & F_C) ? 1U : 0U);
+	PSW &= ~(F_N | F_C | F_V);
+	if (int16_t(uint16_t(sum)) < 0) PSW |= F_N;
+	if (~(v1 ^ v2) & (v1 ^ uint16_t(sum)) & 0x8000) PSW |= F_V | F_VT;
+	if (sum & 0x10000) PSW |= F_C;
+	if (uint16_t(sum) != 0) PSW &= ~F_Z;
+	return uint16_t(sum);
 }
+
 
 uint8_t mcs96_device::do_subcb(uint8_t v1, uint8_t v2)
 {
-	uint16_t diff = v1 - v2 - (PSW & F_C ? 0 : 1);
-	PSW &= ~(F_N|F_V|F_Z|F_C);
-	if(!uint8_t(diff))
-		PSW |= F_Z;
-	else if(int8_t(diff) < 0)
-		PSW |= F_N;
-	if((v1^v2) & (v1^diff) & 0x80)
-		PSW |= F_V;
-	if(!(diff & 0xff00))
-		PSW |= F_C;
-	return diff;
+	const uint16_t sum = v1 - v2 - ((PSW & F_C) ? 0 : 1);
+	// Do NOT touch Z yet; we'll only clear it if result != 0
+	PSW &= ~(F_N | F_C | F_V);
+	if (int8_t(uint8_t(sum)) < 0) PSW |= F_N;
+	if ((v1 ^ v2) & (v1 ^ uint8_t(sum)) & 0x80) PSW |= F_V | F_VT; // VT sticks (see §3.3)
+	if (!(sum & 0x100)) PSW |= F_C;
+	if (uint8_t(sum) != 0) PSW &= ~F_Z;  // never set Z here; only clear it if non-zero
+	return uint8_t(sum);
 }
 
 uint16_t mcs96_device::do_subc(uint16_t v1, uint16_t v2)
 {
-	uint32_t diff = v1 - v2 - (PSW & F_C ? 0 : 1);
-	PSW &= ~(F_N|F_V|F_Z|F_C);
-	if(!uint16_t(diff))
-		PSW |= F_Z;
-	else if(int16_t(diff) < 0)
-		PSW |= F_N;
-	if((v1^v2) & (v1^diff) & 0x8000)
-		PSW |= F_V;
-	if(!(diff & 0xffff0000))
-		PSW |= F_C;
-	return diff;
+	const uint32_t sum = uint32_t(v1) - uint32_t(v2) - ((PSW & F_C) ? 0U : 1U);
+	PSW &= ~(F_N | F_C | F_V);
+	if (int16_t(uint16_t(sum)) < 0) PSW |= F_N;
+	if ((v1 ^ v2) & (v1 ^ uint16_t(sum)) & 0x8000) PSW |= F_V | F_VT;
+	if (!(sum & 0x10000)) PSW |= F_C;
+	if (uint16_t(sum) != 0) PSW &= ~F_Z;
+	return uint16_t(sum);
 }
 
 void mcs96_device::set_nz8(uint8_t v)
@@ -394,6 +382,30 @@ void mcs96_device::set_nz16(uint16_t v)
 		PSW |= F_Z;
 	else if(int16_t(v) < 0)
 		PSW |= F_N;
+}
+
+void mcs96_device::set_shift_left_overflow(uint32_t value, unsigned width, unsigned count)
+{
+	if (!count)
+		return;
+
+	bool overflow;
+	if (count >= width)
+	{
+		// Every source bit reaches the sign position and is shifted out.
+		overflow = value != 0;
+	}
+	else
+	{
+		// The original sign bit and every bit shifted through it must agree.
+		const unsigned bits = count + 1;
+		const uint32_t top = value >> (width - bits);
+		const uint32_t all_ones = uint32_t((uint64_t(1) << bits) - 1);
+		overflow = top != 0 && top != all_ones;
+	}
+
+	if (overflow)
+		PSW |= F_V | F_VT;
 }
 
 #include "cpu/mcs96/mcs96.hxx"

@@ -441,6 +441,18 @@ end
 
 --------------------------------------------------
 --
+--@src/devices/video/rf5c16.h,VIDEOS["RF5C16"] = true
+--------------------------------------------------
+
+if (VIDEOS["RF5C16"]~=null) then
+	files {
+		MAME_DIR .. "src/devices/video/rf5c16.cpp",
+		MAME_DIR .. "src/devices/video/rf5c16.h",
+	}
+end
+
+--------------------------------------------------
+--
 --@src/devices/video/gf4500.h,VIDEOS["GF4500"] = true
 --------------------------------------------------
 

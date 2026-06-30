@@ -8,14 +8,20 @@ DEFINE_DEVICE_TYPE(SH7032,  sh7032_device,  "sh7032",  "Hitachi SH-1 (SH7032)")
 
 
 sh7032_device::sh7032_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
-	: sh7021_device(mconfig, SH7032, tag, owner, clock)
+	: sh7021_device(mconfig, SH7032, tag, owner, clock, address_map_constructor(FUNC(sh7032_device::sh7032_map), this))
 {
 }
 
 void sh7032_device::sh7032_map(address_map &map)
 {
 	map(0x00000000, 0x0000ffff).rom().region(DEVICE_SELF, 0).mirror(0x08000000); // 64KB internal ROM
-	
+
+	// A/D Converter and power-down registers (SH7034, stub to avoid log spam)
+	// ADDRA-ADDRD at 0xEE0-0xEE7, ADCSR/ADCR at 0xEE8-0xEEB
+	// SBYCR at 0xEF8-0xEFB
+	map(0x05fffee0, 0x05fffeeb).ram();
+	map(0x05fffef8, 0x05fffefb).ram();
+
 	map(0x05fffec0, 0x05fffec0).rw(FUNC(sh7032_device::sci_smr_r<0>), FUNC(sh7032_device::sci_smr_w<0>));
 	map(0x05fffec1, 0x05fffec1).rw(FUNC(sh7032_device::sci_brr_r<0>), FUNC(sh7032_device::sci_brr_w<0>));
 	map(0x05fffec2, 0x05fffec2).rw(FUNC(sh7032_device::sci_scr_r<0>), FUNC(sh7032_device::sci_scr_w<0>));
@@ -136,6 +142,7 @@ void sh7032_device::sh7032_map(address_map &map)
 	map(0x05ffffca, 0x05ffffcb).rw(FUNC(sh7032_device::pfc_pacr2_r), FUNC(sh7032_device::pfc_pacr2_w));
 	map(0x05ffffcc, 0x05ffffcd).rw(FUNC(sh7032_device::pfc_pbcr1_r), FUNC(sh7032_device::pfc_pbcr1_w));
 	map(0x05ffffce, 0x05ffffcf).rw(FUNC(sh7032_device::pfc_pbcr2_r), FUNC(sh7032_device::pfc_pbcr2_w));
+	map(0x05ffffee, 0x05ffffef).rw(FUNC(sh7032_device::pfc_cascr_r), FUNC(sh7032_device::pfc_cascr_w));
 
 	map(0x05fffff0, 0x05fffff0).rw(FUNC(sh7032_device::tpc_tpmr_r), FUNC(sh7032_device::tpc_tpmr_w));
 	map(0x05fffff1, 0x05fffff1).rw(FUNC(sh7032_device::tpc_tpcr_r), FUNC(sh7032_device::tpc_tpcr_w));

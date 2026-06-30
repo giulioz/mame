@@ -20,7 +20,7 @@ i8x9x_device::i8x9x_device(const machine_config &mconfig, device_type type, cons
 	m_in_p0_cb(*this, 0),
 	m_out_p1_cb(*this), m_in_p1_cb(*this, 0xff),
 	m_out_p2_cb(*this), m_in_p2_cb(*this, 0xc2),
-	base_timer2(0), ad_done(0), hsi_mode(0), hsi_status(0), hso_command(0), ad_command(0), hso_active(0), hso_time(0), ad_result(0), pwm_control(0),
+	base_timer2(0), ad_done(0), timer1_expire(0), timer2_expire(0), hsi_mode(0), hsi_status(0), hso_command(0), ad_command(0), hso_active(0), hso_time(0), ad_result(0), pwm_control(0),
 	port1(0), port2(0),
 	ios0(0), ios1(0), ioc0(0), ioc1(0), extint(false),
 	sbuf(0), sp_con(0), sp_stat(0), serial_send_buf(0), serial_send_timer(0), baud_reg(0), brh(false)
@@ -29,9 +29,11 @@ i8x9x_device::i8x9x_device(const machine_config &mconfig, device_type type, cons
 	{
 		hso.command = 0;
 		hso.time = 0;
+		hso.deadline = 0;
 	}
 	hso_cam_hold.command = 0;
 	hso_cam_hold.time = 0;
+	hso_cam_hold.deadline = 0;
 }
 
 std::unique_ptr<util::disasm_interface> i8x9x_device::create_disassembler()
@@ -68,11 +70,15 @@ void i8x9x_device::device_start()
 
 	save_item(STRUCT_MEMBER(hso_info, command));
 	save_item(STRUCT_MEMBER(hso_info, time));
+	save_item(STRUCT_MEMBER(hso_info, deadline));
 	save_item(NAME(hso_cam_hold.command));
 	save_item(NAME(hso_cam_hold.time));
+	save_item(NAME(hso_cam_hold.deadline));
 
 	save_item(NAME(base_timer2));
 	save_item(NAME(ad_done));
+	save_item(NAME(timer1_expire));
+	save_item(NAME(timer2_expire));
 	save_item(NAME(hsi_mode));
 	save_item(NAME(hsi_status));
 	save_item(NAME(hso_command));
@@ -100,9 +106,13 @@ void i8x9x_device::device_start()
 void i8x9x_device::device_reset()
 {
 	mcs96_device::device_reset();
+	memset(register_file.target(), 0xff, register_file.bytes());
 	hso_active = 0;
 	hso_command = 0;
 	hso_time = 0;
+	for (auto &hso : hso_info)
+		hso.deadline = 0;
+	hso_cam_hold.deadline = 0;
 	timer2_reset(total_cycles());
 	port1 = 0xff;
 	port2 = 0xc1 & i8x9x_p2_mask(); // P2.5 is cleared
@@ -119,6 +129,9 @@ void i8x9x_device::device_reset()
 	m_out_p1_cb(0xff);
 	m_out_p2_cb(0xc1);
 	m_hso_cb(0);
+	const u64 timer_period = (u64(cycles_scaling) << 3) * 0x10000;
+	timer1_expire = total_cycles() + timer_period;
+	timer2_expire = total_cycles() + timer_period;
 }
 
 void i8x9x_device::commit_hso_cam()
@@ -131,12 +144,14 @@ void i8x9x_device::commit_hso_cam()
 				ios0 |= 0x40;
 			hso_info[i].command = hso_command;
 			hso_info[i].time = hso_time;
+			hso_info[i].deadline = timer_time_until(BIT(hso_command, 6) ? 2 : 1, total_cycles(), hso_time);
 			internal_update(total_cycles());
 			return;
 		}
 	ios0 |= 0xc0;
 	hso_cam_hold.command = hso_command;
 	hso_cam_hold.time = hso_time;
+	hso_cam_hold.deadline = 0;
 }
 
 void i8x9x_device::ad_start(u64 current_time)
@@ -148,14 +163,26 @@ void i8x9x_device::ad_start(u64 current_time)
 		logerror("Analog input on ACH%d not configured\n", ad_command & 7);
 	else
 		ad_result |= m_ach_cb[ad_command & 7]() << 6;
-	ad_done = current_time + 88;
+	ad_done = current_time + 88 * cycles_scaling;
 	internal_update(current_time);
 }
 
 void i8x9x_device::serial_send(u8 data)
 {
 	serial_send_buf = data;
-	serial_send_timer = total_cycles() + 9600;
+
+	// With XTAL1 selected, mode 0 divides by 4(B+1), while the
+	// asynchronous modes divide by 64(B+1).  TI is raised at the start
+	// of the stop bit (after the start and data bits have shifted out).
+	u64 transmit_clocks = 9600;
+	if (BIT(baud_reg, 15))
+	{
+		const u32 divisor = (baud_reg & 0x7fff) + 1;
+		const u8 mode = sp_con & 3;
+		const unsigned shifted_bits = mode ? (mode == 1 ? 9 : 10) : 8;
+		transmit_clocks = u64(mode ? 64 : 4) * divisor * shifted_bits;
+	}
+	serial_send_timer = total_cycles() + transmit_clocks;
 }
 
 void i8x9x_device::serial_send_done()
@@ -206,29 +233,33 @@ u8 i8x9x_device::ad_result_r(offs_t offset)
 void i8x9x_device::hsi_mode_w(u8 data)
 {
 	hsi_mode = data;
-	logerror("hsi_mode %02x (%04x)\n", data, PPC);
+	// printf("hsi_mode w %02x (%04x)\n", data, PPC);
 }
 
 void i8x9x_device::hso_time_w(u16 data)
 {
 	hso_time = data;
 	commit_hso_cam();
+	// printf("hso time w %04x (%04x)\n", data, PPC);
 }
 
 u16 i8x9x_device::hsi_time_r()
 {
-	if (!machine().side_effects_disabled())
-		logerror("read hsi time (%04x)\n", PPC);
+	// if (!machine().side_effects_disabled())
+	// 	printf("read hsi time (%04x)\n", PPC);
 	return 0x0000;
 }
 
 void i8x9x_device::hso_command_w(u8 data)
 {
+	// printf("hso command w %02x (%04x)\n", data, PPC);
 	hso_command = data;
 }
 
 u8 i8x9x_device::hsi_status_r()
 {
+	// if (!machine().side_effects_disabled())
+	// 	printf("read hsi status (%04x)\n", PPC);
 	return hsi_status;
 }
 
@@ -247,22 +278,22 @@ u8 i8x9x_device::sbuf_r()
 
 void i8x9x_device::watchdog_w(u8 data)
 {
-	logerror("watchdog %02x (%04x)\n", data, PPC);
+	// printf("watchdog %02x (%04x)\n", data, PPC);
 }
 
 u16 i8x9x_device::timer1_r()
 {
 	u16 data = timer_value(1, total_cycles());
-	if (0 && !machine().side_effects_disabled())
-		logerror("read timer1 %04x (%04x)\n", data, PPC);
+	// if (!machine().side_effects_disabled())
+	// 	printf("read timer1 %04x (%04x)\n", data, PPC);
 	return data;
 }
 
 u16 i8x9x_device::timer2_r()
 {
 	u16 data = timer_value(2, total_cycles());
-	if (!machine().side_effects_disabled())
-		logerror("read timer2 %04x (%04x)\n", data, PPC);
+	// if (!machine().side_effects_disabled())
+	// 	printf("read timer2 %04x (%04x)\n", data, PPC);
 	return data;
 }
 
@@ -338,6 +369,7 @@ u8 i8x9x_device::sp_stat_r()
 
 void i8x9x_device::ioc0_w(u8 data)
 {
+	// printf("ioc0 w %02x (%04x)\n", data, PPC);
 	ioc0 = data & 0xfd;
 	if (BIT(data, 1))
 		timer2_reset(total_cycles());
@@ -345,11 +377,14 @@ void i8x9x_device::ioc0_w(u8 data)
 
 u8 i8x9x_device::ios0_r()
 {
+	// if (!machine().side_effects_disabled())
+	// 	printf("read ios0 (%04x)\n", PPC);
 	return ios0;
 }
 
 void i8x9x_device::ios0_w(u8 data)
 {
+	// printf("ios0 w %02x (%04x)\n", data, PPC);
 	u8 mask = (data ^ ios0) & 0x3f;
 	ios0 = (data & 0x3f) | (ios0 & 0xc0);
 	if (mask != 0)
@@ -358,6 +393,7 @@ void i8x9x_device::ios0_w(u8 data)
 
 void i8x9x_device::ioc1_w(u8 data)
 {
+	// printf("ioc1 w %02x (%04x)\n", data, PPC);
 	ioc1 = data;
 }
 
@@ -365,7 +401,10 @@ u8 i8x9x_device::ios1_r()
 {
 	u8 res = ios1;
 	if (!machine().side_effects_disabled())
+	{
 		ios1 = ios1 & 0xc0;
+		// printf("read ios1 %02x (%04x)\n", res, PPC);
+	}
 	return res;
 }
 
@@ -390,31 +429,33 @@ u16 i8x9x_device::timer_value(int timer, u64 current_time) const
 {
 	if(timer == 2)
 		current_time -= base_timer2;
-	return current_time >> 3;
+	return current_time / (cycles_scaling << 3);
 }
 
 u64 i8x9x_device::timer_time_until(int timer, u64 current_time, u16 timer_value) const
 {
 	u64 timer_base = timer == 2 ? base_timer2 : 0;
-	u64 delta = (current_time - timer_base) >> 3;
+	u64 delta = (current_time - timer_base) / (cycles_scaling << 3);
 	u32 tdelta = u16(timer_value - delta);
 	if(!tdelta)
 		tdelta = 0x10000;
-	return timer_base + ((delta + tdelta) << 3);
+	return timer_base + ((delta + tdelta) * (cycles_scaling << 3));
 }
 
 void i8x9x_device::timer2_reset(u64 current_time)
 {
 	base_timer2 = current_time;
+	timer2_expire = base_timer2 + (cycles_scaling << 3) * 0x10000;
+	for (int i = 0; i < 8; i++)
+		if (BIT(hso_active, i) && BIT(hso_info[i].command, 6))
+			hso_info[i].deadline = timer_time_until(2, current_time, hso_info[i].time);
 }
 
 void i8x9x_device::set_hsi_state(int pin, bool state)
 {
 	if(pin == 0 && !BIT(hsi_status, 1) && state) {
-		if(BIT(ioc1, 1)) {
-			pending_irq |= IRQ_HSI0;
-			check_irq();
-		}
+		pending_irq |= IRQ_HSI0;
+		check_irq();
 		if((ioc0 & 0x28) == 0x28)
 			timer2_reset(total_cycles());
 	}
@@ -479,16 +520,39 @@ void i8x9x_device::set_hso(u8 mask, bool state)
 
 void i8x9x_device::internal_update(u64 current_time)
 {
-	u16 current_timer1 = timer_value(1, current_time);
-	u16 current_timer2 = timer_value(2, current_time);
+	const u64 timer_period = (u64(cycles_scaling) << 3) * 0x10000;
+
+	if (timer1_expire && current_time >= timer1_expire)
+	{
+		do
+			timer1_expire += timer_period;
+		while (current_time >= timer1_expire);
+
+		ios1 |= 0x20;
+		if (BIT(ioc1, 2))
+		{
+			pending_irq |= IRQ_TIMER;
+			check_irq();
+		}
+	}
+
+	if (timer2_expire && current_time >= timer2_expire)
+	{
+		do
+			timer2_expire += timer_period;
+		while (current_time >= timer2_expire);
+
+		ios1 |= 0x10;
+		if (BIT(ioc1, 3))
+		{
+			pending_irq |= IRQ_TIMER;
+			check_irq();
+		}
+	}
 
 	for(int i=0; i<8; i++)
 		if(BIT(hso_active, i)) {
-			u8 cmd = hso_info[i].command;
-			u16 t = hso_info[i].time;
-			if(((cmd & 0x40) && t == current_timer2) ||
-				(!(cmd & 0x40) && t == current_timer1)) {
-				//logerror("hso cam %02x %04x in slot %d triggered\n", cmd, t, i);
+			if(current_time >= hso_info[i].deadline) {
 				trigger_cam(i, current_time);
 			}
 		}
@@ -501,13 +565,14 @@ void i8x9x_device::internal_update(u64 current_time)
 		check_irq();
 	}
 
-	if(current_time == serial_send_timer)
+	if(serial_send_timer && current_time >= serial_send_timer)
 		serial_send_done();
 
 	u64 event_time = 0;
 	for(int i=0; i<8; i++) {
 		if(!BIT(hso_active, i) && BIT(ios0, 7)) {
 			hso_info[i] = hso_cam_hold;
+			hso_info[i].deadline = timer_time_until(BIT(hso_info[i].command, 6) ? 2 : 1, current_time, hso_info[i].time);
 			hso_active |= 1 << i;
 			ios0 &= 0x7f;
 			if(hso_active == 0xff)
@@ -515,7 +580,7 @@ void i8x9x_device::internal_update(u64 current_time)
 			logerror("hso cam %02x %04x in slot %d from hold\n", hso_cam_hold.command, hso_cam_hold.time, i);
 		}
 		if(BIT(hso_active, i)) {
-			u64 new_time = timer_time_until(hso_info[i].command & 0x40 ? 2 : 1, current_time, hso_info[i].time);
+			u64 new_time = hso_info[i].deadline;
 			if(!event_time || new_time < event_time)
 				event_time = new_time;
 		}
@@ -526,6 +591,11 @@ void i8x9x_device::internal_update(u64 current_time)
 
 	if(serial_send_timer && (!event_time || serial_send_timer < event_time))
 		event_time = serial_send_timer;
+
+	if(timer1_expire && (!event_time || timer1_expire < event_time))
+		event_time = timer1_expire;
+	if(timer2_expire && (!event_time || timer2_expire < event_time))
+		event_time = timer2_expire;
 
 	recompute_bcount(event_time);
 }
