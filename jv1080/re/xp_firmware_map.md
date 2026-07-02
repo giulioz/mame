@@ -329,17 +329,17 @@ owner's manual diagrams on pages 43-44:
 | `0x3400-387f` | 288 x 32-bit DSP program RAM (PRAM) | confirmed by exact boot clear range |
 | `0x3880-38ff` | unknown DSP configuration/reserve area | open |
 | `0x3900-3907` | four big-endian 16-bit voice reset/completion bitmaps | confirmed; firmware writes each update three times |
-| `0x3908-390f` | global engine configuration | confirmed existence, bit layout open |
+| `0x3908-390f` | global engine configuration (write-only control; `0x3908=0x1c19` after boot) | confirmed existence, bit layout open |
 | `0x3910` | low DSP readback word / host wave-ROM read-data latch | confirmed |
 | `0x3912` | high DSP/random-trigger readback word, or direct voice-command busy status | confirmed multiplexed usage |
-| `0x3914` | global configuration word (`0x403f` after boot) | static |
-| `0x3916` | DSP access/update control | confirmed around every effects upload |
+| `0x3914` | global configuration word (write-only; `0x403f` after boot) | static |
+| `0x3916` | DSP **run/stop** control: `7` = run, `0` = stop (write-only) | confirmed; run/stop verified on silicon |
 | `0x3918` | IRQ status/reason and source field | confirmed by IRQ7 handler |
 | `0x391a` | IRQ-associated data | confirmed by IRQ7 handler |
 | `0x391c` | EFX-delay comparator/status; factory test reads bit 6 | confirmed role, threshold semantics open |
 | `0x3920` | host wave-ROM address high/middle field | confirmed |
 | `0x3922` | host wave-ROM bank/high field | confirmed; written by metadata reader |
-| `0x3924-3926` | DSP routing/address/control words | static |
+| `0x3924-3926` | DSP routing/address/control words (write-only; `0x3924=0xd200` after boot) | static |
 | `0x3928-392e` | four IRAM3 interpolation rates, one per 16 slots | confirmed by JV trace and SCCore group 3 |
 | `0x3930` | EFX-delay calibration drive (`step << 5` in factory test) | confirmed role, normal DSP meaning open |
 | `0x3a00-3a7f` | mixer send 0 | confirmed |
@@ -376,6 +376,36 @@ and effect sends have separate target/current arrays and firmware slew loops
 (`xp_ramp_dry_sends` and `xp_ramp_effect_sends`); they are not instantaneous
 register changes.  This is a concrete source of intentional output staggering
 that is distinct from the missing IRQ7/completion timing.
+
+### Silicon-confirmed host interface (readback, control regs, run/stop, boot-only writes)
+
+The following are confirmed on real hardware via the MIDI debug ROM; see
+`XP_HARDWARE_DEBUG.md §6` for the measurements.
+
+- **DSP memory is not directly readable.** A CPU read of any DSP-RAM address
+  (CRAM/IRAM/PRAM) returns **0** on the bus; its side effect latches that
+  location's value into the host readback register `0x3910` (low 16) / `0x3912`
+  (high 16), which is then read.  CRAM (`<0x3000`) is 16-bit via `0x3910`;
+  IRAM/PRAM (`≥0x3000`) is 32-bit via `0x3912:0x3910`.  No store-to-host DSP
+  instruction is needed — the hardware exposes every IRAM/PRAM/CRAM location on
+  demand.  (Proven: `peek(0x3400)` = 0 while the latched `read_dsp(0x3400)` =
+  `0x74c0`.)
+- **The DSP control registers are write-only.**  `0x3908`, `0x3914`, `0x3916`,
+  `0x3924`, and the rest of the control block read back **0** on silicon (the
+  emulator shadows them, so they read there — do not be fooled).  Config the
+  firmware leaves set after boot: `0x3908=0x1c19`, `0x3914=0x403f`,
+  `0x3924=0xd200`, `0x3928=0x100`.
+- **`0x3916` is the DSP run/stop control:** value `7` = RUN, `0` = STOP, left at
+  `7` after boot.  The boot sequence (`xp_dsp_initialize 0x0a008f44`) drives
+  `…0, 7 (run image 1), 0 (stop), 7 (run image 2, final)` with ~200 ms between;
+  only the two boot-init functions ever touch it.
+- **The SH firmware writes the DSP area only at boot, then goes idle.**
+  Instrumenting `xp_w` and tracing the firmware shows every write to
+  CRAM/IRAM1/2/3/PRAM/config falling in t ≈ 0.4–1.3 s (boot) and then stopping
+  completely — **zero** DSP-area writes after t≈2 s while idle.  Consequence: the
+  DSP area is stable and host-overwritable at idle, but any experiment must use
+  **no note-on and no Program Change** (both make the effect workers re-upload
+  the DSP program, rewriting PRAM/CRAM slots 0–103).
 
 ## Effects upload paths
 
@@ -420,9 +450,11 @@ The emulator now advances these ramps at the audio cadence and exposes the
 moving current through the normal `0x3912:0x3910` DSP readback latch.
 
 `xp_dsp_initialize` first clears all 288 PRAM/CRAM slots, loads one 256-slot
-image, enables DSP access with `0x3916 = 7`, waits 200 RTOS ticks (about 200 ms),
-disables access, then loads the second 256-slot image.  The second image is the
-normal running base program.  This exact trace disproves the earlier tentative
+image, **runs the DSP with `0x3916 = 7`**, waits 200 RTOS ticks (about 200 ms),
+**stops it with `0x3916 = 0`**, then loads the second 256-slot image and runs it
+(`0x3916 = 7`, left set).  The second image is the normal running base program.
+(`0x3916` = run/stop is silicon-confirmed; see the host-interface note above and
+`XP_HARDWARE_DEBUG.md §6.3`.)  This exact trace disproves the earlier tentative
 `0x3400`/`0x3600` two-bank split: program boundaries are instruction indices,
 not 0x200-byte address banks.
 
@@ -457,9 +489,11 @@ Overdrive, Distortion, ... through Chorus/Flanger combinations.
 The instruction/CRAM/ERAM encoding and retriggered parameter results are kept
 in `xp_dsp_isa.md`.  A particularly important host-interface result is that a
 DSP-memory read latches its data into `0x3912:0x3910`; it is not an ordinary
-direct read.  The emulator now implements that readback path.  This fixed
-runtime ERAM-offset updates that previously combined the new address with stale
-status/wave-read data.
+direct read.  On real silicon the direct read itself returns **0** — only the
+latched `0x3910/0x3912` value is meaningful (confirmed via the debug ROM; see the
+host-interface note above and `XP_HARDWARE_DEBUG.md §6.2`).  The emulator now
+implements that readback path.  This fixed runtime ERAM-offset updates that
+previously combined the new address with stale status/wave-read data.
 
 ## Known emulator divergences exposed by the firmware
 

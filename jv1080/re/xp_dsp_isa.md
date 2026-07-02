@@ -6,6 +6,22 @@ preserved XP interface, and Gearmulator's Roland CSP/ESP interpreters.  Field
 encodings are marked separately from opcode semantics: knowing where an opcode
 lives does not yet prove what that opcode does on XP silicon.
 
+> **Status note.** The XP **host interface** is now confirmed on real silicon via the
+> MIDI debug ROM (`XP_HARDWARE_DEBUG.md §6`): DSP memory is not directly readable — a
+> PEEK returns 0 but latches the value into the readback register `0x3910` (low 16) /
+> `0x3912` (high 16); the DSP control registers are write-only; `0x3916` is the DSP
+> run/stop control (`7` = run, `0` = stop); the SH firmware writes the DSP area only at
+> boot (~0.4–1.3 s) then goes idle; and IRAM3 (`0x3200`) is "ramp-magic" (auto-updated by
+> the breakpoint-ramp engine — use IRAM1/2 as the clean observable).
+>
+> **The instruction ISA is now largely decoded** — see the companion spec
+> [`xp_dsp_isa_decoded.md`](xp_dsp_isa_decoded.md) (rewritten 2026-07-02), built from the SCCore
+> `SystemEffects_process` ↔ `scgsMaster.txt` alignment plus JV hardware probes. The field split
+> below is SUPERSEDED: the real layout is **`[15:14]` store-control / `[13:0]` address
+> (word `[13:6]` | column `[5:0]`)**, with the hi bytes as the parallel ERAM channel; the old
+> "op nibble" was store-control‖addr-top and "[11:9] store mode" turned out to be address bits
+> (XP_FACTS C22–C24). The tables below are kept as the historical JV-side evidence record.
+
 ## Architecture established so far
 
 The XP has 288 paired slots.  Each slot consists of one 32-bit PRAM word and

@@ -99,7 +99,8 @@ private:
 	required_ioport m_midi_loopback;
 	output_finder<64> m_leds;
 
-	uint8_t m_xp_regs[0x4000];  // debug shadow of XP register writes
+	uint8_t m_xp_regs[0x4000];     // debug shadow of XP register writes (last value written)
+	uint8_t m_xp_written[0x4000];  // debug: 1 = firmware has written this offset at least once
 
 	uint8_t m_ga_regs[64];
 	emu_timer *m_ga_tick_timer = nullptr;
@@ -151,6 +152,7 @@ void roland_jv1080_state::jv1080_mem_map(address_map &map)
 void roland_jv1080_state::machine_start()
 {
 	std::fill(std::begin(m_xp_regs), std::end(m_xp_regs), 0);
+	std::fill(std::begin(m_xp_written), std::end(m_xp_written), 0);
 	std::fill(std::begin(m_ga_regs), std::end(m_ga_regs), 0);
 	std::memset(m_ga_irq_queue, 0, sizeof(m_ga_irq_queue));
 	m_ga_irq_queue_head = 0;
@@ -161,6 +163,7 @@ void roland_jv1080_state::machine_start()
 	m_button_prev_state = 0;
 
 	save_item(NAME(m_xp_regs));
+	save_item(NAME(m_xp_written));
 	save_item(NAME(m_ga_regs));
 	save_item(NAME(m_ga_irq_queue_head));
 	save_item(NAME(m_ga_irq_queue_tail));
@@ -185,7 +188,7 @@ void roland_jv1080_state::machine_start()
 	m_ga_control_timer->adjust(attotime::from_seconds(3), 0, attotime::from_hz(100));
 
 	m_xp_dump_timer = timer_alloc(FUNC(roland_jv1080_state::xp_dump_cb), this);
-	m_xp_dump_timer->adjust(attotime::from_msec(10), 0, attotime::from_msec(10));
+	m_xp_dump_timer->adjust(attotime::from_seconds(1), 0, attotime::from_seconds(1));
 }
 
 void roland_jv1080_state::machine_reset()
@@ -227,6 +230,7 @@ uint8_t roland_jv1080_state::xp_r(offs_t offset)
 void roland_jv1080_state::xp_w(offs_t offset, uint8_t data)
 {
 	m_xp_regs[offset] = data;
+	m_xp_written[offset & 0x3fff] = 1;  // debug: record the CPU-write footprint
 	m_xp->write(offset, data);
 }
 
@@ -444,38 +448,97 @@ TIMER_CALLBACK_MEMBER(roland_jv1080_state::ga_button_scan_cb)
 
 TIMER_CALLBACK_MEMBER(roland_jv1080_state::xp_dump_cb)
 {
-	FILE *f = fopen("xp_dsp_dump.hex", "w");
+	FILE *f = fopen("xp_dsp_dump.txt", "w");
 	if (!f)
 		return;
 
-	// The DSP has 288 paired PRAM/CRAM slots.  Firmware replaces slots 0-103
-	// for RFX and retains slots 104-255 as the fixed system-effects program;
-	// 256-287 are reserve.  These boundaries are instruction indices, not
-	// 0x200-byte address banks.
-	fprintf(f, "XP DSP: 288 PRAM/CRAM slots (RFX 0-103, system 104-255, reserve 256-287)\n");
+	// Read the LIVE device state (side-effect-free): dbg_peek returns the byte actually held
+	// in the XP's arrays, incl. ramp-evolved IRAM3 and decoded mixer sends.  (The CPU-write
+	// shadow m_xp_regs is used only for the write-footprint at the bottom.)  Words are
+	// big-endian, matching how the firmware reads them back through the 0x3912:0x3910 latch.
+	auto rd8  = [this](offs_t a) -> u32 { return m_xp->dbg_peek(a); };
+	auto rd16 = [&](offs_t a) -> u32 { return (rd8(a) << 8) | rd8(a + 1); };
+	auto rd32 = [&](offs_t a) -> u32 { return (rd16(a) << 16) | rd16(a + 2); };
+
+	// CRAM coefficient decode (jv1080/re/xp_dsp_isa_decoded.md §4.4):
+	//   coef = sext14(raw[13:0]) << [0,1,2,4][raw[15:14]] / 8192
+	auto cram_coef = [](u32 raw) -> double {
+		int32_t m = int32_t(raw & 0x3fff);
+		m = (m << 18) >> 18;                       // arithmetic sign-extend of 14-bit mantissa
+		static const int sh[4] = { 0, 1, 2, 4 };
+		return double(m << sh[(raw >> 14) & 3]) / 8192.0;
+	};
+
+	fprintf(f, "=== XP DSP dump @ t=%.6f s ===\n\n", machine().time().as_double());
+
+	// --- PRAM/CRAM side by side + line_s field split ---
+	//   op=[15:12]  sm(store-sel)=[11:9]  sel(low-select)=[8:0]  hi-addr=[23:16]  wb=[24]  ext=[31:25]
+	fprintf(f, "-- PRAM(0x3400,32) + CRAM(0x2C00,16), 288 slots (RFX 0-103, system 104-255, reserve 256-287) --\n");
+	fprintf(f, "slot sect      PRAM      CRAM  coef       | op sm sel  hi wb ext\n");
 	for (unsigned slot = 0; slot < 288; slot++)
 	{
-		const offs_t pram_addr = 0x3400 + slot * 4;
-		const offs_t cram_addr = 0x2c00 + slot * 2;
-		const u32 full_op = (m_xp_regs[pram_addr] << 24) | (m_xp_regs[pram_addr + 1] << 16) |
-			(m_xp_regs[pram_addr + 2] << 8) | m_xp_regs[pram_addr + 3];
-		const char *const section = slot < 104 ? "rfx" : (slot < 256 ? "system" : "reserve");
-		fprintf(f, "%03u %-7s P=%04X:%08X C=%04X:%02X%02X\n", slot, section,
-			pram_addr, full_op, cram_addr, m_xp_regs[cram_addr], m_xp_regs[cram_addr + 1]);
-	}
-	fprintf(f, "\n\n");
-	
-	// CRAM area: 0x2C00-0x2FFF (offset 0x000-0x3FF in dsp_program) — 2 hex bytes per line
-	for (offs_t addr = 0x2C00; addr < 0x3000; addr += 2)
-	{
-		fprintf(f, "%04X: %02X%02X\n", addr, m_xp_regs[addr], m_xp_regs[addr + 1]);
+		const u32 pram = rd32(0x3400 + slot * 4);
+		const u32 cram = rd16(0x2c00 + slot * 2);
+		const char *const sect = slot < 104 ? "rfx" : (slot < 256 ? "system" : "reserve");
+		fprintf(f, "%3u  %-7s %08X  %04X  %+9.4f | %2X %2u %03X  %02X  %u  %02X\n",
+			slot, sect, pram, cram, cram_coef(cram),
+			(pram >> 12) & 0xf,     // op   / memory-region
+			(pram >> 9)  & 0x7,     // sm   (store-sel)
+			pram         & 0x1ff,   // sel  (low-select)
+			(pram >> 16) & 0xff,    // hi-addr byte
+			(pram >> 24) & 0x1,     // wb   (writeback)
+			(pram >> 25) & 0x7f);   // ext  (parallel-channel high bits)
 	}
 
-	// Rest: 0x3000-0x38FF (offset 0x400-0xCFF in dsp_program) — 4 hex bytes per line
-	for (offs_t addr = 0x3000; addr < 0x3900; addr += 4)
+	// --- IRAM banks (64 words each), separated 1/2/3 + ramp targets ---
+	auto dump_iram32 = [&](const char *label, offs_t base) {
+		fprintf(f, "\n-- %s (0x%04X, 64x32) --\n", label, unsigned(base));
+		for (unsigned i = 0; i < 64; i++)
+			fprintf(f, "%08X%s", rd32(base + i * 4), (i % 8 == 7) ? "\n" : " ");
+	};
+	dump_iram32("IRAM1", 0x3000);
+	dump_iram32("IRAM2", 0x3100);
+	dump_iram32("IRAM3 current (ramp-evolved)", 0x3200);
+	fprintf(f, "\n-- IRAM3 targets (0x3300, 64x16) --\n");
+	for (unsigned i = 0; i < 64; i++)
+		fprintf(f, "%04X%s", rd16(0x3300 + i * 2), (i % 16 == 15) ? "\n" : " ");
+
+	// --- config / control registers (0x3900-0x395F, 16-bit) ---
+	fprintf(f, "\n-- config/control (0x3900-0x395F, 16-bit) --\n");
+	for (offs_t a = 0x3900; a < 0x3960; a += 2)
+		fprintf(f, "%04X:%04X%s", unsigned(a), rd16(a), ((a & 0xf) == 0xe) ? "\n" : " ");
+
+	// --- mixer coefficients: 4 send banks x 64 voices; raw = level[15:6] | bus[5:0] ---
+	fprintf(f, "\n-- mixer sends (0x3A00-0x3BFF): 4 banks x 64 voices, raw = level[15:6]|bus[5:0] --\n");
+	static const char *const send_name[4] = { "send0 dryL", "send1 dryR", "send2 efxA", "send3 efxB" };
+	for (unsigned s = 0; s < 4; s++)
 	{
-		fprintf(f, "%04X: %02X%02X%02X%02X\n", addr, m_xp_regs[addr], m_xp_regs[addr + 1], m_xp_regs[addr + 2], m_xp_regs[addr + 3]);
+		fprintf(f, "%s (0x%04X):\n", send_name[s], unsigned(0x3a00 + s * 0x80));
+		for (unsigned v = 0; v < 64; v++)
+			fprintf(f, "%04X%s", rd16(0x3a00 + s * 0x80 + v * 2), (v % 16 == 15) ? "\n" : " ");
+		bool nz = false;
+		for (unsigned v = 0; v < 64; v++)
+		{
+			const u32 raw = rd16(0x3a00 + s * 0x80 + v * 2);
+			if (raw) { fprintf(f, "%sv%u=lvl%X:bus%X", nz ? " " : "  nonzero: ", v, raw >> 6, raw & 0x3f); nz = true; }
+		}
+		fprintf(f, nz ? "\n" : "  (all zero)\n");
 	}
+
+	// --- CPU-write footprint: coalesced offset ranges the firmware has written at least
+	//     once, so anything beyond CRAM/IRAM/PRAM/config/mixer shows up immediately ---
+	fprintf(f, "\n-- CPU-write footprint (offsets firmware has written, coalesced) --\n");
+	bool any = false;
+	for (offs_t a = 0; a < 0x4000; )
+	{
+		if (!m_xp_written[a]) { a++; continue; }
+		const offs_t start = a;
+		while (a < 0x4000 && m_xp_written[a]) a++;
+		fprintf(f, "0x%04X-0x%04X (%u bytes)\n", unsigned(start), unsigned(a - 1), unsigned(a - start));
+		any = true;
+	}
+	if (!any)
+		fprintf(f, "(nothing written yet)\n");
 
 	fclose(f);
 }

@@ -10,10 +10,10 @@ PRAM slot k = 0x3400+4k is 32-bit, CRAM slot k = 0x2c00+2k is 16-bit):
     xp.reset()                          # zero the whole DSP area + restore exec config (0x3916=7)
 
     (xp.program()
-        .line(0x00007000, 0x0042)       # slot 0 : PRAM=0x00007000, CRAM=0x0042
-        .line(0x01000000, 0x0000)       # slot 1
+        .line_s(st=1, word=0xc0, col=0x00, cram=0x000042)       # slot 0 : PRAM=0x00007000, CRAM=0x0042
+        .line_s(st=0, word=0x00, col=0x00, wb=1, cram=0x000000)       # slot 1
         .nop()                          # slot 2 : PRAM=0, CRAM=0
-        .line(0x00800000, 0x0000)       # slot 3
+        .line_s(st=0, word=0x00, col=0x00, hi=0x80, cram=0x000000)       # slot 3
         .show()                         # print the table before sending (optional)
         .upload())                      # push to the chip
     # (optional) .verify() reads it back
@@ -54,6 +54,22 @@ EXEC_CONFIG = {
 }
 EXEC_RUN_REG = 0x3916    # 7 = run (free-run normal), 4 = factory single-pass, 0 = stop
 EXEC_RUN_VAL = 0x7
+
+
+# ---------------- CRAM coefficient codec (XP_FACTS C14, byte-for-byte from SCCore setCRAM) ----
+# value = sign_extend(raw[13:0]) << [0,1,2,4][raw[15:14]] / 8192
+# anchors: 0x5000=+1.0  0x2000=-1.0  0x1000=+0.5  0xE000=-16.0  0x1FF0=+0.9980  0x3FE0=-0.0039
+def cram_decode(raw):
+    m = (raw & 0x3fff) - (0x4000 if raw & 0x2000 else 0)      # sext14
+    return (m << (0, 1, 2, 4)[(raw >> 14) & 3]) / 8192.0
+
+def cram_encode(value):
+    """Smallest-exponent (finest-resolution) encoding of a float into the C14 format."""
+    for exp, sh in enumerate((0, 1, 2, 4)):
+        m = round(value * 8192.0 / (1 << sh))
+        if -0x2000 <= m <= 0x1fff:
+            return (exp << 14) | (m & 0x3fff)
+    raise ValueError(f"{value} out of CRAM range (max +/-16)")
 
 
 class XP:
@@ -155,11 +171,82 @@ class Program:
         self._slot = 0
 
     def line(self, pram=0, cram=0):
-        """Append one instruction at the next slot: PRAM 32-bit + aligned CRAM 16-bit."""
+        """Append one instruction at the next 1bit + aligned CRAM 16-bit."""
         self.pram[self._slot] = pram & 0xffffffff
         self.cram[self._slot] = cram & 0xffff
         self._slot += 1
         return self
+
+    def line_s(self, st=0, word=0, col=0, hi=0, wb=0, ext=0, cram=0, op=None, sm=None, sel=None):
+        """Append one instruction from its DECODED fields (jv1080/re/xp_dsp_isa_decoded.md,
+        XP_FACTS C16-C23 -- the st/word/column encoding, hardware-probed 2026-07-02).
+
+        The 32-bit PRAM word:
+            ext  bits[31:25]  ERAM/DRAM control bits [H]: bit26 (ext=2) set on data-carrying
+                              ERAM pairs, bit27 (ext=4) on the EQ's L out send -- likely
+                              start-DRAM-read/write style strobes; 0 in delay-free programs
+            wb   bit [24]     part of the parallel/ERAM channel: addr[8] in an ERAM address
+                              pair second word (use eram_pair()); "writeback" elsewhere [H]
+            hi   bits[23:16]  parallel ERAM address byte: bit23 = pair marker; walks as a +3
+                              counter on the reverb allpass chain; 0 in delay-free programs
+            st   bits[15:14]  STORE CONTROL:  3 = store accumulator to mem[addr14] (hw-proven)
+                              0/1/2 = no-store / ? / ?  (verbs open; the old op-nibble was
+                              st<<2 | addr14[13:12]: op0->st0, op4/5/7->st1, opB->st2,
+                              opC/D/E/F->st3)
+            word bits[13:6]   memory WORD address (addr14[13:6]); IRAM entry = word for
+                              addr-tops 0/1 (opC/D stores: entry 0-255 across IRAM1/2/3/tgt;
+                              at word<64 a store writes BOTH banks k and k+64)
+            col  bits[5:0]    COLUMN = ALU operand/mode select (and plausibly the TDM bus
+                              slot).  Hardware truth table (st=0 datapath):
+                                0x00-0x03 keep acc     0x04/0x05 zero acc   0x07/0x08 negate
+                                0x0F acc+const         0x18 trunc(acc*coef)-acc
+                                0x1F load const        0x2F -const*0x3FF(?) 0x3F const-acc
+        addr14 = word<<6 | col.  CRAM decode is PER-COLUMN: multiply columns use the C14 float
+        format (cram_encode/decode); const columns use sat24(sext15(raw[14:0])<<(raw15?13:0)).
+        The accumulator is 24-bit SATURATING.  Known words: st1 word 0x4A/0x4B = EFX in L/R;
+        st3 word 0x55/0x56 = EFX out L/R (0x54/0x57 chorus sends?).  ERAM store pages (old
+        opE/F) move with CRAM -- open.
+        FREE-RUN CAVEAT: the DSP loops every sample -- a lone '+=' column integrates per pass
+        and saturates (~0.9 s @32 kHz); prefix a load column (0x1F) to reset acc each pass.
+        Legacy op/sm/sel kwargs are still accepted and converted (op[1:0]<<12|sm<<9|sel).
+        `cram` is the paired 16-bit CRAM[slot]. Reconstructs PRAM and delegates to line()."""
+        if op is not None or sm is not None or sel is not None:
+            a14 = (((op or 0) & 3) << 12) | (((sm or 0) & 7) << 9) | ((sel or 0) & 0x1ff)
+            st, word, col = ((op or 0) >> 2) & 3, (a14 >> 6) & 0xff, a14 & 0x3f
+        pram = (((ext & 0x7f) << 25) | ((wb & 1) << 24) | ((hi & 0xff) << 16)
+                | ((st & 3) << 14) | ((word & 0xff) << 6) | (col & 0x3f))
+        return self.line(pram, cram)
+
+    # hardware-confirmed building blocks (XP_FACTS C20)
+    def bus_in(self, ch="L", **kw):
+        """Read the EFX input bus (st1; L = word 0x4A, R = word 0x4B, col 0)."""
+        return self.line_s(st=1, word=0x4a if ch.upper() == "L" else 0x4b, col=0, **kw)
+
+    def efx_out(self, ch="L", **kw):
+        """Write the EFX output (st3 store; L = word 0x55 with ext=4 as in the ROM EQ, R = 0x56)."""
+        if ch.upper() == "L":
+            return self.line_s(st=3, word=0x55, col=0, ext=kw.pop("ext", 4), **kw)
+        return self.line_s(st=3, word=0x56, col=0, **kw)
+
+    def eram_pair(self, addr, l1=None, l2=None):
+        """Append the two-word ERAM tap-address pair (XP_FACTS C19, hardware-confirmed):
+            addr[15:9] -> word1[22:16]  (+ bit23 pair marker)
+            addr[8:0]  -> word2[24:16]  (bit24 of word2 = addr[8] -- an ADDRESS bit, not wb)
+        addr is in SAMPLES at 32 kHz: addr = base + ms*32 (Triple Tap Delay base = 0x6000,
+        so the 200 ms center tap = 0x6000 + 200*32 = 0x7900).
+        l1/l2 = optional dicts of line_s kwargs for the low-half instructions riding under
+        the pair. Defaults produce a pure address carrier (low halves 0, like the JV left tap).
+        Example (the center tap's exact shape, incl. its ctrl bit26 = ext 2 on word2):
+            .eram_pair(0x6000 + 200*32,
+                       l1=dict(st=2, word=0xd3, col=0x00),
+                       l2=dict(st=1, word=0xc0, col=0x21, ext=2))
+        """
+        l1 = dict(l1 or {}); l2 = dict(l2 or {})
+        l1['hi'] = 0x80 | ((addr >> 9) & 0x7f)   # bit23 marker + addr[15:9]
+        l2['wb'] = (addr >> 8) & 1               # addr[8]
+        l2['hi'] = addr & 0xff                   # addr[7:0]
+        self.line_s(**l1)
+        return self.line_s(**l2)
 
     def nop(self, n=1):
         """Advance n slots leaving PRAM=0, CRAM=0 (explicitly, so upload writes them)."""
@@ -173,11 +260,29 @@ class Program:
         if cram is not None: self.cram[slot] = cram & 0xffff
         return self
 
+    # known-word annotations (hardware-confirmed, XP_FACTS C20 + user notes): (st, word) -> label
+    _ANNOT = {
+        (1, 0x4a): "bus-in L", (1, 0x4b): "bus-in R",
+        (3, 0x55): "EFX out L", (3, 0x56): "EFX out R",
+        (3, 0x54): "chorus send?", (3, 0x57): "chorus send?",
+    }
+    _COLNAMES = {0x04: "zero", 0x05: "zero", 0x07: "neg", 0x08: "neg", 0x0f: "acc+c",
+                 0x18: "a*c-a", 0x1f: "ld c", 0x2f: "c*?", 0x3f: "c-acc"}
+
     def show(self):
+        """Print the program with decoded st/word/col fields + CRAM coef (mini-disassembler)."""
         slots = sorted(set(self.pram) | set(self.cram))
-        print("slot  PRAM(0x3400+)   CRAM(0x2c00+)")
+        print("slot   PRAM     st word col  hi wb ext | CRAM  coef      | note")
         for s in slots:
-            print(f"{s:4d}  {self.pram.get(s,0):08x}       {self.cram.get(s,0):04x}")
+            p, c = self.pram.get(s, 0), self.cram.get(s, 0)
+            st, word, col = (p >> 14) & 3, (p >> 6) & 0xff, p & 0x3f
+            hi, wb, ext = (p >> 16) & 0xff, (p >> 24) & 1, (p >> 25) & 0x7f
+            notes = []
+            if (st, word) in self._ANNOT: notes.append(self._ANNOT[(st, word)])
+            if col in self._COLNAMES: notes.append(f"col:{self._COLNAMES[col]}")
+            if hi & 0x80: notes.append("[eram-pair hi?]")
+            print(f"{s:4d}  {p:08x}   {st}  {word:02x}  {col:02x}   {hi:02x}  {wb}  {ext:02x} | "
+                  f"{c:04x} {cram_decode(c):+9.4f} | {' '.join(notes)}")
         return self
 
     def upload(self, verbose=True):
@@ -206,179 +311,459 @@ class Program:
 
 if __name__ == "__main__":
     xp = XP()
-    xp.reset()
+    # xp.reset()
 
     IRAM3 = [
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x01ff01ff, # some vol (silent if 0)
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x01ff01ff, # some vol (silent if 0)
-        0x01ff01ff, # reverb vol
-        0x00000000,
-        0x00000000,
-        0x00000000,
-        0x01ff01ff # chorus vol?
+        0x00000000, # 0
+        0x00000000, # 1
+        0x00000000, # 2
+        0x00000000, # 3
+        0x00000000, # 4
+        0x00000000, # 5
+        0x00000000, # 6
+        0x00000000, # 7
+        0x00000000, # 8
+        0x00000000, # 9
+        0x00000000, # 10
+        0x00000000, # 11
+        0x00000000, # 12
+        0x00000000, # 13
+        0x00000000, # 14
+        0x00000000, # 15
+        0x00000000, # 16
+        0x00000000, # 17
+        0x00000000, # 18
+        0x00000000, # 19
+        0x00000000, # 20
+        0x00000000, # 21
+        0x00000000, # 22
+        0x00000000, # 23
+        0x00000000, # 24
+        0x00000000, # 25
+        0x00000000, # 26
+        0x00000000, # 27
+        0x00000000, # 28
+        0x00000000, # 29
+        0x00000000, # 30
+        0x00000000, # 31
+        0x00000000, # 32
+        0x00000000, # 33
+        0x00000000, # 34
+        0x00000000, # 35
+        0x00000000, # 36
+        0x00000000, # 37
+        0x00000000, # 38
+        0x00000000, # 39
+        0x00000000, # 40
+        0x00000000, # 41
+        0x00000000, # 42
+        0x00000000, # 43
+        0x00000000, # 44
+        0x00000000, # 45
+        0x00000000, # 46
+        0x00000000, # 47
+        0x00000000, # 48
+        0x00000000, # 49
+        0x00000000, # 50
+        0x00000000, # 51
+        0x00000000, # 52
+        0x00000000, # 53
+        0, #0x01ff01ff, # 54  some vol (silent if 0)
+        0x00000000, # 55  also this one works
+        0x00000000, # 56
+        0x00000000, # 57
+        0, #0x01ff01ff, # 58  some vol (silent if 0)
+        0, #0x01ff01ff, # 59  reverb vol
+        0x00000000, # 60
+        0x00000000, # 61
+        0x00000000, # 62
+        0, #0x01ff01ff # 63  chorus vol?
     ]
-    for i, v in enumerate(IRAM3):
-        if v: xp.poke(0x3200 + i*4, 4, v)
+    # for i, v in enumerate(IRAM3):
+    #     if v: xp.poke(0x3200 + i*4, 4, v)
+
+
+
+    # (xp.program()
+    #     # # EQ L
+    #     # .nop() #.line_s(st=1, word=0xd3, col=0x00, cram=0x000000)
+    #     # .nop() #.line_s(st=1, word=0xd4, col=0x21, cram=0x003d24) # mid band 1
+    #     # .nop() #.line_s(st=0, word=0x00, col=0x30, cram=0x000009)
+    #     # .nop() #.line_s(st=3, word=0xd4, col=0x00, cram=0x000000)
+    #     # .nop() #.line_s(st=1, word=0xd6, col=0x00, cram=0x000000)
+    #     # .nop() #.line_s(st=1, word=0xd7, col=0x21, cram=0x000000)
+    #     # .nop() #.line_s(st=0, word=0x00, col=0x30, cram=0x000009)
+    #     # .nop() #.line_s(st=3, word=0xd7, col=0x00, cram=0x000000)
+    #     # .nop() # .line_s(st=1, word=0x4a, col=0x00, cram=0x000000) # read bus input L (sel=0x080-0x0bf)
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x21, cram=0x00e000)
+    #     # .nop() # .line_s(st=1, word=0xf6, col=0x30, cram=0x000005)
+    #     # .nop() # .line_s(st=1, word=0xd0, col=0x30, ext=2, cram=0x0002d1)
     
+    #     # .nop() # .line_s(st=1, word=0xd1, col=0x25, cram=0x002190) # low band
+    #     # .nop() # .line_s(st=3, word=0xd0, col=0x15, cram=0x00508b) # low band
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, ext=2, cram=0x001f87) # low band
+    
+    #     # # .nop() # .line_s(st=1, word=0xd2, col=0x23, ext=2, cram=0x006ff8) # high band
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x00, ext=2, cram=0x000000)
+    #     # .nop() # .line_s(st=3, word=0xd1, col=0x15, cram=0x00932e) # high band
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, cram=0x003359) # high band
+    
+    #     # .nop() # .line_s(st=1, word=0xd3, col=0x23, cram=0x00572c) # mid band 1
+    #     # .nop() # .line_s(st=3, word=0xd2, col=0x15, cram=0x000000) # mid band 1
+    #     # .nop() # .line_s(st=1, word=0xd4, col=0x23, cram=0x0062df) # mid band 1
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, cram=0x005000) # mid band 1
+    #     # .nop() # .line_s(st=1, word=0xd3, col=0x30, cram=0x000003) # mid band 1
+    #     # .nop() # .line_s(st=1, word=0xd2, col=0x14, cram=0x000323) # mid band 1
+    #     # .nop() # .line_s(st=1, word=0xd5, col=0x23, cram=0x005000) # mid band 1
+    #     # .nop() # .line_s(st=3, word=0xd3, col=0x15, cram=0x00973e) # mid band 1
+    
+    #     # .nop() # .line_s(st=1, word=0xd6, col=0x23, cram=0x000000) # mid band 2
+    #     # .nop() # .line_s(st=3, word=0xd5, col=0x15, cram=0x000000) # mid band 2
+    #     # .nop() # .line_s(st=1, word=0xd7, col=0x23, cram=0x000000) # mid band 2
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, cram=0x000000) # mid band 2
+    #     # .nop() # .line_s(st=1, word=0xd6, col=0x30, cram=0x000003) # mid band 2
+    #     # .nop() # .line_s(st=1, word=0xd5, col=0x14, cram=0x000c7c) # mid band 2
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, cram=0x005000) # mid band 2
+    #     # .nop() # .line_s(st=3, word=0xd6, col=0x15, cram=0x000000) # mid band 2
+    
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x30, cram=0x000003)
+    #     # .nop() # .line_s(st=3, word=0x55, col=0x00, ext=4, cram=0x000000) # send efx L
+    #     # # d500 sends to something chorus
+    #     # # d540-d57f sends to efx out L
+    #     # # d580 sends to efx out R
+    #     # # d5c0 sends to something chorus
+
+
+
+    #     # # # EQ R
+    #     # .nop() # .line_s(st=1, word=0xdb, col=0x00, cram=0x000000)
+    #     # .nop() # .line_s(st=1, word=0xdc, col=0x21, cram=0x003d24) # mid band 1
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x30, cram=0x000009)
+    #     # .nop() # .line_s(st=3, word=0xdc, col=0x00, cram=0x000000)
+    #     # .nop() # .line_s(st=1, word=0xde, col=0x00, cram=0x000000)
+    #     # .nop() # .line_s(st=1, word=0xdf, col=0x21, cram=0x000000)
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x30, cram=0x000009)
+    #     # .nop() # .line_s(st=3, word=0xdf, col=0x00, cram=0x000000)
+    #     # .nop() # .line_s(st=1, word=0x4b, col=0x00, cram=0x000000) # read bus input R (sel=0x0c0-0x0ff)
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x21, cram=0x00e000)
+    #     # .nop() # .line_s(st=1, word=0xf6, col=0x30, cram=0x000005)
+    #     # .nop() # .line_s(st=1, word=0xd8, col=0x30, cram=0x0002d1)
+    
+    #     # .nop() # .line_s(st=1, word=0xd9, col=0x25, cram=0x002190) # low band
+    #     # .nop() # .line_s(st=3, word=0xd8, col=0x15, cram=0x00508b) # low band
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, cram=0x001f87) # low band
+    
+    #     # .nop() # .line_s(st=1, word=0xda, col=0x23, cram=0x006ff8) # high band
+    #     # .nop() # .line_s(st=3, word=0xd9, col=0x15, cram=0x00932e) # high band
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, cram=0x003359) # high band
+    
+    #     # .nop() # .line_s(st=1, word=0xdb, col=0x23, cram=0x00572c) # mid band 1
+    #     # .nop() # .line_s(st=3, word=0xda, col=0x15, cram=0x000000) # mid band 1
+    #     # .nop() # .line_s(st=1, word=0xdc, col=0x23, cram=0x0062df) # mid band 1
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, cram=0x005000) # mid band 1
+    #     # .nop() # .line_s(st=1, word=0xdb, col=0x30, cram=0x000003) # mid band 1
+    #     # .nop() # .line_s(st=1, word=0xda, col=0x14, cram=0x000323) # mid band 1
+    #     # .nop() # .line_s(st=1, word=0xdd, col=0x23, cram=0x005000) # mid band 1
+    #     # .nop() # .line_s(st=3, word=0xdb, col=0x15, cram=0x00973e) # mid band 1
+    
+    #     # .nop() # .line_s(st=1, word=0xde, col=0x23, cram=0x000000) # mid band 2
+    #     # .nop() # .line_s(st=3, word=0xdd, col=0x15, cram=0x000000) # mid band 2
+    #     # .nop() # .line_s(st=1, word=0xdf, col=0x23, cram=0x000000) # mid band 2
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, cram=0x000000) # mid band 2
+    #     # .nop() # .line_s(st=1, word=0xde, col=0x30, cram=0x000003) # mid band 2
+    #     # .nop() # .line_s(st=1, word=0xdd, col=0x14, cram=0x000c7c) # mid band 2
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x23, cram=0x005000) # mid band 2
+    #     # .nop() # .line_s(st=3, word=0xde, col=0x15, cram=0x000000) # mid band 2
+    
+    #     # .nop() # .line_s(st=0, word=0x00, col=0x30, cram=0x000003)
+    #     # .nop() # .line_s(st=3, word=0x56, col=0x00, cram=0x000000)  # send efx R
+
+
+
+    #     # PASSTHROUGH
+    #     .line_s(st=1, word=0x4a, col=0x00) # read bus input L (sel=0x080-0x0bf)
+    #     # .line_s(st=1, word=0x4b, col=0x00) # read bus input R (sel=0x0c0-0x0ff)
+    #     .line_s(st=0, word=0x00, col=0x21, cram=0x00e000) # coef: volume? capped?
+    #     .line_s(st=1, word=0xf6, col=0x30)
+    #     .line_s(st=1, word=0xd0, col=0x30, ext=2) # nop -> no left out
+    #     .nop()
+    #     .nop()
+    #     .line_s(ext=2)
+    #     .line_s(ext=2)
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .line_s(st=3, word=0x55, col=0x00, ext=4) # send efx L
+    #     .line_s(st=3, word=0x56, col=0x00)  # send efx R
+
+
+
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+
+
+
+    #     # chorus
+    #     .line_s(st=1, word=0x48, col=0x30, cram=0x000001)
+    #     .line_s(st=1, word=0xc8, col=0x21, cram=0x00e000)
+    #     .line_s(st=1, word=0x46, col=0x30, cram=0x000009)
+    #     .line_s(st=1, word=0xc6, col=0x14, cram=0x001ff0)
+    #     .line_s(st=3, word=0x00, col=0x30, cram=0x000009)
+    #     .line_s(st=3, word=0xc1, col=0x11, cram=0x003fe0)
+    #     .line_s(st=1, word=0xc7, col=0x30, cram=0x000009)
+    #     .line_s(st=3, word=0xc6, col=0x1f, cram=0x000432) # coef: chorus rate
+    #     .line_s(st=1, word=0x47, col=0x30, cram=0x001001)
+        
+    #     .line_s(st=3, word=0xc7, col=0x30, cram=0x002801)
+    #     .line_s(st=0, word=0x00, col=0x14, cram=0x000183) # coef: chorus depth
+    #     .line_s(st=3, word=0x03, col=0x2f, cram=0x008001) # coef: chorus delay
+    #     .line_s(st=0, word=0x00, col=0x20, cram=0x000000)
+    #     .line_s(st=0, word=0x00, col=0x0f, cram=0x001000)
+    #     .line_s(st=2, word=0xc0, col=0x20, cram=0x000000)
+    #     .line_s(st=0, word=0x00, col=0x30, cram=0x001001)
+    #     .line_s(st=1, word=0xc0, col=0x30, cram=0x000231)
+    #     .line_s(st=0, word=0x00, col=0x30, cram=0x000325)
+        
+    #     .line_s(st=1, word=0xc7, col=0x30, cram=0x000003)
+    #     .line_s(st=3, word=0x50, col=0x1f, cram=0x008400)
+        
+    #     .line_s(st=0, word=0x00, col=0x30, cram=0x002801)
+    #     .line_s(st=0, word=0x00, col=0x11, cram=0x000183) # coef: chorus depth
+    #     .line_s(st=0, word=0x00, col=0x2f, cram=0x008001) # coef: chorus delay
+    #     .line_s(st=0, word=0x00, col=0x20, cram=0x000000)
+    #     .line_s(st=0, word=0x00, col=0x0f, cram=0x001000)
+    #     .line_s(st=2, word=0xc0, col=0x20, cram=0x000000)
+    #     .line_s(st=0, word=0x00, col=0x30, cram=0x001001)
+    #     .line_s(st=1, word=0xc0, col=0x30, cram=0x000231)
+    #     .line_s(st=1, word=0x50, col=0x30, cram=0x000325)
+        
+    #     .line_s(st=1, word=0xc1, col=0x23, cram=0x001000)
+    #     .line_s(st=3, word=0x51, col=0x15, cram=0x001000)
+    #     .line_s(st=1, word=0xfe, col=0x23, cram=0x001fff)
+    #     .line_s(st=1, word=0x49, col=0x30, cram=0x0002d5)
+    #     .line_s(st=1, word=0xcf, col=0x25, hi=0x80, wb=1, cram=0x00e000)
+    #     .line_s(st=3, word=0x52, col=0x09, cram=0x000000) # nop -> no reverb
+    #     .line_s(st=1, word=0xca, col=0x15, ext=2, cram=0x001ff0)
+    #     .line_s(st=3, word=0x46, col=0x30, cram=0x000009) # nop -> no reverb
+    #     .line_s(st=0, word=0x00, col=0x11, cram=0x003fe0)
+    #     .line_s(st=1, word=0xcb, col=0x19, ext=2, cram=0x001fff)
+
+
+    #     # reverb
+    #     .line_s(st=3, word=0xca, col=0x25, ext=2, cram=0x000000)
+    #     .line_s(st=0, word=0x00, col=0x03, hi=0x91, cram=0x000000)
+    #     .line_s(st=3, word=0xcb, col=0x15, hi=0x0b, cram=0x000800)
+    #     .line_s(st=3, word=0x47, col=0x35, hi=0x91, cram=0x003000)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0x5f, wb=1, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x15, hi=0x90, wb=1, cram=0x001000)
+    #     .line_s(st=0, word=0x00, col=0x33, cram=0x003000)
+    #     .line_s(st=0, word=0x00, col=0x30, hi=0x92, cram=0x000003)
+    #     .line_s(st=0, word=0x00, col=0x31, hi=0x38, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x15, hi=0x91, wb=1, cram=0x001000)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0x0c, cram=0x003000)
+    #     .line_s(st=0, word=0x00, col=0x30, hi=0x94, cram=0x000003)
+    #     .line_s(st=0, word=0x00, col=0x31, hi=0x80, wb=1, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x15, hi=0x91, wb=1, cram=0x001000)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0x60, wb=1, cram=0x000000)
+    #     .line_s(st=0, word=0x00, col=0x30, hi=0xa1, cram=0x000003)
+    #     .line_s(st=0, word=0x00, col=0x31, hi=0xe9, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x15, hi=0x92, wb=1, cram=0x000000)
+        
+    #     .line_s(st=1, word=0xcc, col=0x33, hi=0x39, cram=0x005000) # rev HF damp L
+    #     .line_s(st=3, word=0xce, col=0x25, hi=0x99, cram=0x000000) # rev HF damp L
+    #     .line_s(st=1, word=0xce, col=0x30, hi=0x63, wb=1, ext=5, cram=0x000003)
+        
+    #     .line_s(st=3, word=0xcc, col=0x30, hi=0x96, cram=0x000001)
+        
+    #     .line_s(st=2, word=0xc0, col=0x14, hi=0x62, wb=1, cram=0x0012c0)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0x9a, cram=0x003000)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0xde, wb=1, cram=0x005000)
+    #     .line_s(st=1, word=0x4a, col=0x15, hi=0x94, wb=1, cram=0x001000)
+    #     .line_s(st=0, word=0x00, col=0x23, hi=0x81, wb=1, cram=0x00e000)
+    #     .line_s(st=1, word=0xc0, col=0x35, hi=0x96, wb=1, cram=0x003000)
+    #     .line_s(st=3, word=0x4a, col=0x39, hi=0x63, wb=1, cram=0x005000)
+    #     .line_s(st=1, word=0x00, col=0x15, hi=0x99, wb=1, cram=0x001000)
+    #     .line_s(st=1, word=0x03, col=0x23, hi=0x63, wb=1, cram=0x00e000)
+    #     .line_s(st=1, word=0x4c, col=0x25, hi=0x9a, wb=1, cram=0x00e000)
+        
+    #     .line_s(st=3, word=0x00, col=0x25, hi=0xdf, wb=1, cram=0x00e000)
+    #     .line_s(st=3, word=0x03, col=0x30, hi=0xaf, cram=0x000005)
+    #     .line_s(st=3, word=0x01, col=0x00, hi=0x8e, cram=0x000000)
+        
+    #     .line_s(st=1, word=0xcd, col=0x31, hi=0xa9, cram=0x005000) # rev HF damp R
+    #     .line_s(st=1, word=0xce, col=0x25, hi=0x3b, wb=1, cram=0x000000) # rev HF damp R
+    #     .line_s(st=2, word=0xc0, col=0x30, hi=0xa3, cram=0x000003)
+        
+    #     .line_s(st=3, word=0xcd, col=0x14, hi=0xb6, wb=1, cram=0x0012c0)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0xac, cram=0x003000)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0x45, wb=1, cram=0x005000)
+    #     .line_s(st=1, word=0x4b, col=0x15, hi=0xa1, wb=1, cram=0x001000)
+    #     .line_s(st=0, word=0x00, col=0x23, hi=0xea, cram=0x00e000)
+    #     .line_s(st=1, word=0xc0, col=0x35, hi=0xa3, wb=1, cram=0x003000)
+    #     .line_s(st=3, word=0x4b, col=0x39, hi=0xb7, wb=1, cram=0x005000)
+    #     .line_s(st=1, word=0x4d, col=0x15, hi=0xa9, wb=1, cram=0x001000)
+    #     .line_s(st=1, word=0x4e, col=0x23, hi=0x3c, wb=1, cram=0x00e000)
+    #     .line_s(st=1, word=0xc3, col=0x25, hi=0xac, wb=1, cram=0x00e000)
+        
+    #     .line_s(st=3, word=0x04, col=0x30, hi=0x46, wb=1, cram=0x000005)
+    #     .line_s(st=3, word=0x02, col=0x30, hi=0x98, cram=0x001804)
+    #     .line_s(st=1, word=0x4f, col=0x30, hi=0xb5, wb=1, cram=0x001001)
+    #     .line_s(st=3, word=0xc3, col=0x31, hi=0x9f, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x25, hi=0xe9, cram=0x00e000)
+    #     .line_s(st=0, word=0x00, col=0x15, hi=0xab, cram=0x005000)
+    #     .line_s(st=3, word=0x05, col=0x35, hi=0x45, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0xaf, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x03, hi=0xff, wb=1, cram=0x000000)
+    #     .line_s(st=0, word=0x00, col=0x15, hi=0x9a, cram=0x005000)
+    #     .line_s(st=3, word=0x4c, col=0x35, hi=0x30, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0xa0, cram=0x005000)
+    #     .line_s(st=3, word=0x53, col=0x05, hi=0x78, wb=1, cram=0x000000) # reverb out L?
+    #     .line_s(st=0, word=0x00, col=0x15, hi=0xaf, cram=0x005000)
+    #     .line_s(st=3, word=0x4d, col=0x35, hi=0xc1, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x33, hi=0xae, cram=0x005000)
+    #     .line_s(st=0, word=0x00, col=0x30, hi=0x1d, wb=1, cram=0x000003)
+        
+
+    #     # mixing?
+    #     .line_s(st=1, word=0xfa, col=0x31, cram=0x005000)
+    #     .line_s(st=1, word=0x55, col=0x30, cram=0x000003)
+    #     .line_s(st=3, word=0x54, col=0x00, cram=0x000000)
+    #     .line_s(st=1, word=0x56, col=0x30, cram=0x0002e1)
+    #     .line_s(st=1, word=0xf6, col=0x30, cram=0x0002e5)
+    #     .line_s(st=1, word=0x4b, col=0x30, cram=0x0002d5)
+    #     .line_s(st=1, word=0xf7, col=0x30, cram=0x0002d5)
+    #     .line_s(st=3, word=0xc0, col=0x30, cram=0x0002e5)
+    #     .line_s(st=1, word=0x4a, col=0x30, cram=0x000003)
+    #     .line_s(st=3, word=0x56, col=0x30, cram=0x0002e1)
+    #     .line_s(st=1, word=0xc0, col=0x15, cram=0x001000)
+    #     .line_s(st=1, word=0x56, col=0x30, cram=0x000002)
+    #     .line_s(st=3, word=0x55, col=0x15, cram=0x001000)
+    #     .line_s(st=1, word=0x52, col=0x30, cram=0x000003)
+    #     .line_s(st=3, word=0xc0, col=0x11, cram=0x001fff) # coef: EFX OUT to mix/reverb
+    #     .line_s(st=1, word=0xc0, col=0x25, cram=0x005000)
+    #     .line_s(st=1, word=0x50, col=0x23, cram=0x000000) # coef: EFX OUT to chorus
+    #     .line_s(st=3, word=0xcf, col=0x25, cram=0x000000)
+    #     .line_s(st=1, word=0xff, col=0x30, cram=0x000003)
+    #     .line_s(st=3, word=0xc8, col=0x00, cram=0x000000)
+    #     .line_s(st=1, word=0x50, col=0x00, cram=0x000000)
+    #     .line_s(st=1, word=0x51, col=0x30, cram=0x0002e1)
+    #     .line_s(st=1, word=0xfb, col=0x30, cram=0x0002e5)
+    #     .line_s(st=3, word=0x50, col=0x30, cram=0x000005)
+    #     .line_s(st=3, word=0x51, col=0x00, cram=0x000000)
+    #     .line_s(st=1, word=0x53, col=0x00, cram=0x000000)
+    #     .line_s(st=1, word=0x54, col=0x30, cram=0x0002e1)
+    #     .line_s(st=1, word=0x00, col=0x30, cram=0x0002e5)
+    #     .line_s(st=3, word=0x53, col=0x30, cram=0x000005)
+    #     .line_s(st=3, word=0x54, col=0x00, cram=0x000000)
+    #     .line_s(st=1, word=0x50, col=0x30, cram=0x000004)
+    #     .line_s(st=1, word=0x53, col=0x30, cram=0x000002)
+    #     .line_s(st=1, word=0x03, col=0x30, cram=0x000002)
+    #     .line_s(st=3, word=0x00, col=0x00, cram=0x000000)
+    #     .line_s(st=1, word=0x51, col=0x30, cram=0x000004)
+    #     .line_s(st=1, word=0x54, col=0x30, cram=0x000002)
+    #     .line_s(st=1, word=0x55, col=0x30, cram=0x000002)
+    #     .line_s(st=3, word=0x03, col=0x00, cram=0x000000)
+        
+    #     .line_s(st=1, word=0x00, col=0x21, cram=0x001fff) # coef: EFX OUT assign L, nop -> rev becomes mono
+    #     # EFX OUT: 0x021->mix, 0x061->out1, 0x0a1->out2
+    #     .line_s(st=1, word=0x56, col=0x30, cram=0x000009) # nop -> dry goes away
+    #     .line_s(st=3, word=0x00, col=0x01, cram=0x000000) # rev input L?
+    #     # EFX OUT: 0x001->mix, 0x041->out1, 0x081->out2
+        
+    #     .line_s(st=1, word=0x03, col=0x25, cram=0x001fff) # coef: EFX OUT assign R
+    #     # EFX OUT: 0x0e5->mix, 0x125->out1, 0x165->out2
+    #     .line_s(st=3, word=0x4a, col=0x09, cram=0x000000) # main out R?
+    #     .line_s(st=3, word=0x03, col=0x30, cram=0x000005) # rev input R?
+    #     # EFX OUT: 0x0f0->mix, 0x130->out1, 0x170->out2
+        
+    #     .line_s(st=3, word=0x4b, col=0x00, hi=0xaf, wb=1, cram=0x000000)
+    #     .line_s(st=3, word=0x4e, col=0x00, hi=0xff, wb=1, cram=0x000000)
+    #     .line_s(st=3, word=0x4f, col=0x00, cram=0x000000)
+
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .nop()
+    #     .upload())
+
+    # xp.reset()
+
     (xp.program()
-        # EQ L
-        .line(0x000074c0, 0x000000)
-        .line(0x00007521, 0x003d24)
-        .line(0x00000030, 0x000009)
-        .line(0x0000f500, 0x000000)
-        .line(0x00007580, 0x000000)
-        .line(0x000075e1, 0x000000)
-        .line(0x00000030, 0x000009)
-        .line(0x0000f5c0, 0x000000)
-        .line(0x00005280, 0x000000)
-        .line(0x00000021, 0x00e000)
-        .line(0x00007db0, 0x000005)
-        .line(0x04007430, 0x0002d1)
-        .line(0x00007465, 0x002190)
-        .line(0x0000f415, 0x00508b)
-        .line(0x04000023, 0x001f87)
-        .line(0x040074a3, 0x006ff8)
-        .line(0x0000f455, 0x00932e)
-        .line(0x00000023, 0x003359)
-        .line(0x000074e3, 0x00572c)
-        .line(0x0000f495, 0x000000)
-        .line(0x00007523, 0x0062df)
-        .line(0x00000023, 0x005000)
-        .line(0x000074f0, 0x000003)
-        .line(0x00007494, 0x000323)
-        .line(0x00007563, 0x005000)
-        .line(0x0000f4d5, 0x00973e)
-        .line(0x000075a3, 0x000000)
-        .line(0x0000f555, 0x000000)
-        .line(0x000075e3, 0x000000)
-        .line(0x00000023, 0x000000)
-        .line(0x000075b0, 0x000003)
-        .line(0x00007554, 0x000c7c)
-        .line(0x00000023, 0x005000)
-        .line(0x0000f595, 0x000000)
-        .line(0x00000030, 0x000003)
-        .line(0x0800d400, 0x000000) # send efx L
-        # d500 sends to something chorus
-        # d540-d57f sends to efx out L
-        # d580 sends to efx out R
-        # d5c0 sends to something chorus
-        
-        # EQ R
-        .line(0x000076c0, 0x000000)
-        .line(0x00007721, 0x003d24)
-        .line(0x00000030, 0x000009)
-        .line(0x0000f700, 0x000000)
-        .line(0x00007780, 0x000000)
-        .line(0x000077e1, 0x000000)
-        .line(0x00000030, 0x000009)
-        .line(0x0000f7c0, 0x000000)
-        .line(0x000052c0, 0x000000)
-        .line(0x00000021, 0x00e000)
-        .line(0x00007db0, 0x000005)
-        .line(0x00007630, 0x0002d1)
-        .line(0x00007665, 0x002190)
-        .line(0x0000f615, 0x00508b)
-        .line(0x00000023, 0x001f87)
-        .line(0x000076a3, 0x006ff8)
-        .line(0x0000f655, 0x00932e)
-        .line(0x00000023, 0x003359)
-        .line(0x000076e3, 0x00572c)
-        .line(0x0000f695, 0x000000)
-        .line(0x00007723, 0x0062df)
-        .line(0x00000023, 0x005000)
-        .line(0x000076f0, 0x000003)
-        .line(0x00007694, 0x000323)
-        .line(0x00007763, 0x005000)
-        .line(0x0000f6d5, 0x00973e)
-        .line(0x000077a3, 0x000000)
-        .line(0x0000f755, 0x000000)
-        .line(0x000077e3, 0x000000)
-        .line(0x00000023, 0x000000)
-        .line(0x000077b0, 0x000003)
-        .line(0x00007754, 0x000c7c)
-        .line(0x00000023, 0x005000)
-        .line(0x0000f795, 0x000000)
-        .line(0x00000030, 0x000003)
-        .line(0x0000d580, 0x000000)  # send efx R
-        
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
         .nop()
         .nop()
         .nop()
@@ -390,192 +775,77 @@ if __name__ == "__main__":
         .nop()
         .nop()
         .nop()
-        .line(0x00005230, 0x000001)
-        .line(0x00007221, 0x00e000)
-        .line(0x000051b0, 0x000009)
-        .line(0x00007194, 0x001ff0)
-        .line(0x0000c030, 0x000009)
-        .line(0x0000f051, 0x003fe0)
-        .line(0x000071f0, 0x000009)
-        .line(0x0000f19f, 0x000432)
-        .line(0x000051f0, 0x001001)
-        .line(0x0000f1f0, 0x002801)
-        .line(0x00000014, 0x000183)
-        .line(0x0000c0ef, 0x008001)
-        .line(0x00000020, 0x000000)
-        .line(0x0000000f, 0x001000)
-        .line(0x0000b020, 0x000000)
-        .line(0x00000030, 0x001001)
-        .line(0x00007030, 0x000231)
-        .line(0x00000030, 0x000325)
-        .line(0x000071f0, 0x000003)
-        .line(0x0000d41f, 0x008400)
-        .line(0x00000030, 0x002801)
-        .line(0x00000011, 0x000183)
-        .line(0x0000002f, 0x008001)
-        .line(0x00000020, 0x000000)
-        .line(0x0000000f, 0x001000)
-        .line(0x0000b020, 0x000000)
-        .line(0x00000030, 0x001001)
-        .line(0x00007030, 0x000231)
-        .line(0x00005430, 0x000325)
-        .line(0x00007063, 0x001000)
-        .line(0x0000d455, 0x001000)
-        .line(0x00007fa3, 0x001fff)
-        .line(0x00005270, 0x0002d5)
-        .line(0x018073e5, 0x00e000)
-        .line(0x0000d489, 0x000000)
-        .line(0x04007295, 0x001ff0)
-        .line(0x0000d1b0, 0x000009)
-        .line(0x00000011, 0x003fe0)
-        .line(0x040072d9, 0x001fff)
-        .line(0x0400f2a5, 0x000000)
-        .line(0x00910003, 0x000000)
-        .line(0x000bf2d5, 0x000800)
-        .line(0x0091d1f5, 0x003000)
-        .line(0x015f0033, 0x005000)
-        .line(0x01900015, 0x001000)
-        .line(0x00000033, 0x003000)
-        .line(0x00920030, 0x000003)
-        .line(0x00380031, 0x005000)
-        .line(0x01910015, 0x001000)
-        .line(0x000c0033, 0x003000)
-        .line(0x00940030, 0x000003)
-        .line(0x01800031, 0x005000)
-        .line(0x01910015, 0x001000)
-        .line(0x01600033, 0x000000)
-        .line(0x00a10030, 0x000003)
-        .line(0x00e90031, 0x005000)
-        .line(0x01920015, 0x000000)
-        .line(0x00397333, 0x005000)
-        .line(0x0099f3a5, 0x000000)
-        .line(0x0b6373b0, 0x000003)
-        .line(0x0096f330, 0x000001)
-        .line(0x0162b014, 0x0012c0)
-        .line(0x009a0033, 0x003000)
-        .line(0x01de0033, 0x005000)
-        .line(0x01945295, 0x001000)
-        .line(0x01810023, 0x00e000)
-        .line(0x01967035, 0x003000)
-        .line(0x0163d2b9, 0x005000)
-        .line(0x01994015, 0x001000)
-        .line(0x016340e3, 0x00e000)
-        .line(0x019a5325, 0x00e000)
-        .line(0x01dfc025, 0x00e000)
-        .line(0x00afc0f0, 0x000005)
-        .line(0x008ec040, 0x000000)
-        .line(0x00a97371, 0x005000)
-        .line(0x013b73a5, 0x000000)
-        .line(0x00a3b030, 0x000003)
-        .line(0x01b6f354, 0x0012c0)
-        .line(0x00ac0033, 0x003000)
-        .line(0x01450033, 0x005000)
-        .line(0x01a152d5, 0x001000)
-        .line(0x00ea0023, 0x00e000)
-        .line(0x01a37035, 0x003000)
-        .line(0x01b7d2f9, 0x005000)
-        .line(0x01a95355, 0x001000)
-        .line(0x013c53a3, 0x00e000)
-        .line(0x01ac70e5, 0x00e000)
-        .line(0x0146c130, 0x000005)
-        .line(0x0098c0b0, 0x001804)
-        .line(0x01b553f0, 0x001001)
-        .line(0x009ff0f1, 0x005000)
-        .line(0x00e90025, 0x00e000)
-        .line(0x00ab0015, 0x005000)
-        .line(0x0045c175, 0x005000)
-        .line(0x00af0033, 0x005000)
-        .line(0x01ff0003, 0x000000)
-        .line(0x009a0015, 0x005000)
-        .line(0x0030d335, 0x005000)
-        .line(0x00a00033, 0x005000)
-        .line(0x0178d4c5, 0x000000)
-        .line(0x00af0015, 0x005000)
-        .line(0x00c1d375, 0x005000)
-        .line(0x00ae0033, 0x005000)
-        .line(0x011d0030, 0x000003)
-        .line(0x00007eb1, 0x005000)
-        .line(0x00005570, 0x000003)
-        .line(0x0000d500, 0x000000)
-        .line(0x000055b0, 0x0002e1)
-        .line(0x00007db0, 0x0002e5)
-        .line(0x000052f0, 0x0002d5)
-        .line(0x00007df0, 0x0002d5)
-        .line(0x0000f030, 0x0002e5)
-        .line(0x000052b0, 0x000003)
-        .line(0x0000d5b0, 0x0002e1)
-        .line(0x00007015, 0x001000)
-        .line(0x000055b0, 0x000002)
-        .line(0x0000d555, 0x001000)
-        .line(0x000054b0, 0x000003)
-        .line(0x0000f011, 0x001fff)
-        .line(0x00007025, 0x005000)
-        .line(0x00005423, 0x000000)
-        .line(0x0000f3e5, 0x000000)
-        .line(0x00007ff0, 0x000003)
-        .line(0x0000f200, 0x000000)
-        .line(0x00005400, 0x000000)
-        .line(0x00005470, 0x0002e1)
-        .line(0x00007ef0, 0x0002e5)
-        .line(0x0000d430, 0x000005)
-        .line(0x0000d440, 0x000000)
-        .line(0x000054c0, 0x000000)
-        .line(0x00005530, 0x0002e1)
-        .line(0x00004030, 0x0002e5)
-        .line(0x0000d4f0, 0x000005)
-        .line(0x0000d500, 0x000000)
-        .line(0x00005430, 0x000004)
-        .line(0x000054f0, 0x000002)
-        .line(0x000040f0, 0x000002)
-        .line(0x0000c000, 0x000000)
-        .line(0x00005470, 0x000004)
-        .line(0x00005530, 0x000002)
-        .line(0x00005570, 0x000002)
-        .line(0x0000c0c0, 0x000000)
-        .line(0x00004021, 0x001fff)
-        .line(0x000055b0, 0x000009)
-        .line(0x0000c001, 0x000000)
-        .line(0x000040e5, 0x001fff)
-        .line(0x0000d289, 0x000000)
-        .line(0x0000c0f0, 0x000005)
-        .line(0x01afd2c0, 0x000000)
-        .line(0x01ffd380, 0x000000)
-        .line(0x0000d3c0, 0x000000)
-
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-        .nop()
-
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
         .upload())
 
+    for i in range(64): xp.poke(IRAM1_BASE + i * 4, 4, 0x0000)
+    for i in range(64): xp.poke(IRAM2_BASE + i * 4, 4, 0x0000)
+    for i in range(64): xp.poke(IRAM3_TGT + i * 2, 2, 0x0000)
+    for i in range(64): xp.poke(IRAM3_BASE + i * 4, 4, 0x0000)
+
+    # xp.poke(IRAM1_BASE + 0 * 4, 4, 0x0100)
+
+
+    (xp.program()
+        # .line_s(st=1, word=0xcf, col=0x30, cram=0x000000)
+        # .line_s(st=3, word=0xce, col=0x1f, cram=0x000080) # coef: increment
+        # .line_s(st=1, word=0x4f, col=0x30, cram=0x000000) # coef: 0x001001 => unsat?
+        # .line_s(st=3, word=0xcf, col=0x30, cram=0x000000)
+        
+        # .line_s(st=1, word=0xc0, col=0x0f, cram=0x004234)
+        # .line_s(st=0, word=0x00, col=0x1f, cram=0x000001) # acc += 0x123
+        
+        # .line_s(st=0, word=0x00, col=0x1f, cram=0x004242)
+        # .nop()
+        # .nop()
+        # .line_s(st=2, word=0x80, col=0x1f, cram=0x000001)
+        # .nop()
+        # .nop()
+        
+        .line_s(st=0, word=0x00, col=0x1f, cram=0x000321)
+        .nop()
+        .nop()
+        .line_s(st=0, word=0x00, col=0x1f, cram=0x000123)
+        .nop()
+        .nop()
+        .line_s(st=3, word=0xff, col=0x00, cram=0x000000) # store acc?
+
+        # op=0x8 -> store
+
+        # op=0xf, sm=0, sel=0x000 -> store at IRAM[128-128]
+        # op=0xf, sm=0, sel=0x1f0 -> store at IRAM[134-128]
+        # op=0xf, sm=1, sel=0x1f0 -> store at IRAM[136-128]
+
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .nop()
+        .upload())
+
+
     xp.monitor(bank=1, start=0, count=256)
+    # xp.monitor(addrs=[("",135*4+IRAM1_BASE,4), ("",199*4+IRAM1_BASE,4)], count=2)

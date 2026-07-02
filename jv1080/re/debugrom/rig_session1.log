@@ -1,0 +1,10 @@
+=== E0: reset + sanity + store pipeline ===
+post-reset entries 0/5/64/69/128: ['000000', '000000', '000000', '000000', '000000']
+  store@k=5: iram[5]=000123 iram[69]=000123  (want 000123/000123)
+  store@k=6: iram[6]=000000 iram[70]=000000  (want 000123/000123)
+  store@k=7: iram[7]=000123 iram[71]=000123  (want 000123/000123)
+  store@k=8: iram[8]=000123 iram[72]=000123  (want 000123/000123)
+=== E1: bit12 A/B (b13=1, cram=0, k=15: old-opE vs old-opF) ===
+  E (b12=0): [47]=000321
+  E (b12=0): nonzero at [47]  (bit12-dead prediction: only [47])
+!! 2 consecutive read failures - ABORT (power-cycle may be needed)

@@ -119,6 +119,24 @@ JV1080_STRUCTURE_EXACT=/tmp/jv1080_structure_exact.csv \
 See `xp_firmware_map.md` for the firmware map and `xp_dsp_isa.md` for the DSP
 encoding/algorithm investigation.
 
+## Real-silicon XP host interface (debug ROM)
+
+A MIDI-sysex debug ROM gives direct read/write access to the XP over MIDI, and
+the first silicon measurements confirmed the DSP host interface — see
+`XP_HARDWARE_DEBUG.md §6` (and `debugrom/README.md`):
+
+- DSP memory is **not** directly readable; a PEEK returns 0 but latches the
+  value into the host readback register `0x3910` (low 16) / `0x3912` (high 16).
+  The DSP **control** registers (`0x3908/0x3914/0x3916/0x3924`) are write-only.
+- `0x3916` is the DSP **run/stop** control (`7` = run, `0` = stop).
+- The SH firmware writes the DSP area **only at boot** (~0.4–1.3 s) then goes
+  idle, so at idle the DSP program is stable and host-overwritable — but any
+  experiment must use **no note-on and no Program Change** (both re-upload it).
+
+`debugrom/xp_lab.py` is the `XPDSP` host harness that follows this methodology
+(clear → upload → monitor via the readback register); `sh1dis.py` is an SH-1
+disassembler with literal-pool resolution.
+
 The hidden manufacturing diagnostics, their firmware dispatchers, and the
 reproducible `factory_test_probe.lua` sequences are documented in
 `factory_test_mode.md`.

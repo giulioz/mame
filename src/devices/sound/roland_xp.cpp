@@ -905,6 +905,40 @@ u8 roland_xp_device::read(offs_t offset)
 }
 
 //-------------------------------------------------
+//  dbg_peek - side-effect-free live-state read
+//-------------------------------------------------
+
+u8 roland_xp_device::dbg_peek(offs_t offset) const
+{
+	if (offset < 0x2c00)
+	{
+		// voice / PCM engine pages (banks of 32-bit words)
+		const unsigned reg_idx = offset >> 2;
+		const unsigned shift = (3 - (offset & 0x03)) * 8;
+		if (reg_idx < REG_ARRAY_SIZE)
+			return (m_reg[reg_idx] >> shift) & 0xff;
+		return 0;
+	}
+	if (offset < 0x3900)
+		// DSP program/config area, incl. ramp-evolved IRAM3 current (0x3200-0x323f)
+		return m_dsp_program[offset - 0x2c00];
+	if (offset < 0x3a00)
+		// global config (incl. write-only-on-silicon regs stored here)
+		return m_global_config[offset - 0x3900];
+	if (offset < 0x3c00)
+	{
+		// mixer sends: 4 banks x 64 voices x 16-bit; big-endian byte order like read()
+		const unsigned rel = offset - 0x3a00;
+		const unsigned send = rel / 0x80;
+		const unsigned voice = (rel % 0x80) >> 1;
+		const unsigned byte_idx = rel & 0x01;
+		if (send < NUM_MIXER_SENDS && voice < NUM_VOICES)
+			return (m_voices[voice].mixer_send[send] >> ((1 - byte_idx) * 8)) & 0xff;
+	}
+	return 0;
+}
+
+//-------------------------------------------------
 //  write - register write
 //-------------------------------------------------
 

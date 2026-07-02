@@ -42,6 +42,12 @@ public:
 	u8 read(offs_t offset);
 	void write(offs_t offset, u8 data);
 
+	// Debug: side-effect-free read of live DSP/config/mixer/voice state.  Unlike read(),
+	// this does NOT arm the readback latch, advance the RNG, or update the stream.  It
+	// returns the byte actually held in the device's arrays (incl. ramp-evolved IRAM3).
+	// Used by the driver's periodic DSP dump.
+	u8 dbg_peek(offs_t offset) const;
+
 protected:
 	// device_t implementation
 	virtual void device_start() override ATTR_COLD;
