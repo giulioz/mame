@@ -31,8 +31,8 @@ at slot 61 instead of 104. CONFIRMED).
 
 | bits | field | meaning | confidence |
 |---|---|---|---|
-| **[15:14]** | **st — store control** | `3` = **store accumulator to mem[addr14]** (hardware-proven). `0/1/2` = no-store / ? / ? — verbs open (§3) | st=3 **CONFIRMED**; others open |
-| **[13:6]** | **word** | memory word address. For addr-tops 0/1, stores land at IRAM entry = `word` (contiguous 0–255 over IRAM1/2/3/tgt) | **CONFIRMED** (store probes) |
+| **[15:14]** | **st — memory-access mode** (column selects the ALU op, §5; st gates memory, §3b) | `0` = acc-only (no memory operand); `1` = `acc ⊕ mem[addr14]` (read); `2` = read variant [H]; `3` = writeback (store column result). | **CONFIRMED** (st0/1/2/3 behaviors); st1-vs-st2 & st3-RMW open |
+| **[13:6]** | **word** | memory word address; `word[7:6]` = bank/mode (per st, §3/§3b), `word[5:0]` = 6-bit index | **CONFIRMED** |
 | **[5:0]** | **column** | ALU operand/mode select (§5); plausibly also the TDM bus slot [H] | **CONFIRMED** (truth table) |
 | **[23:16]** | **hi** | parallel ERAM address byte; bit23 = tap-pair marker; +3 counter on the reverb allpass chain | **CONFIRMED** (§7) |
 | **[24]** | **wb** | in an ERAM pair second word = **addr[8]** (hardware-swept); "writeback" elsewhere [H] | pair role **CONFIRMED** |
@@ -68,7 +68,7 @@ Population over the 256 nonzero scgsMaster slots (old-nibble members in parenthe
 | st | slots | members (old nibbles) | addr-tops used | verb |
 |---|---|---|---|---|
 | `0` | 36 | op0 (1,2,3 never seen) | only `0` | compute, no store? **open** |
-| `1` | 159 | op4/5/7 (6 never) | 0,1,3 | compute/MAC family? **open** |
+| `1` | 159 | op4/5/7 (6 never) | 0,1,3 | **read/compute** — `st1 col 0x00` = `acc += mem[addr14]` (§3b, proven); MAC/other columns too |
 | `2` | 22 | opB (8,9,A never) | only 3 | compute (DMAC candidate)? **open** |
 | `3` | 39 | opC/D/E/F | **all four** | **STORE acc → mem[addr14]** — hardware-proven |
 
@@ -81,7 +81,7 @@ Population over the 256 nonzero scgsMaster slots (old-nibble members in parenthe
   |---|---|---|---|
   | 0 | — | **dual write** `IRAM1[k]` and `IRAM2[k]`, `k = addr[11:6]` | 5/5 (`w0x00→{0,64}`, `w0x02→{2,66}`, `w0x20→{32,96}`, `w0x40→{0,64}`, `w0x7F→{63,127}`) |
   | 1 | =0 | **single write at entry `k+32`** | 3/3 (`w0x80→32`, `w0xC0→32`, `w0x8F→47`) |
-  | 1 | ≠0 | **coefficient-steered** into the IRAM3 region (`F000→128`, `F1F0→134`, `F3F0→136` — target depends on the cram value; the ERAM/write-head path) | formula open |
+  | 1 | ≠0 | → **IRAM3[k]**, same as cram=0 (M3 gentle rerun 2026-07-03: cram 0/1/4/0x10/0x40/0x100 all → IRAM3[15]). NOT cram-steered — the old `F1F0→134` offsets were a ramp-decay artifact (targets not zeroed, C9) | **RESOLVED** |
 
   **Rig updates (2026-07-03):** IRAM words **{6, 70} are hardware-driven** (an input-sample port:
   with no program at all the chip zeroes them each pass — sentinel test) — avoid k=6 as a store
@@ -96,12 +96,61 @@ Population over the 256 nonzero scgsMaster slots (old-nibble members in parenthe
   `b12=1 → IRAM3[k]` (k=15→[143], k=0→[128]; values read mid-decay — the IRAM3 ramp engine fights
   the store, zero the targets when observing). On the **b13=0** side C≡D (dual `{k,k+64}`) for
   lone stores — no bit12 effect seen there. Store-destination decode:
-  `{b13,b12}`: `00/01` → dual IRAM1[k]+IRAM2[k] · `10` → IRAM1[32+k] · `11` → IRAM3[k]
-  (+ cram≠0 offsets the IRAM3 index — formula open). The store index is **6 bits (`k=addr[11:6]`)**.
+  `{b13,b12}`: `00/01` → dual IRAM1[k]+IRAM2[k] · `10` → IRAM1[32+k] · `11` → IRAM3[k] —
+  **cram-independent, COMPLETE** (M3 2026-07-03). The store index is **6 bits (`k=addr[11:6]`)**.
 - Remaining decisive experiments (§11): st-verb A/B (old op0/op4/op8 at identical addr14+cram);
   the b12=1-load + b12=1-store combination anomaly (`rig_morning.py` M2).
 
 ---
+
+## 3b. Reads (`st1/st2 col 0x00` = `acc += mem[addr14]`) + the IRAM1/2 double-buffer
+
+The datapath's read half is proven (`rig_hello.py` — a working read→MAC→add→store program).
+`index = addr14[11:6]` (CONFIRMED). The **bank** is where it gets subtle:
+
+- **`addr14[13:12] = 11` → IRAM3[idx]** — a **single-buffered** bank: reads are stable and
+  correctly indexed (`word 0xC8→IRAM3[8]`, `0xE8→IRAM3[40]`, reproducibly). CONFIRMED.
+- **`addr14[13:12] = 00/01/10` → the IRAM1/IRAM2 pair, which is ONE DOUBLE-BUFFERED (ping-pong)
+  memory** (`rig_readverb.py`, 2026-07-03). Reads return *whichever physical half is current for
+  the program's sample-phase* — so the bank a host read observes **swaps between runs**: the
+  `rig_hello` mapping (`00→IRAM1, 01→IRAM2`) came back **inverted** in `rig_readverb`
+  (`00→IRAM2, 01→IRAM1`), and a single dual-store's two halves read back *different*
+  (`IRAM1[11]=0x220349` vs `IRAM2[11]=0x110349`). The index is right; the bank is phase-dependent.
+
+**Architectural consequence (CONFIRMED):** IRAM1+IRAM2 are a stereo/double-buffer working RAM,
+IRAM3 a separate single-buffer aux/ramp bank. This is exactly why the **dual store** (§3, `b13=0`)
+writes *both* IRAM1[k] and IRAM2[k] — it keeps both halves coherent across the swap. It also means
+the earlier clean "read map" was phase luck; ⇒ **methodology: capture experiment results into
+IRAM3 (single-buffer, stable), never IRAM1/2, for reliable readback.**
+
+EFX input bus `0x4A`/`0x4B` (§4) = IRAM2[10]/[11] region — buses live in the IRAM1/2 double-buffer.
+(Open: pin the ping-pong phase — an IRAM3-captured read sync — and whether low IRAM1/2 indices are
+I/O ports; `word 0x08/0x48` read 0 in one phase.)
+
+### The `st[15:14]` verb = memory-access mode (orthogonal to the column ALU op) — 2026-07-03
+`st` selects HOW memory is involved; the **column** independently selects the ALU op (a `col 0x15`
+`acc*=0.5` gave 0x190 for **every** st — pure compute is st-independent):
+
+| st | memory behavior | evidence |
+|---|---|---|
+| 0 | **no memory operand** — acc-only ALU (column + CRAM immediate) | st0 word0x28: acc stayed 0x321 (no read) |
+| 1 | **`acc ⊕ mem[addr14]`** (read into ALU) | st1: acc += mem (0x321+src) |
+| 2 | `acc ⊕ mem[addr14]` — a variant of st1 (double-precision/DMAC? — old opB role) [H] | st2: acc += mem |
+| 3 | **writeback**: compute the column op, store the RESULT to mem[addr14] (a no-mem column ⇒ plain store; whether col 0x00 makes it a read-modify-writeback `mem += acc` is UNRESOLVED — acc-persistence between iterations confounds it, needs a single-shot test) | store CONFIRMED; RMW open |
+
+Confirmed via IRAM3 capture (single-buffer, stable): st0 keeps acc (0x321), st1/st2 do acc+=mem
+(0x003711), all st give the same compute result (col 0x15 → 0x190) ⇒ **compute is st-independent;
+st gates memory only.** st1-vs-st2 (single vs double precision?) and st3 RMW-vs-pure-store are open.
+
+### Worked "hello world" (verified bit-exact, both value and readback)
+```python
+.line_s(st=0, col=0x1F, cram=0x0000)         # acc = 0                (st0 = acc-only ALU)
+.line_s(st=1, word=0x28, col=0x00)           # acc += mem[IRAM1/2 db, idx 40]   (st1 = read)
+.line_s(st=0, col=0x15, cram=0x1000)         # acc = trunc(acc * 0.5)   (C14 0x1000 = +0.5)
+.line_s(st=0, col=0x0F, cram=0x0111)         # acc += 0x111
+.line_s(st=3, word=0x09, col=0x00)           # IRAM1[9] = IRAM2[9] = acc
+# IRAM1[40]=0x111100 -> stored 0x088991 = trunc(0x111100*0.5)+0x111
+```
 
 ## 4. addr14 memory map
 
@@ -110,14 +159,13 @@ Population over the 256 nonzero scgsMaster slots (old-nibble members in parenthe
 | addr14 range | words | contents | confidence |
 |---|---|---|---|
 | `0x0000-0x0FFF` | 0x00–0x3F | registers/scratch + column ops (st0 lives here; word 0x00 columns = the ALU constant/register file) | **STRONG** |
-| `0x1000-0x1FFF` | 0x40–0x7F | **buses**: word `0x4A`/`0x4B` = EFX input L/R (all 64 columns); `0x54`/`0x57` chorus sends [H]; `0x55`/`0x56` = **EFX out L/R**; reverb feeds at old-D489 (word 0x52 col 9 — col 9 = mixer bus 9/efxB [H]) | in/out **CONFIRMED** (working passthrough) |
-| `0x2000-0x2FFF` | 0x80–0xBF | store page top-2 (old opE): probe wrote entry 128 = IRAM3 bank; cram-dependent [H] | open |
+| `0x1000-0x1FFF` | 0x40–0x7F | **= IRAM2** (reads here return IRAM2[idx], §3b) — the "buses" ARE IRAM2 words: `0x4A`/`0x4B` = EFX input L/R = IRAM2[10]/[11]; `0x55`/`0x56` = EFX out L/R; `0x54`/`0x57` chorus sends [H] | in/out **CONFIRMED** (passthrough + read map) |
+| `0x2000-0x2FFF` | 0x80–0xBF | store-side addressing (b13=1): `b12=0 → IRAM1[32+k]`, `b12=1 → IRAM3[k]` — **cram-independent** (M3 2026-07-03) | **STRONG** |
 | `0x3000-0x3FFF` | 0xC0–0xFF | **datapath state** (the EQ/chorus/reverb working words). EQ: L biquad state words `0xD0-0xD7`, R = **+8** = `0xD8-0xDF` (the L/R mirror bit = word bit 3 here = old bit9). Chorus one-pole state at words `0xCB/0xCC` | **CONFIRMED** (EQ mirror quantified) |
 
-The store space (st=3) reaches **IRAM contiguous** (entries 0–63 = IRAM1 `0x3000`, 64–127 = IRAM2,
-128–191 = IRAM3, 192–255 = targets `0x3300`) via the bit13 ruleset in §3: bit13=0 dual-writes
-`{k, k+64}` (both L/R banks), bit13=1 single-writes `k+32` (cram=0) or a coefficient-steered
-IRAM3-region target (cram≠0). Only 6 index bits (`addr[11:6]`) are proven; bit12 unobserved.
+The store space (st=3) reaches IRAM via the §3 bank ruleset (`{b13,b12}`: `00/01`→dual
+IRAM1[k]+IRAM2[k], `10`→IRAM1[32+k], `11`→IRAM3[k]; index `k = addr14[11:6]`, cram-independent).
+Note this is the STORE bank map; the READ bank map (§3b) is the sibling `addr14[13:12]`→bank.
 
 Cross-consistency [H]: the `word|column` split mirrors the mixer-send word format
 (`level[15:6] | bus[5:0]`) — the 64 columns are plausibly the 64 TDM bus/voice slots.

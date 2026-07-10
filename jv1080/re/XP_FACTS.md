@@ -228,17 +228,20 @@ xp_dsp_isa.md, chat) is narrative and may drift — when in doubt, THIS wins.
   {1,2,3,6,8,9,A} are exactly the unused (class, addr-top) combos** — resolves the opcode-holes
   mystery. **The `[11:9]` keystone is ANSWERED: word-address bits** (EQ L/R mirror bit9 = word+8;
   the scgsMaster "selector recurrence" counter-signal dissolves). op0/op7 share the same column
-  vocabulary (col 0x30 dominant in both) ⇒ columns are ALU operand selects. Verb semantics of
-  classes 00/01/10 still open — decisive A/B: identical addr14+cram under op0 vs op4 vs op8
-  (`xp_dsp_isa_decoded.md` §3/§11). NOTE (2026-07-02 refinement): [15:14] is the STORE CONTROL field (st=3 store proven; 0/1/2 verbs open), not a general opcode.
+  vocabulary (col 0x30 dominant in both) ⇒ columns are ALU operand selects. NOTE (later refinements):
+  [15:14] = STORE CONTROL, not a general opcode. st=3 = store (C24/C26), **st=1 = read/compute**
+  (`st1 col 0x00` = `acc += mem`, proven C31/§3b); st=0/st=2 verbs still open — decisive A/B pending
+  (`xp_dsp_isa_decoded.md` §3/§11).
 
 - **C24. Store ruleset corrected (bit12 UNOBSERVED — "op[1:0]=address top" was overstated); the
   chorus LFO is a software saw in IRAM3.** (2026-07-02 probes, 9/11 rows bit-exact:)
   - **bit13=0**: st3 stores **dual-write `IRAM1[k]`+`IRAM2[k]`**, `k = addr[11:6]` (6 bits) —
     5/5 points (`w0x00→{0,64}`, `w0x02→{2,66}`, `w0x20→{32,96}`, `w0x40→{0,64}`, `w0x7F→{63,127}`).
   - **bit13=1, cram=0**: **single write at `k+32`** — 3/3 (`0x80→32`, `0xC0→32`, `0x8F→47`).
-  - **bit13=1, cram≠0**: **coefficient-steered** into the IRAM3 region (`F000→128`; 134/136 rows
-    depend on the cram value — the ERAM/write-head path). Formula open.
+  - **bit13=1, cram≠0**: RETRACTED (2026-07-03, M3 gentle rerun) — the destination is **NOT
+    cram-steered**; b12=1 store → **IRAM3[k]** for ALL cram (0,1,4,0x10,0x40,0x100 all → IRAM3[15]).
+    The old `F1F0→134 / F3F0→136` offsets were a **ramp-engine decay artifact** (IRAM3 read
+    mid-decay because the 0x3300 targets weren't zeroed first, C9). Zeroing targets → clean store.
   - **bit12 has NO observable effect in ANY experiment** (`C000≡D000`, `E000≡F000`) — the C22/C23
     claim "op[1:0] are literally the top two address bits" is DOWNGRADED: only bit13 proven;
     bit12 = address/control/unused, open (Giulio's "stray MSB" caveat).
@@ -271,9 +274,8 @@ xp_dsp_isa.md, chat) is narrative and may drift — when in doubt, THIS wins.
   IRAM3 ramp engine fights the store, consistent with C9; zero the target too when using IRAM3
   as a store observable). On the b13=0 side C≡D (dual `{k,k+64}`) still shows no b12 effect.
   The earlier user rows that suggested `F000→[32]` were likely mixed with E-rows (their own
-  "stray MSB" caveat). Store-destination decode so far:
-  `{b13,b12}`: `00/01` → dual IRAM1[k]+IRAM2[k] · `10` → IRAM1[32+k] · `11` → IRAM3[k]
-  (+ cram≠0 offsets the IRAM3 index — formula open).
+  "stray MSB" caveat). Store-destination decode (FINAL, cram-independent — see C26/C31):
+  `{b13,b12}`: `00/01` → dual IRAM1[k]+IRAM2[k] · `10` → IRAM1[32+k] · `11` → IRAM3[k].
 - **C27. Rig session open anomalies (2026-07-02, to re-test with SENTINEL values not zeros):**
   (a) a store at PRAM slot 3 (k=6) wrote nothing while identical stores at slots 2/4/5 worked;
   in a follow-up, adjacent stores at slots 2+3 BOTH appeared dead — but the cleared-to-0 design
@@ -321,10 +323,15 @@ xp_dsp_isa.md, chat) is narrative and may drift — when in doubt, THIS wins.
   (g) **IRAM words 6/70 are HARDWARE-DRIVEN (confirmed)**: with NO program at all, sentinels at
   {5,69} survive while {6,70} are zeroed by the chip each pass — an input-sample port word
   (silent bus = 0). Explains every "k=6 store writes zero" reading.
-  (h) Link-health: the MIDI debug link degrades after sustained read traffic regardless of pacing
-  (~150 reads); READs (trigger+latch, request/response) stress it far more than POKEs. Recovery
-  that worked once: fresh JV()/MIDI-port reopen after ~60 s idle. The 2026-07-03 night session
-  ended with the link down (rig may need power-cycle).
+  (h) Link-health ROOT CAUSE + FIX (2026-07-03): the wedge is the **SH firmware debug/MIDI
+  reply-path**, not the XP DSP — each `read_dsp` is 3 back-to-back request/response sysex with NO
+  inter-command gap, so a reply still transmitting when the next command's bytes arrive desyncs the
+  SCI (overrun/reentrancy). POKEs (fire-and-forget, no reply) don't stress it; READs do (~3×/read,
+  bidirectional). **Host-side mitigations added to `jvdebug.py`** (gap after each reply, settle
+  between trigger/latch, hard back-off on a missing reply, atomic 1-txn CRAM path, `read_dsp`
+  returns None instead of raising): validated — a full M3 sweep ran **350 transactions with zero
+  degradation** (old ceiling ~100). Durable cure still wants a debug-ROM fix (clear SCI ORER/FER/PER
+  + reentrancy guard in the command hook). Diagnostic to confirm the layer: audio survives a wedge.
 
 - **C30. COMPLETE 64-column ALU table measured (morning session 2026-07-03; `rig_morning.py` M1)**
   — acc=0x321, cram=0x0123, word=0 (all mem operands = 0): keep-class (mem-add/MAC) at
@@ -338,21 +345,67 @@ xp_dsp_isa.md, chat) is narrative and may drift — when in doubt, THIS wins.
   both stores dual-write) — compute-b12 engages a shared port [H]. M3 (cram-steer map) lost to the
   link dying (~100 reads/power-cycle budget pattern confirmed again; rig needs power-cycle).
 
+- **C31. FULL read->MAC->add->store datapath WORKS on hardware; IRAM read-address map found
+  (2026-07-03, `rig_hello.py`).** A hand-authored 4-op program, verified by readback across all
+  three banks + a fresh value:
+  ```
+    slot0  st0 col 0x1F cram 0x0000     acc = 0
+    slot2  st1 word=W col 0x00          acc += mem[addr14]     <- the READ
+    slot4  st0 col 0x15 cram 0x1000     acc = trunc(acc*0.5)   <- MAC/multiply
+    slot6  st0 col 0x0F cram 0x0111     acc += 0x111           <- add const
+    slot8  st3 b13=0 k=9               IRAM1[9]=IRAM2[9]=acc   <- store
+  ```
+  Results (all bit-exact): IRAM1[40]=0x111100->0x088991 · IRAM2[40]=0x222200->0x111211 ·
+  IRAM3[40]=0x333300->0x199A91 · fresh 0x0801E0->0x040201.
+  - **READ map (st1/st2 col 0x00 = `acc += mem[addr14]`)**: `idx = addr14[11:6]` (CONFIRMED).
+    Bank: `addr14[13:12]=11` → **IRAM3[idx]** (single-buffer, stable). `00/01/10` → the
+    **IRAM1/IRAM2 double-buffer** (see C32) — bank is phase-dependent, NOT the clean
+    `00→IRAM1/01→IRAM2` this program's phase suggested (that was refuted next run). Reads were the
+    last unproven datapath half; now proven (with the double-buffer caveat).
+  - Confirms col **0x00 = memory-add** (`acc += mem`, the "keep" reading with mem=0 was this),
+    col **0x15 = multiply** (`acc = acc*coef`), col **0x0F = add-const**, col **0x1F = load** —
+    all four working together in a real pipeline.
+  - **UNIFICATION**: the "EFX input bus" word `0x4A` (C20) = the `IRAM2[10]` region — buses live in
+    the IRAM1/2 working memory. (NOTE: read/store bank-selects do NOT simply mirror — and IRAM1/2 are
+    a double-buffered pair, see C32; the clean per-run read map here was phase luck.)
+
+- **C32. IRAM1+IRAM2 = ONE double-buffered (ping-pong) memory; IRAM3 = separate single-buffer;
+    the `st` field = memory-access mode (orthogonal to the column ALU op). (2026-07-03,
+    `rig_readverb.py`.)**
+  - **Double-buffer:** reads of `addr14[13:12]=11` (IRAM3) are stable + correctly indexed
+    (`word 0xC8→IRAM3[8]`, `0xE8→IRAM3[40]`, reproducible). Reads of `00/01/10` (the IRAM1/2 pair)
+    return whichever physical half is current for the sample-phase: the `rig_hello` bank map
+    (`00→IRAM1`) came back **inverted** next run (`00→IRAM2`), and a single dual-store's halves read
+    back different (`IRAM1[11]=0x220349` vs `IRAM2[11]=0x110349`). Index (`addr14[11:6]`) is stable;
+    the bank is not. ⇒ the §3 **dual store** (`b13=0` writes both IRAM1[k]+IRAM2[k]) keeps the two
+    buffer halves coherent. **METHODOLOGY: capture experiment outputs into IRAM3 (stable), never
+    IRAM1/2.** (The hello-world read map was phase luck.)
+  - **Verb model:** `st` picks the memory mode, the **column** picks the ALU op (independent —
+    `col 0x15` `acc*=0.5` gave `0x190` for every st): **st=0** = acc-only, NO memory operand
+    (st0 word0x28 left acc=0x321 unchanged); **st=1** = `acc ⊕ mem` (read); **st=2** = `acc ⊕ mem`
+    read, a variant of st1 (double-precision/DMAC? — its scgsMaster role is old-opB interpolation)
+    `[H]`; **st=3** = writeback (store the column-op RESULT; a no-mem column is a plain store —
+    whether col 0x00 makes st3 a read-modify-writeback `mem+=acc` is OPEN, acc-persistence confounds
+    the single-value test). Confirmed via IRAM3 capture: compute is st-independent (col 0x15 → 0x190
+    for all st), so **st gates memory, column selects the ALU op** — the CSP/ESP read/compute/store
+    shape. Details: `xp_dsp_isa_decoded.md` §3b.
+
 ## [E] Expected but NOT proven on the XP
 
 - *(none open right now)*
 
 ## Open questions
 
-- **Q1.** *(largely answered by C16/C17)* The instruction encoding is decoded to STRONG/CONFIRMED for
-  op/region/wb/CRAM; ~~the `[11:9]` residual~~ RESOLVED by C23/C24: `[11:9]` are address bits (word index); the field split is `[15:14]` store-control / `[13:0]` addr (word|column). Remaining: st-verbs 0/1/2, bit12**
-  (THE keystone). Static evidence tilts toward store-mode (op7 low-nibble is highly non-uniform;
-  selectors recur across `[11:9]` values). Also open: opD semantics (JV-only), op4 (4 slots), the
-  multi-word ERAM tap-pairing rule (bit23 heuristic fails statically), and the two write markers
-  (bit24 vs abyte=0x88). See `xp_dsp_isa_decoded.md` §11.
-- **Q1-next.** Best experiment to close Q1: on the JV rig, take one op7 wb=1 slot with a known
-  accumulator and **sweep only `[11:9]` holding `[8:0]` fixed** — 8 distinct taps ⇒ address; same tap
-  different combining ⇒ store-mode/lane.
+- **Q1. Instruction encoding — CONFIRMED core, residual verbs.** Field split `[15:14] st |
+  [13:6] word | [5:0] col`, addr14=word<<6|col; single 24-bit saturating acc; read (st1 col0),
+  MAC (col 0x15), add-const (col 0x0F), load (col 0x1F), store (st3) all hardware-proven (C22–C31).
+  **Still open:** (a) st=0 and st=2 verbs (st1=read, st3=store both proven; is st0 compute-no-store,
+  st2 double-precision/DMAC?); (b) bit12-on-compute (the M2 anomaly — a b12=1 LOAD disables a
+  coexisting b12=1 STORE); (c) the read-map `addr14[13:12]=10` alias-to-IRAM2; (d) full 64-column
+  table with mem≠0 (to split "keep" from `acc+=mem` — partly answered: col0=`+=mem`); (e) opD
+  sub-addresses, op4, ext=DRAM-strobe hypothesis, the two write markers (bit24 vs abyte 0x88).
+- **Q1-next.** Rig: (1) read-map scan 0x00-0xFF resolves (c); (2) st-verb A/B (identical addr14+cram
+  under st=0/1/2/3) resolves (a); (3) mem≠0 column re-sweep resolves (d).
 - **Q2.** *(answered — C13)* Poked programs execute (free-running); IRAM1/2 re-develop on their own.
 
 ## [R] Retracted (do not rebuild on these)

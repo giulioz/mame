@@ -6,6 +6,7 @@
 #pragma once
 
 #include "dirom.h"
+#include "roland_xp_dsp.h"
 
 // Roland XP PCM + DSP (MBCS30109B / MB87B105PF / RHR-2342)
 //
@@ -62,6 +63,7 @@ protected:
 private:
 	static constexpr unsigned NUM_VOICES = 64;
 	static constexpr unsigned NUM_MIXER_SENDS = 4;
+	static constexpr unsigned NUM_DSP_SLOTS = 288;
 	static constexpr unsigned NUM_IRAM3_BREAKPOINTS = 64;
 	static constexpr unsigned IRQ_QUEUE_SIZE = 64;
 	static constexpr unsigned DSP_PROGRAM_SIZE = 0x3900 - 0x2C00;   // 0x0D00 bytes
@@ -172,6 +174,12 @@ private:
 	uint16_t dsp_read_u16(offs_t offset) const;
 	void dsp_write_u32(offs_t offset, uint32_t data);
 	void update_iram3_breakpoints();
+
+	// Effect-DSP interpreter (see roland_xp_dsp.h for the column ALU).
+	int32_t dsp_iram_read(unsigned word) const;
+	void dsp_iram_store(unsigned word, int32_t value);
+	void run_dsp_program(int64_t &dac_l, int64_t &dac_r, bool &dac_valid);
+
 	int32_t do_voice(pcm_voice &v, bool control_tick_2, bool control_tick_8, bool &voice_event);
 	int32_t decode_sample(uint32_t sample_addr, uint32_t wave_ctrl);
 
@@ -205,6 +213,10 @@ private:
 
 	// Global config area (0x3900-0x39FF)
 	uint8_t m_global_config[GLOBAL_CONFIG_SIZE];
+
+	// Effect-DSP register file (accumulator / HOLD / COEFREG / col25 lock / ERAM addr).
+	// The IRAM banks themselves live in m_dsp_program at 0x3000/0x3100/0x3200.
+	roland_xp_dsp::regs m_dsp;
 
 	// Effects DRAM (2Mbit)
 	std::unique_ptr<uint8_t[]> m_dram;

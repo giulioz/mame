@@ -632,6 +632,11 @@ void roland_xp_device::device_start()
 	save_item(NAME(m_irq_line));
 	save_item(NAME(m_irq_control));
 	save_item(NAME(m_global_config));
+	save_item(NAME(m_dsp.acc));
+	save_item(NAME(m_dsp.hold));
+	save_item(NAME(m_dsp.coefreg));
+	save_item(NAME(m_dsp.acc_lock));
+	save_item(NAME(m_dsp.eram_addr));
 	save_pointer(NAME(m_dram), DRAM_SIZE);
 	
 	save_pointer(&m_reg[0x0000/4], "wave_ctrl", 64);
@@ -764,6 +769,7 @@ void roland_xp_device::device_reset()
 	// request a reset, and the chip sets it again after processing it.
 	std::fill_n(m_global_config, 8, 0xff);
 	std::fill_n(m_dram.get(), DRAM_SIZE, 0);
+	m_dsp = roland_xp_dsp::regs{};
 }
 
 //-------------------------------------------------
@@ -1271,6 +1277,83 @@ int32_t roland_xp_device::do_voice(pcm_voice &v, bool control_tick_2, bool contr
 	return sat_q27(interp_sum);
 }
 
+//-------------------------------------------------
+//  Effect-DSP interpreter
+//
+//  The XP runs a fixed 288-slot microprogram (PRAM at 0x3400, CRAM at 0x2C00)
+//  every sample.  IRAM1/IRAM2 form one double-buffered 64-word working buffer
+//  (host 0x3000/0x3100, kept coherent by dual stores); IRAM3 is a single-buffered
+//  64-word aux bank (0x3200).  Column ALU semantics live in roland_xp_dsp.h.
+//-------------------------------------------------
+
+int32_t roland_xp_device::dsp_iram_read(unsigned word) const
+{
+	// word[7:6] selects the bank; word[5:0] the index.  Banks 00/01/10 all read the
+	// working buffer (we read IRAM1, which the dual store keeps equal to IRAM2);
+	// bank 11 reads IRAM3.
+	const unsigned idx = word & 0x3f;
+	const offs_t base = (word < 0xc0) ? 0x3000 : 0x3200;
+	const uint32_t raw = dsp_read_u32(base + idx * 4) & 0xffffff;
+	return (raw & 0x800000) ? int32_t(raw) - 0x1000000 : int32_t(raw);
+}
+
+void roland_xp_device::dsp_iram_store(unsigned word, int32_t value)
+{
+	const unsigned idx = word & 0x3f;
+	const uint32_t u = uint32_t(value) & 0xffffff;
+	if (word < 0xc0)
+	{
+		// Dual-write both ping-pong halves so the logical working buffer stays coherent.
+		dsp_write_u32(0x3000 + idx * 4, u);
+		dsp_write_u32(0x3100 + idx * 4, u);
+	}
+	else
+	{
+		dsp_write_u32(0x3200 + idx * 4, u); // IRAM3 (single buffer)
+	}
+}
+
+void roland_xp_device::run_dsp_program(int64_t &dac_l, int64_t &dac_r, bool &dac_valid)
+{
+	using namespace roland_xp_dsp;
+
+	regs r = m_dsp;
+	for (unsigned slot = 0; slot < NUM_DSP_SLOTS; slot++)
+	{
+		const uint32_t pram = dsp_read_u32(0x3400 + slot * 4) & 0x0fffffff; // PRAM is 28-bit
+		const uint16_t cram = dsp_read_u16(0x2c00 + slot * 2);
+		const unsigned st = (pram >> 14) & 3;
+		const unsigned word = (pram >> 6) & 0xff;
+		const unsigned col = pram & 0x3f;
+
+		// st: 0 = acc-only, 1 = IRAM read, 2 = ERAM receive (stubbed to 0 in phase 1
+		// so chorus/reverb tails are silent), 3 = pure store then acc-only op.
+		int32_t mem = 0;
+		bool has_mem = false;
+		if (st == 1)
+		{
+			mem = dsp_iram_read(word);
+			has_mem = true;
+		}
+		else if (st == 2)
+		{
+			has_mem = true; // ERAM read returns 0 until the delay memory is modelled
+		}
+
+		if (st == 3)
+		{
+			// Store the pre-op accumulator first, then run the column op acc-only.
+			const int32_t sv = sat24(r.acc);
+			dsp_iram_store(word, sv);
+			if (word == 0x55) { dac_l = sv; dac_valid = true; }       // EFX out L
+			else if (word == 0x56) { dac_r = sv; dac_valid = true; }  // EFX out R
+		}
+
+		apply_column(r, col, cram, mem, has_mem);
+	}
+	m_dsp = r;
+}
+
 void roland_xp_device::sound_stream_update(sound_stream &stream)
 {
 	for (int smpl = 0; smpl < stream.samples(); smpl++)
@@ -1317,11 +1400,32 @@ void roland_xp_device::sound_stream_update(sound_stream &stream)
 			}
 		}
 
-		// The destination buses are interpreted by product-specific DSP programs
-		// (JV-1080 dry sends currently land on 10/11, SCCore uses 58/59).  Until
-		// that DSP is implemented, bypass the conventional dry send slots.
-		stream.add_int(0, smpl, sat_q27(dry_left), 1 << 21);
-		stream.add_int(1, smpl, sat_q27(dry_right), 1 << 21);
+		// Present the voice-send buses to the effect DSP as its working-buffer input
+		// words (bus b -> word 0x40+b -> IRAM index b).  Shifting the Q27 voice sum
+		// right by 4 aligns the DSP's 24-bit store saturation with sat_q27, so a
+		// unity effect reproduces the legacy dry level.  Only the low 16 buses feed
+		// the input region (0x40-0x4F); higher indices are DSP scratch/state.
+		static constexpr int BUS_SHIFT = 4;
+		for (unsigned b = 0; b < 16; b++)
+			dsp_iram_store(0x40 + b, roland_xp_dsp::sat24(buses[b] >> BUS_SHIFT));
+
+		int64_t dac_l = 0, dac_r = 0;
+		bool dac_valid = false;
+		run_dsp_program(dac_l, dac_r, dac_valid);
+
+		if (dac_valid)
+		{
+			// The effect program drives EFX-out L/R (stores to words 0x55/0x56).
+			stream.add_int(0, smpl, int32_t(dac_l), 1 << 17);
+			stream.add_int(1, smpl, int32_t(dac_r), 1 << 17);
+		}
+		else
+		{
+			// No effect program loaded yet: fall back to the direct dry mix so audio
+			// keeps working through boot and before the DSP is programmed.
+			stream.add_int(0, smpl, sat_q27(dry_left), 1 << 21);
+			stream.add_int(1, smpl, sat_q27(dry_right), 1 << 21);
+		}
 		m_control_phase = (m_control_phase + 1) & 7;
 	}
 }

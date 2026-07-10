@@ -44,9 +44,8 @@ Mangled `lspproc_XX(Q27, S&, S&, S0*, PS&, S1*, P3<Q15>)` — fixed-point (Q27 s
   `eqLowL=[0x8d,0x8f,0x91]`, `eqLowR=[0xc2,0xc4,0xc6]`, `eqHighL=[0x95,0x97,0x99]`, `eqMid1L=[0x9d,0x9e,0xa6]`, …
 - Similar tables: `enhancer*AdrsTbl`, `delay*Tbl`, `chorusServiceTbl`, etc.
 
-## Next step to fully decode the JV instruction ISA
-Align `lspproc_eq8` (execution) with the EQ's `COEF_DATA` words: each bytecode instruction's opcode
-(15:12), store-mode (11:9), and selector (8:0) maps to a concrete native op (load state / MAC coeff /
-read circular buffer / store), pinning the **selector → IRAM/ERAM/bank** mapping — the last open ISA piece.
-Then apply to the JV Stereo EQ program (`stereo_eq.txt`), whose bands we've already attributed
-(`effect_param_map.md`).
+## NOTE — this is the LSP; the XP ISA is already decoded elsewhere
+The old field-split guess here (opcode 15:12 / store-mode 11:9 / selector 8:0) was for the LSP and is
+**superseded for the XP**. The XP instruction encoding is now hardware-decoded (JV debug ROM, 2026-07):
+`[15:14] store-control | [13:6] word | [5:0] column`, addr14=word<<6|col — see
+`xp_dsp_isa_decoded.md` and `XP_FACTS.md` C22–C31. This doc remains only an LSP *family* reference.
