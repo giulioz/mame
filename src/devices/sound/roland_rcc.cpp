@@ -159,7 +159,7 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 		{
 			if (FILE *f = std::fopen(dump, "a"); f)
 			{
-				std::fprintf(f, "%02x %02x%02x%02x\n", data, m_io[0], m_io[1], m_io[2]);
+				std::fprintf(f, "%u %02x %02x%02x%02x\n", m_frame, data, m_io[0], m_io[1], m_io[2]);
 				std::fclose(f);
 			}
 		}
@@ -268,6 +268,18 @@ void roland_rcc_device::sound_stream_update(sound_stream &stream)
 		{
 			unsigned const v = (w - m_program_voice_offset) & (NUM_CHANNELS - 1);
 			voices[w] = s32(std::clamp(stream.get(v, sample), -1.0F, 1.0F) * 131071.0F);
+		}
+		if (char const *dump = std::getenv("RCC_DUMP_VOICES"); dump && (m_frame & 63) == 0)
+		{
+			unsigned best = 0;
+			s32 lvl = 0;
+			for (unsigned w = 0; w < NUM_CHANNELS; w++)
+				if (std::abs(voices[w]) > lvl) { lvl = std::abs(voices[w]); best = w; }
+			if (FILE *f = std::fopen(dump, "a"); f)
+			{
+				std::fprintf(f, "%u w%u %d\n", m_frame, best, lvl);
+				std::fclose(f);
+			}
 		}
 
 		run_program(voices);
