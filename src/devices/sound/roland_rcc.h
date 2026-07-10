@@ -12,17 +12,24 @@
 // RAM-A working memory, the RAM-B host parameter file, the external DRAM
 // delay memory, the host interface, and the per-frame program execution.
 // The chip was fully reverse-engineered from die photos (netlist 100%
-// equivalence-checked; see the rcc repo: RCC_DSP_GUIDE.md), combined with
-// hardware calibration measured on a real U-220.
+// equivalence-checked; see the rcc repo: RCC_DSP_GUIDE.md and
+// db/RCC_FIELDMAP_V2.md), combined with hardware captures from a real
+// U-220 / D-70 (test-mode routing, delay-time ladders, dry calibration).
+//
+// The mixer runs by EXECUTING the mask-ROM program against the firmware's
+// RAM-B parameters: per step a MAC (A-operand + sample x coefficient),
+// a four-register accumulator file, read-modify-write sums in RAM-A, and
+// DAC strobes that capture the mix buses.  Panning/routing therefore come
+// out of the same parameter words the real firmware writes (a5 targets,
+// sign-magnitude coefficients).
 //
 // Inputs: the PCM chip's voices as 32 sound-stream channels (the real chip
-// receives them time-multiplexed on a 7-bit x 3-phase input bus).
-// Outputs: four stereo pairs, matching the chip's program-counter-selected
-// 4-way DAC output mux:
-//   0/1 = mix L/R (dry + chorus + effect return -- the MIX OUT jacks)
-//   2/3 = dry L/R
-//   4/5 = chorus L/R
-//   6/7 = effect (reverb/delay network) return L/R
+// receives them time-multiplexed, one voice per 8-step program window).
+// Outputs: four stereo pairs:
+//   0/1 = mix L/R (executed-program mix bus -- the MIX OUT jacks)
+//   2/3 = mirror of 0/1 (direct-out strobe map not yet identified)
+//   4/5, 6/7 = silent until the DRAM delay engine (chorus/reverb) is
+//              brought up from the program's b9/b14 transaction marks
 
 class roland_rcc_device : public device_t, public device_sound_interface
 {
@@ -44,11 +51,8 @@ protected:
 
 private:
 	// one pass of the 256-step mask-ROM program = one sample frame
-	void run_program(s32 effect_in);
-	static int rama_addr(int step);
+	void run_program(s32 const *voices);
 	static s32 decode_coef(u32 param);
-
-	void update_dry_gain(u8 index);
 
 	sound_stream *m_stream;
 
@@ -57,17 +61,17 @@ private:
 	u8 m_program[0x100][3];
 	u8 m_state[0x20][3];
 
-	// chip memories
-	s32 m_ram_a[32];          // 32 x 24 working memory / delay line
+	// chip memories and datapath state
+	s32 m_ram_a[32];          // 32 x 24 working memory (sums, host cells)
 	u32 m_ram_b[256];         // 256 x 18 parameter file (one word per step)
-	s8 m_dram[1 << 16];       // two 4464 DRAMs: 64K x 8-bit delay ring [V board]
-	u32 m_frame;              // frame counter (walks the DRAM ring)
+	s32 m_bank[4];            // four-register accumulator file
+	s32 m_hist[2];            // result pipeline (accw = res two steps back)
+	s8 m_dram[1 << 16];       // two 4464 DRAMs: 64K x 8 delay ring [V board]
+	u32 m_frame;              // frame counter (delay-engine ring position)
 
-	// per-frame program results
-	s32 m_wet_l, m_wet_r;     // delay-network read-tap returns
+	// DAC strobe captures
+	s32 m_mix_l, m_mix_r;
 
-	// hardware-calibrated dry mixer state
-	float m_gain[NUM_CHANNELS][2];
 	u8 m_program_voice_offset;
 
 };

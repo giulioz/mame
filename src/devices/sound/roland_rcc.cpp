@@ -56,29 +56,29 @@ static constexpr u32 PROGRAM_ROM[288] = {
 	0x0b843601, 0x0a843e11, 0x0bdf1601, 0x0b8c3e91, 0x0bfc1e91, 0x0b9c1e81, 0x0b9c1ea5, 0x0a843601,
 };
 
-// These program locations are the dry L/R coefficient instructions found by
-// cycling every U-220 voice in Sound Test (1). Products can connect their
-// first synth voice at a later RCC program slot. The phase is circular: the
-// D-70 offsets LP contexts by four, so contexts 28-31 use program voices 0-3.
-// Its two reserved LP contexts align with non-voice program slots 4 and 28. [V hw]
-static constexpr u8 GAIN_PROGRAM[roland_rcc_device::NUM_CHANNELS][2] = {
-	{ 0x04, 0x05 }, { 0x0c, 0x0d }, { 0x15, 0x16 }, { 0x20, 0x21 },
-	{ 0x24, 0x25 }, { 0x2a, 0x2b }, { 0x34, 0x35 }, { 0x3e, 0x40 },
-	{ 0x44, 0x45 }, { 0x4c, 0x50 }, { 0x55, 0x56 }, { 0x5e, 0x60 },
-	{ 0x64, 0x65 }, { 0x71, 0x72 }, { 0x76, 0x77 }, { 0x7d, 0x7e },
-	{ 0x85, 0x89 }, { 0x8c, 0x8f }, { 0x93, 0x96 }, { 0x9d, 0x9e },
-	{ 0xa4, 0xa7 }, { 0xab, 0xac }, { 0xb3, 0xb4 }, { 0xbf, 0xc0 },
-	{ 0xc3, 0xc4 }, { 0xcd, 0xce }, { 0xd7, 0xd8 }, { 0xdf, 0xe0 },
-	{ 0xff, 0xff }, { 0xef, 0xf0 }, { 0xf5, 0xf6 }, { 0xfe, 0xff }
-};
+// Field map v2.1 + anchor-searched dry machine (rcc repo,
+// db/RCC_FIELDMAP_V2.md).  RAM-B word, per step (all [V hw+die]):
+//   [17:14] DRAM address nibble (serial, 4 bits/step -- delay engine, TODO)
+//   [13:9]  RAM-A address a5: the step's memory operand / store target
+//   [8]     product alignment select ("shifter": 1 -> >>6, hw-calibrated)
+//   [7:0]   sign-magnitude coefficient (0x40 = unity at shift=1)
+//
+// Per-step datapath (unique survivor of the 3.6M-config anchor search
+// against the D-70/U-220 test-mode captures) [V hw]:
+//   sample (b25,b24): 0 | RAM-A[a5] | audio-in | acc-bank tap
+//   A-op   (b21..23): codes 001/010 -> RAM-A[a5] (read-modify-write),
+//                     011 -> audio-in (capture), 000/111 -> 0 [H: 2 codes]
+//   res    = sat24(A + (b13 ? (sample * coef) >> align : 0))
+//   pipeline: accw = res from TWO steps back (multiplier/adder registers)
+//   every step: bank[(b17,b16)] <= accw;  b2: RAM-A[a5] <= accw
+//   b3 strobes capture accw onto the DAC buses: mix L at step 0x61,
+//   mix R at step 0x35 [V hw]; direct-out strobe map still unknown [H]
 
 roland_rcc_device::roland_rcc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock) :
 	device_t(mconfig, ROLAND_RCC, tag, owner, clock),
 	device_sound_interface(mconfig, *this),
 	m_stream(nullptr),
 	m_frame(0),
-	m_wet_l(0),
-	m_wet_r(0),
 	m_program_voice_offset(0)
 {
 }
@@ -92,12 +92,12 @@ void roland_rcc_device::device_start()
 	save_item(NAME(m_state));
 	save_item(NAME(m_ram_a));
 	save_item(NAME(m_ram_b));
+	save_item(NAME(m_bank));
+	save_item(NAME(m_hist));
 	save_item(NAME(m_dram));
 	save_item(NAME(m_frame));
-	save_item(NAME(m_wet_l));
-	save_item(NAME(m_wet_r));
-
-	save_item(NAME(m_gain));
+	save_item(NAME(m_mix_l));
+	save_item(NAME(m_mix_r));
 	save_item(NAME(m_program_voice_offset));
 }
 
@@ -108,11 +108,12 @@ void roland_rcc_device::device_reset()
 	std::fill_n(&m_state[0][0], 0x20 * 3, 0);
 	std::fill(std::begin(m_ram_a), std::end(m_ram_a), 0);
 	std::fill(std::begin(m_ram_b), std::end(m_ram_b), 0);
+	std::fill(std::begin(m_bank), std::end(m_bank), 0);
+	std::fill(std::begin(m_hist), std::end(m_hist), 0);
 	std::fill(std::begin(m_dram), std::end(m_dram), 0);
 	m_frame = 0;
-	m_wet_l = 0;
-	m_wet_r = 0;
-	std::fill_n(&m_gain[0][0], NUM_CHANNELS * 2, 0.0F);
+	m_mix_l = 0;
+	m_mix_r = 0;
 }
 
 //-------------------------------------------------------------------------
@@ -135,9 +136,7 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 		if (m_stream)
 			m_stream->update();
 		std::copy_n(&m_io[0], 3, &m_state[data & 0x1f][0]);
-		// RAM-A host load: 24-bit signed data word into the working memory.
-		// The program's per-step writeback will overwrite it; whether the
-		// real chip protects host cells during the host_gate window is open. [H]
+		// RAM-A host load: 24-bit signed data word. [V]
 		m_ram_a[data & 0x1f] = util::sext(
 				(u32(m_io[0]) << 16) | (u32(m_io[1]) << 8) | u32(m_io[2]), 24);
 		if (char const *dump = std::getenv("RCC_DUMP_RAMA"); dump)
@@ -154,9 +153,7 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 		if (m_stream)
 			m_stream->update();
 		std::copy_n(&m_io[0], 3, &m_program[data][0]);
-		// RAM-B parameter load: the 18-bit word rides the low bits of the
-		// 24-bit host data word (coef byte = io[2], verified by the dry-gain
-		// calibration; delay base in io[0] bits 1:0 + io[1]).
+		// RAM-B parameter load: 18-bit word in the low bits. [V]
 		m_ram_b[data] = ((u32(m_io[0]) << 16) | (u32(m_io[1]) << 8) | u32(m_io[2])) & 0x3ffff;
 		if (char const *dump = std::getenv("RCC_DUMP_RAMB"); dump)
 		{
@@ -166,7 +163,6 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 				std::fclose(f);
 			}
 		}
-		update_dry_gain(data);
 		break;
 
 	case 0x0a:
@@ -184,170 +180,111 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 //  program execution -- one pass = one 32kHz sample frame
 //-------------------------------------------------------------------------
 
-// RAM-A address: the program's band-0 bitstream runs through a 7-tap shift
-// register into the row decoders; the address for a step is the last 5
-// band-0 bits.  Cross-validated against the gate-level netlist simulator
-// (exact across the steady state of every block). [V]
-int roland_rcc_device::rama_addr(int step)
-{
-	int a = 0;
-	for (int k = 0; k < 5; ++k)
-		a = (a << 1) | (PROGRAM_ROM[(step - 1 - k + 256) & 255] & 1);
-	return a & 31;
-}
-
-// Coefficient: SIGN-MAGNITUDE byte.  The U-220 dry-gain calibration fixes
-// the positive range at byte/64 (0x40 = unity) [V hw]; the firmware's boot
-// parameter image fills the muted effect-network slots with 0x80 = "-0",
-// which only makes sense as sign-magnitude (as two's-complement those would
-// be -2.0 feedback taps at silent boot). [H sign half]
+// Coefficient: sign-magnitude byte (0x40 = unity at shift=1). [V hw]
 s32 roland_rcc_device::decode_coef(u32 param)
 {
 	s32 const mag = param & 0x7f;
 	return (param & 0x80) ? -mag : mag;
 }
 
-void roland_rcc_device::run_program(s32 effect_in)
+void roland_rcc_device::run_program(s32 const *voices)
 {
-	m_wet_l = 0;
-	m_wet_r = 0;
+	// acc-bank select maps, from the die's one-hot decode / read muxes,
+	// polarity class fixed by the anchor search [V die + hw class]
+	static constexpr u8 WMAP[4] = { 2, 3, 0, 1 };  // idx = ((b17<<1)|b16)^1
+	static constexpr u8 RMAP[4] = { 1, 3, 0, 2 };  // idx = ((b20<<1)|b19)^1
 
-	s32 acc = 0;                                     // 24-bit saturating accumulator
 	for (int step = 0; step < 256; ++step)
 	{
 		u32 const op = PROGRAM_ROM[step];
-		u32 const param = m_ram_b[step];             // parameter fetched by the PC [V]
+		u32 const P = m_ram_b[step];               // auto-fetched by PC [V]
+		int const a5 = (P >> 9) & 0x1f;
+		s32 const coef = decode_coef(P);
+		int const align = BIT(P, 8) ? 6 : 4;       // shift=0 scale open [H]
+		s32 const ain = voices[step >> 3];
 
-		// ---- multiplier sample source (bands 24/25, inverted) [S] ----
-		// RAM-A cells 09-0b/0f-11 are the chorus control lanes the host
-		// keeps loaded with control constants (identified by U-220 sweeps);
-		// their products modulate the delay rather than entering the audio
-		// sum, and the chorus block models that separately -- so they read
-		// as silence in the audio MAC here.  [H split]
-		bool const audio_in = BIT(op, 25) && !BIT(op, 24);
-		int const ra = rama_addr(step);
-		bool const control_lane = (ra >= 0x09 && ra <= 0x0b) || (ra >= 0x0f && ra <= 0x11);
-		s32 const sample = audio_in ? effect_in : (control_lane ? 0 : m_ram_a[ra]);
-
-		// ---- multiply-accumulate ----
-		// All three runtime opcodes (bands 26-28: 010 x246, 100 x2, 110 x8)
-		// are MACs; the opcode selects the coefficient scaling mode (the
-		// block-floating-point exponent, not yet modeled). [V structure]
-		// A-operand select (bands 21-23, overflow-steered): 1 = load,
-		// otherwise accumulate. [V]
-		// Product alignment: byte/64 uniformly (the only hardware-calibrated
-		// scale).  A shift-4 reading of the bit-8-clear slots was tried and
-		// makes the program's cell-0 recirculation a unity loop -> saturation
-		// lock; at /64 the same loop decays at 0.25. [V hw]
+		// multiplier sample source (b25,b24) [V]
+		s32 sample;
+		switch ((BIT(op, 25) << 1) | BIT(op, 24))
 		{
-			s32 const coef = decode_coef(param);
-			s64 prod = (s64(sample) * coef) >> 6;
-			int const a0 = BIT(op, 21) & BIT(op, 23);
-			int const a1 = (int(acc >= 0) & int(!BIT(op, 21))) | (BIT(op, 21) & BIT(op, 22));
-			if (((a1 << 1) | a0) == 1)
-				acc = s32(prod);                     // load (start of a sum)
-			else
-				acc += s32(prod);                    // accumulate
+		case 0:  sample = 0; break;
+		case 1:  sample = m_ram_a[a5]; break;
+		case 2:  sample = ain; break;
+		default: sample = m_bank[RMAP[((BIT(op, 20) << 1) | BIT(op, 19)) ^ 1]]; break;
 		}
 
-		// ---- 24-bit signed saturation [V] ----
-		acc = std::clamp<s32>(acc, -0x800000, 0x7fffff);
-
-		// ---- RAM-A writeback, gated by ~band0 [V] ----
-		if (!BIT(op, 0))
-			m_ram_a[rama_addr(step)] = acc;
-
-		// ---- DRAM delay network: addr = param base + frame counter [V],
-		// 4-step cadence [V].  The parameter's top 10 bits are a delay base
-		// in 64-sample (2ms) units on one 64K ring; param bit 8 selects the
-		// slot role: 0 = write head (stores acc scaled by the coefficient =
-		// send level), 1 = read tap (mixes the delayed content through the
-		// coefficient).  Role split extracted from the D-70's live parameter
-		// image; muted slots (coef +-0) are inert. [H field widths/roles]
-		if (!BIT(op, 4) && (step & 3) == 2)
+		// A operand (b21..b23): RMW / audio capture / zero [V hw]
+		s32 a;
+		switch ((BIT(op, 21) << 2) | (BIT(op, 22) << 1) | BIT(op, 23))
 		{
-			s32 const coef = decode_coef(param);
-			if (coef != 0)
-			{
-				int const daddr = ((int(param >> 8) << 6) + int(m_frame)) & 0xffff;
-				if (!(param & 0x100))                // write head
-				{
-					m_dram[daddr] = s32((s64(acc) * coef) >> 6);
-				}
-				else                                 // read tap
-				{
-					// stability guard: cap the tap gain just below unity so
-					// residual loops under this approximate role/base model
-					// always decay (-0.14dB on a 1.0 tap) [H]
-					s32 const tc = std::clamp<s32>(coef, -63, 63);
-					s32 const c = s32((s64(m_dram[daddr]) * tc) >> 6);
-					acc = std::clamp<s32>(acc + c, -0x800000, 0x7fffff);
-					if (step < 128)                  // L half / R half [H routing]
-						m_wet_l += c;
-					else
-						m_wet_r += c;
-				}
-			}
+		case 1: case 2: a = m_ram_a[a5]; break;
+		case 3:         a = ain; break;
+		default:        a = 0; break;             // 000/111 unresolved [H]
 		}
+
+		// MAC (product gated by b13) + 24-bit saturation [V]
+		s64 acc = s64(a);
+		if (BIT(op, 13))
+			acc += (s64(sample) * coef) >> align;
+		s32 const res = s32(std::clamp<s64>(acc, -0x800000, 0x7fffff));
+
+		// two-step result pipeline: accw = res(step-2) [V hw]
+		s32 const accw = m_hist[1];
+
+		// acc-bank file write (every step) [V die]
+		m_bank[WMAP[((BIT(op, 17) << 1) | BIT(op, 16)) ^ 1]] = accw;
+
+		// RAM-A store (b2) [V]
+		if (BIT(op, 2))
+			m_ram_a[a5] = accw;
+
+		// DAC strobes (b3): mix pair identified by hardware routing [V hw];
+		// direct-out strobes not yet mapped, delay engine (b9/b14, nibble
+		// addresses) not yet modeled -- next bring-up stage
+		if (step == 0x61)
+			m_mix_l = accw;
+		else if (step == 0x35)
+			m_mix_r = accw;
+
+		m_hist[1] = m_hist[0];
+		m_hist[0] = res;
 	}
 	++m_frame;
 }
 
 //-------------------------------------------------------------------------
-//  mixing
+//  stream interface
 //-------------------------------------------------------------------------
-
-void roland_rcc_device::update_dry_gain(u8 index)
-{
-	for (unsigned voice = 0; voice < NUM_CHANNELS; voice++)
-	{
-		unsigned const program_voice = (voice + m_program_voice_offset) & (NUM_CHANNELS - 1);
-		if (program_voice == 28)
-			continue;
-		for (unsigned side = 0; side < 2; side++)
-		{
-			if (GAIN_PROGRAM[program_voice][side] != index)
-				continue;
-
-			// Hardware tests identify coefficient 0x40 as unity (gain =
-			// byte/64); the byte is sign-magnitude. [V hw]
-			float const mag = std::clamp(float(m_program[index][2] & 0x7f) / 64.0F, 0.0F, 2.0F);
-			m_gain[voice][side] = (m_program[index][2] & 0x80) ? -mag : mag;
-		}
-	}
-}
 
 void roland_rcc_device::sound_stream_update(sound_stream &stream)
 {
 	for (int sample = 0; sample < stream.samples(); sample++)
 	{
-		// dry mix (hardware-calibrated per-voice gains) + effect-bus input
-		// (the per-voice input-bus multiplexing is owned by the PCM-side
-		// chip; modeled as the summed voice mix [H])
-		float dry_l = 0.0F;
-		float dry_r = 0.0F;
-		float effect_in = 0.0F;
-		for (unsigned voice = 0; voice < NUM_CHANNELS; voice++)
+		// LP chip voice bus: 18-bit samples (17-bit magnitude + sign)
+		// time-multiplexed one voice per 8-step window; the D-70 offsets
+		// its LP contexts against the program windows. [V]
+		s32 voices[NUM_CHANNELS];
+		for (unsigned w = 0; w < NUM_CHANNELS; w++)
 		{
-			float const input = stream.get(voice, sample);
-			dry_l += input * m_gain[voice][0];
-			dry_r += input * m_gain[voice][1];
-			effect_in += input;
+			unsigned const v = (w - m_program_voice_offset) & (NUM_CHANNELS - 1);
+			voices[w] = s32(std::clamp(stream.get(v, sample), -1.0F, 1.0F) * 131071.0F);
 		}
 
-		// run the mask-ROM program for this frame
-		run_program(s32(std::clamp(effect_in, -1.0F, 1.0F) * 4194303.0F));
-		float const wet_l = float(m_wet_l) / 8388608.0F;
-		float const wet_r = float(m_wet_r) / 8388608.0F;
+		run_program(voices);
 
-		// output buses (see roland_rcc.h)
-		stream.put(0, sample, std::clamp(dry_l + wet_l, -1.0F, 1.0F));
-		stream.put(1, sample, std::clamp(dry_r + wet_r, -1.0F, 1.0F));
-		stream.put(2, sample, std::clamp(dry_l, -1.0F, 1.0F));
-		stream.put(3, sample, std::clamp(dry_r, -1.0F, 1.0F));
+		// gain staging: one full-scale voice at the standard dry byte
+		// (0x2c) lands around -3 dBFS, matching the previous device's
+		// level; the full 32-voice sum clips into the clamp [H staging]
+		float const mix_l = std::clamp(float(m_mix_l) / 131072.0F, -1.0F, 1.0F);
+		float const mix_r = std::clamp(float(m_mix_r) / 131072.0F, -1.0F, 1.0F);
+
+		stream.put(0, sample, mix_l);
+		stream.put(1, sample, mix_r);
+		stream.put(2, sample, mix_l);              // direct outs: strobe map
+		stream.put(3, sample, mix_r);              // pending, mirror mix [H]
 		stream.put(4, sample, 0.0F);
 		stream.put(5, sample, 0.0F);
-		stream.put(6, sample, std::clamp(wet_l, -1.0F, 1.0F));
-		stream.put(7, sample, std::clamp(wet_r, -1.0F, 1.0F));
+		stream.put(6, sample, 0.0F);               // effect returns: delay
+		stream.put(7, sample, 0.0F);               // engine pending
 	}
 }
