@@ -1,34 +1,66 @@
 // license:BSD-3-Clause
 // copyright-holders:giulioz
 
-// Roland RCC (TC23SC140AF) host interface, voice mixer and effects DSP.
+// Roland RCC (TC23SC140AF) -- see roland_rcc.h for the model overview.
 //
-// The RCC receives the PCM chip's voices on a multiplexed input bus, applies
-// per-voice dry L/R gains, runs a 256-step effects program (delay/chorus/
-// reverb network in external DRAM), and drives the stereo DAC.  The chip was
-// fully reverse-engineered from die photos (netlist 100% equivalence-checked;
-// see the rcc repo: RCC_DSP_GUIDE.md, EMULATOR_STATUS.md); this device
-// combines that model with hardware calibration measured on a real U-220:
-//
-//  - dry mixing: RAM-B coefficient byte at each voice's gain slot, gain =
-//    byte/64 (0x40 = unity) -- hardware-measured, GAIN_PROGRAM below;
-//  - chorus: host-modulated delay lanes identified by controlled U-220
-//    sweeps (RAM-A cells 09/0f = rate, 0a/10 = centre delay, 0b/11 = depth);
-//  - reverb/delay network: the die-RE program interpreter runs the real
-//    256-step mask-ROM program on the firmware-written parameter file, and
-//    its DRAM delay-network contribution is taken as the wet return.
+// Provenance tags used in comments below:
+//   [V]  verified against the solved die netlist (1441/1441 equivalence
+//        checks) or measured on real U-220 hardware
+//   [S]  structural (wiring verified; boolean of a plausible cell)
+//   [H]  hypothesis / modeling choice (rcc repo, EMULATOR_STATUS.md)
 
 #include "emu.h"
 #include "roland_rcc.h"
 
 
-DEFINE_DEVICE_TYPE(ROLAND_RCC, roland_rcc_device, "roland_rcc", "Roland RCC host interface and mixer")
+DEFINE_DEVICE_TYPE(ROLAND_RCC, roland_rcc_device, "roland_rcc", "Roland RCC host interface, mixer and effects DSP")
+
+// 288 x 29-bit program mask ROM (die transcription; words 256..287 are the
+// service page, unused at runtime) [V die]
+static constexpr u32 PROGRAM_ROM[288] = {
+	0x0ad43cd1, 0x0ad41cc4, 0x088cfec0, 0x0bd41cc4, 0x0b853cc0, 0x0a863cc0, 0x09845cc5, 0x08d41cc5,
+	0x0ad43cc1, 0x0ad714c1, 0x09845ec5, 0x0bdc1cc5, 0x0b843cc1, 0x0a873cc1, 0x09845cc5, 0x0adc1cc5,
+	0x08d414c4, 0x089f3cc1, 0x0ad45ec5, 0x09cc1cd5, 0x0b441cc0, 0x0b863cc0, 0x0a877cc0, 0x088c1cc4,
+	0x0b843cc0, 0x09d43cd0, 0x09de5ec0, 0x0ad41cc4, 0x088f38c0, 0x0a8614d0, 0x09845dc0, 0x0bcc1cc4,
+	0x0ace1cd1, 0x0a863cc0, 0x09845ec4, 0x0bcc1cc4, 0x0b843cc0, 0x088e3cc0, 0x0ad45cc5, 0x09841cd5,
+	0x0a873cc1, 0x0b801ec1, 0x0b867cc1, 0x09843cc1, 0x0acc1cc5, 0x089c1cc5, 0x0a863cd1, 0x0ad41cc1,
+	0x0ad43cd2, 0x0a9c1cc5, 0x05d07ec1, 0x0b541cc5, 0x0b873cc0, 0x0a843cc8, 0x0a84dcc4, 0x088c1cc6,
+	0x09841cc6, 0x0adc1cc2, 0x0ace3ec2, 0x0ad73cd8, 0x0ad61cc0, 0x0b841cc4, 0x09803dc0, 0x0bd43cc2,
+	0x0a843cc3, 0x0a443cc2, 0x089c1ed6, 0x0b441cc0, 0x0b873cc0, 0x0a843cc8, 0x0a845cc5, 0x0a841cc7,
+	0x0a843cd1, 0x0adc34c3, 0x0acc36c3, 0x0bdf34c1, 0x0a841cc5, 0x0afc3cc1, 0x0900dcc5, 0x0b061cc5,
+	0x08941cd6, 0x089f1cc9, 0x0a001ed5, 0x09841cd3, 0x0b441cc2, 0x0b843cc2, 0x0a873cca, 0x0a841cc6,
+	0x0a841cd4, 0x0ad41cc2, 0x0a843ec2, 0x0acc1cc4, 0x089c3cd0, 0x0b041cc0, 0x0980fdc0, 0x0b443cc0,
+	0x08d41cc1, 0x089f1cc8, 0x0a005ed4, 0x0b841cc2, 0x0b873cc2, 0x0a843cc2, 0x08941cc7, 0x08941cd5,
+	0x0bd43cc1, 0x0ad43cc1, 0x09d0d6d5, 0x0a441cc1, 0x088e1cc5, 0x0a863cc1, 0x0a847cd1, 0x08441cc1,
+	0x0adc1cc6, 0x0b841cc5, 0x08847ec9, 0x0a4c1cc7, 0x089c1cd6, 0x0b441cca, 0x0b843cc2, 0x09873cc2,
+	0x0a841cc6, 0x0ad41cc6, 0x089f3eca, 0x0a041cc6, 0x0b843cc2, 0x0b843cca, 0x0a043dc2, 0x0a841cc6,
+	0x0b841cc5, 0x0a043cc2, 0x0a8436c2, 0x0a803cd0, 0x0bdf14c0, 0x089c3cc0, 0x0afc7cc1, 0x0a841cc5,
+	0x0a843cc1, 0x09803cc1, 0x0a00fec1, 0x0bd41cc5, 0x088e3cc1, 0x0a041cc5, 0x0b84dcc5, 0x0a843cc9,
+	0x08101cd6, 0x0a841cc5, 0x0b807ec1, 0x08803cc3, 0x0a041cc6, 0x0b841cc6, 0x0a873cda, 0x089c1cc2,
+	0x0a841cc6, 0x0ad41cc2, 0x088c3eca, 0x0ad414c6, 0x0b843cc2, 0x0b043cca, 0x0a843dc2, 0x0a841cc2,
+	0x08843c01, 0x08843cc2, 0x0a842ec2, 0x0b843c80, 0x0a871cb4, 0x0a841c80, 0x0b84dc85, 0x0a843c01,
+	0x0d983cc3, 0x05801c15, 0x0bd45e01, 0x0b843c01, 0x0a843cc9, 0x0a841cc5, 0x0d9cdcd5, 0x081414c3,
+	0x0adc04c0, 0x0a443cd3, 0x0bd41ecb, 0x0b863cc3, 0x0a873cc2, 0x0a841cc6, 0x0a841cc6, 0x0a843cd0,
+	0x088c3c00, 0x0a843cc0, 0x085416c4, 0x0ad43cc0, 0x0a873ca0, 0x0a841c94, 0x0b841d80, 0x0b843c00,
+	0x0acc1cc5, 0x0ad01c04, 0x0b845e04, 0x0b863cc0, 0x0d9c3cc0, 0x081c14c0, 0x0dd8dcc5, 0x0a443cc1,
+	0x08941cc5, 0x0ad53cd1, 0x085c16d1, 0x0a961cc1, 0x0b841cc5, 0x0b873cc1, 0x0a843cc1, 0x08841cc5,
+	0x0a843cc2, 0x0acc3cc1, 0x0adc3ec1, 0x0acc1cd5, 0x0a441cd0, 0x0a841cc8, 0x0b841cc4, 0x0b843cc2,
+	0x0a843cc0, 0x0a841cc6, 0x08941ec6, 0x0a543cc0, 0x0a841cc0, 0x0a801cd4, 0x0b841dc0, 0x0b843cc0,
+	0x0a443c81, 0x0a841cc4, 0x0a841ec4, 0x0a043cc0, 0x0a842cc0, 0x0b843cc0, 0x0ac73ca1, 0x08941c85,
+	0x0d9c3c81, 0x0a842481, 0x089c1e85, 0x088e3401, 0x0a843401, 0x0a841c05, 0x0b865c25, 0x0b843c81,
+	0x0a0414c4, 0x0a041485, 0x0d98de95, 0x0a441c11, 0x0b841c00, 0x0b873c00, 0x0a847c00, 0x0d8c1cc4,
+	0x08941cc4, 0x0ad43cd0, 0x0d88dec0, 0x0ac61cc4, 0x0a843cd0, 0x0b861cc0, 0x0b843dc0, 0x0a843cc0,
+	0x0a973ccb, 0x0a973ccb, 0x0a971ccf, 0x0a973ccb, 0x0a9734cb, 0x0a971ccf, 0x0a971ccf, 0x0a973ccb,
+	0x0b8f1ed0, 0x0b8f1ed0, 0x0b8bded1, 0x0b8a1ed3, 0x0b0b1ed3, 0x0b8b1ed2, 0x0b8b1fda, 0x0b8f1ed0,
+	0x0acc36c1, 0x0a8436c1, 0x0a845ed5, 0x0d9f16c1, 0x0a5c3ed1, 0x0b8416d1, 0x0b86ded1, 0x1d911ec1,
+	0x0b843601, 0x0a843e11, 0x0bdf1601, 0x0b8c3e91, 0x0bfc1e91, 0x0b9c1e81, 0x0b9c1ea5, 0x0a843601,
+};
 
 // These program locations are the dry L/R coefficient instructions found by
 // cycling every U-220 voice in Sound Test (1). Products can connect their
 // first synth voice at a later RCC program slot. The phase is circular: the
 // D-70 offsets LP contexts by four, so contexts 28-31 use program voices 0-3.
-// Its two reserved LP contexts align with non-voice program slots 4 and 28.
+// Its two reserved LP contexts align with non-voice program slots 4 and 28. [V hw]
 static constexpr u8 GAIN_PROGRAM[roland_rcc_device::NUM_CHANNELS][2] = {
 	{ 0x04, 0x05 }, { 0x0c, 0x0d }, { 0x15, 0x16 }, { 0x20, 0x21 },
 	{ 0x24, 0x25 }, { 0x2a, 0x2b }, { 0x34, 0x35 }, { 0x3e, 0x40 },
@@ -44,33 +76,34 @@ roland_rcc_device::roland_rcc_device(const machine_config &mconfig, const char *
 	device_t(mconfig, ROLAND_RCC, tag, owner, clock),
 	device_sound_interface(mconfig, *this),
 	m_stream(nullptr),
+	m_frame(0),
+	m_wet_l(0),
+	m_wet_r(0),
 	m_program_voice_offset(0),
 	m_chorus_position(0),
-	m_chorus_phase(0.0),
-	m_dsp_output(true)
+	m_chorus_phase(0.0)
 {
 }
 
 void roland_rcc_device::device_start()
 {
-	m_stream = stream_alloc(NUM_CHANNELS, 2, clock(), STREAM_SYNCHRONOUS);
+	m_stream = stream_alloc(NUM_CHANNELS, NUM_OUTPUTS, clock(), STREAM_SYNCHRONOUS);
 
 	save_item(NAME(m_io));
 	save_item(NAME(m_program));
 	save_item(NAME(m_state));
+	save_item(NAME(m_ram_a));
+	save_item(NAME(m_ram_b));
+	save_item(NAME(m_dram));
+	save_item(NAME(m_frame));
+	save_item(NAME(m_wet_l));
+	save_item(NAME(m_wet_r));
+	save_item(NAME(m_effect_dc));
 	save_item(NAME(m_gain));
 	save_item(NAME(m_program_voice_offset));
 	save_item(NAME(m_chorus_buffer));
 	save_item(NAME(m_chorus_position));
 	save_item(NAME(m_chorus_phase));
-	save_item(NAME(m_dsp.ram_a));
-	save_item(NAME(m_dsp.ram_b));
-	save_item(NAME(m_dsp.dram));
-	save_item(NAME(m_dsp.frame));
-	save_item(NAME(m_dsp.out_l));
-	save_item(NAME(m_dsp.out_r));
-	save_item(NAME(m_dsp.wet_l));
-	save_item(NAME(m_dsp.wet_r));
 }
 
 void roland_rcc_device::device_reset()
@@ -78,20 +111,22 @@ void roland_rcc_device::device_reset()
 	std::fill(std::begin(m_io), std::end(m_io), 0);
 	std::fill_n(&m_program[0][0], 0x100 * 3, 0);
 	std::fill_n(&m_state[0][0], 0x20 * 3, 0);
+	std::fill(std::begin(m_ram_a), std::end(m_ram_a), 0);
+	std::fill(std::begin(m_ram_b), std::end(m_ram_b), 0);
+	std::fill(std::begin(m_dram), std::end(m_dram), 0);
+	m_frame = 0;
+	m_wet_l = 0;
+	m_wet_r = 0;
+	m_effect_dc = 0.0F;
 	std::fill_n(&m_gain[0][0], NUM_CHANNELS * 2, 0.0F);
 	std::fill_n(&m_chorus_buffer[0][0], 2 * CHORUS_BUFFER_SAMPLES, 0.0F);
 	m_chorus_position = 0;
 	m_chorus_phase = 0.0;
-
-	std::fill(std::begin(m_dsp.ram_a), std::end(m_dsp.ram_a), 0);
-	std::fill(std::begin(m_dsp.ram_b), std::end(m_dsp.ram_b), 0);
-	std::fill(std::begin(m_dsp.dram), std::end(m_dsp.dram), 0);
-	m_dsp.frame = 0;
-	m_dsp.out_l = 0;
-	m_dsp.out_r = 0;
-	m_dsp.wet_l = 0;
-	m_dsp.wet_r = 0;
 }
+
+//-------------------------------------------------------------------------
+//  host interface
+//-------------------------------------------------------------------------
 
 u8 roland_rcc_device::read(offs_t offset)
 {
@@ -110,16 +145,28 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 			m_stream->update();
 		std::copy_n(&m_io[0], 3, &m_state[data & 0x1f][0]);
 		// RAM-A host load: 24-bit signed data word into the working memory.
-		// The interpreter's per-step writeback will overwrite it; whether the
+		// The program's per-step writeback will overwrite it; whether the
 		// real chip protects host cells during the host_gate window is open. [H]
-		m_dsp.ram_a[data & 0x1f] = util::sext(
+		m_ram_a[data & 0x1f] = util::sext(
 				(u32(m_io[0]) << 16) | (u32(m_io[1]) << 8) | u32(m_io[2]), 24);
+		if (char const *dump = std::getenv("RCC_DUMP_RAMA"); dump)
+		{
+			if (FILE *f = std::fopen(dump, "a"); f)
+			{
+				std::fprintf(f, "%02x %02x%02x%02x\n", data & 0x1f, m_io[0], m_io[1], m_io[2]);
+				std::fclose(f);
+			}
+		}
 		break;
 
 	case 0x06:
 		if (m_stream)
 			m_stream->update();
 		std::copy_n(&m_io[0], 3, &m_program[data][0]);
+		// RAM-B parameter load: the 18-bit word rides the low bits of the
+		// 24-bit host data word (coef byte = io[2], verified by the dry-gain
+		// calibration; delay base in io[0] bits 1:0 + io[1]).
+		m_ram_b[data] = ((u32(m_io[0]) << 16) | (u32(m_io[1]) << 8) | u32(m_io[2])) & 0x3ffff;
 		if (char const *dump = std::getenv("RCC_DUMP_RAMB"); dump)
 		{
 			if (FILE *f = std::fopen(dump, "a"); f)
@@ -128,10 +175,6 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 				std::fclose(f);
 			}
 		}
-		// RAM-B host load: the 18-bit parameter word rides the low bits of the
-		// 24-bit host data word (coef byte = io[2], verified by the dry-gain
-		// calibration; delay page in io[0] bits 1:0 + io[1] bits 7:6).
-		m_dsp.ram_b[data] = ((u32(m_io[0]) << 16) | (u32(m_io[1]) << 8) | u32(m_io[2])) & 0x3ffff;
 		update_dry_gain(data);
 		break;
 
@@ -145,6 +188,123 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 		break;
 	}
 }
+
+//-------------------------------------------------------------------------
+//  program execution -- one pass = one 32kHz sample frame
+//-------------------------------------------------------------------------
+
+// RAM-A address: the program's band-0 bitstream runs through a 7-tap shift
+// register into the row decoders; the address for a step is the last 5
+// band-0 bits.  Cross-validated against the gate-level netlist simulator
+// (exact across the steady state of every block). [V]
+int roland_rcc_device::rama_addr(int step)
+{
+	int a = 0;
+	for (int k = 0; k < 5; ++k)
+		a = (a << 1) | (PROGRAM_ROM[(step - 1 - k + 256) & 255] & 1);
+	return a & 31;
+}
+
+// Coefficient: SIGN-MAGNITUDE byte.  The U-220 dry-gain calibration fixes
+// the positive range at byte/64 (0x40 = unity) [V hw]; the firmware's boot
+// parameter image fills the muted effect-network slots with 0x80 = "-0",
+// which only makes sense as sign-magnitude (as two's-complement those would
+// be -2.0 feedback taps at silent boot). [H sign half]
+s32 roland_rcc_device::decode_coef(u32 param)
+{
+	s32 const mag = param & 0x7f;
+	return (param & 0x80) ? -mag : mag;
+}
+
+void roland_rcc_device::run_program(s32 effect_in)
+{
+	m_wet_l = 0;
+	m_wet_r = 0;
+
+	s32 acc = 0;                                     // 24-bit saturating accumulator
+	for (int step = 0; step < 256; ++step)
+	{
+		u32 const op = PROGRAM_ROM[step];
+		u32 const param = m_ram_b[step];             // parameter fetched by the PC [V]
+
+		// ---- multiplier sample source (bands 24/25, inverted) [S] ----
+		// RAM-A cells 09-0b/0f-11 are the chorus control lanes the host
+		// keeps loaded with control constants (identified by U-220 sweeps);
+		// their products modulate the delay rather than entering the audio
+		// sum, and the chorus block models that separately -- so they read
+		// as silence in the audio MAC here.  [H split]
+		bool const audio_in = BIT(op, 25) && !BIT(op, 24);
+		int const ra = rama_addr(step);
+		bool const control_lane = (ra >= 0x09 && ra <= 0x0b) || (ra >= 0x0f && ra <= 0x11);
+		s32 const sample = audio_in ? effect_in : (control_lane ? 0 : m_ram_a[ra]);
+
+		// ---- multiply-accumulate ----
+		// All three runtime opcodes (bands 26-28: 010 x246, 100 x2, 110 x8)
+		// are MACs; the opcode selects the coefficient scaling mode (the
+		// block-floating-point exponent, not yet modeled). [V structure]
+		// A-operand select (bands 21-23, overflow-steered): 1 = load,
+		// otherwise accumulate. [V]
+		// Product alignment: byte/64 uniformly (the only hardware-calibrated
+		// scale).  A shift-4 reading of the bit-8-clear slots was tried and
+		// makes the program's cell-0 recirculation a unity loop -> saturation
+		// lock; at /64 the same loop decays at 0.25. [V hw]
+		{
+			s32 const coef = decode_coef(param);
+			s64 prod = (s64(sample) * coef) >> 6;
+			int const a0 = BIT(op, 21) & BIT(op, 23);
+			int const a1 = (int(acc >= 0) & int(!BIT(op, 21))) | (BIT(op, 21) & BIT(op, 22));
+			if (((a1 << 1) | a0) == 1)
+				acc = s32(prod);                     // load (start of a sum)
+			else
+				acc += s32(prod);                    // accumulate
+		}
+
+		// ---- 24-bit signed saturation [V] ----
+		acc = std::clamp<s32>(acc, -0x800000, 0x7fffff);
+
+		// ---- RAM-A writeback, gated by ~band0 [V] ----
+		if (!BIT(op, 0))
+			m_ram_a[rama_addr(step)] = acc;
+
+		// ---- DRAM delay network: addr = param base + frame counter [V],
+		// 4-step cadence [V].  The parameter's top 10 bits are a delay base
+		// in 64-sample (2ms) units on one 64K ring; param bit 8 selects the
+		// slot role: 0 = write head (stores acc scaled by the coefficient =
+		// send level), 1 = read tap (mixes the delayed content through the
+		// coefficient).  Role split extracted from the D-70's live parameter
+		// image; muted slots (coef +-0) are inert. [H field widths/roles]
+		if (!BIT(op, 4) && (step & 3) == 2)
+		{
+			s32 const coef = decode_coef(param);
+			if (coef != 0)
+			{
+				int const daddr = ((int(param >> 8) << 6) + int(m_frame)) & 0xffff;
+				if (!(param & 0x100))                // write head
+				{
+					m_dram[daddr] = s32((s64(acc) * coef) >> 6);
+				}
+				else                                 // read tap
+				{
+					// stability guard: cap the tap gain just below unity so
+					// residual loops under this approximate role/base model
+					// always decay (-0.14dB on a 1.0 tap) [H]
+					s32 const tc = std::clamp<s32>(coef, -63, 63);
+					s32 const c = s32((s64(m_dram[daddr]) * tc) >> 6);
+					acc = std::clamp<s32>(acc + c, -0x800000, 0x7fffff);
+					if (step < 128)                  // L half / R half [H routing]
+						m_wet_l += c;
+					else
+						m_wet_r += c;
+				}
+			}
+		}
+	}
+	++m_frame;
+}
+
+//-------------------------------------------------------------------------
+//  mixing
+//-------------------------------------------------------------------------
 
 float roland_rcc_device::chorus_read(unsigned side, double delay_samples) const
 {
@@ -169,9 +329,8 @@ void roland_rcc_device::update_dry_gain(u8 index)
 			if (GAIN_PROGRAM[program_voice][side] != index)
 				continue;
 
-			// Hardware tests identify coefficient 0x40 with the shifter set as
-			// unity.  The coefficient byte is sign-magnitude (see
-			// roland_rcc_dsp.h decode_coef); dry gains use the positive half.
+			// Hardware tests identify coefficient 0x40 as unity (gain =
+			// byte/64); the byte is sign-magnitude. [V hw]
 			float const mag = std::clamp(float(m_program[index][2] & 0x7f) / 64.0F, 0.0F, 2.0F);
 			m_gain[voice][side] = (m_program[index][2] & 0x80) ? -mag : mag;
 		}
@@ -181,11 +340,9 @@ void roland_rcc_device::update_dry_gain(u8 index)
 void roland_rcc_device::sound_stream_update(sound_stream &stream)
 {
 	// RAM-A locations 09/0f, 0a/10 and 0b/11 are the two chorus rate,
-	// centre-delay and depth lanes.  The exact RCC micro-operations and effect
-	// sends remain unknown, but these host values are independently identified
-	// by controlled U-220 sweeps.  Run a bounded stereo fractional delay here
-	// so patches which rely on the chorus comb response do not collapse to the
-	// dry mixer.
+	// centre-delay and depth lanes, identified by controlled U-220 sweeps.
+	// The chorus is host-modulated delay; run it as a bounded stereo
+	// fractional delay on the dry mix. [V hw lanes / H micro-ops]
 	auto state24 = [this](unsigned index)
 	{
 		return (u32(m_state[index][0]) << 16)
@@ -210,44 +367,52 @@ void roland_rcc_device::sound_stream_update(sound_stream &stream)
 
 	for (int sample = 0; sample < stream.samples(); sample++)
 	{
-		float left = 0.0F;
-		float right = 0.0F;
+		// dry mix (hardware-calibrated per-voice gains) + effect-bus input
+		// (the per-voice input-bus multiplexing is owned by the PCM-side
+		// chip; modeled as the summed voice mix [H])
+		float dry_l = 0.0F;
+		float dry_r = 0.0F;
 		float effect_in = 0.0F;
 		for (unsigned voice = 0; voice < NUM_CHANNELS; voice++)
 		{
 			float const input = stream.get(voice, sample);
-			left += input * m_gain[voice][0];
-			right += input * m_gain[voice][1];
+			dry_l += input * m_gain[voice][0];
+			dry_r += input * m_gain[voice][1];
 			effect_in += input;
 		}
 
-		// Run the die-RE program interpreter on the host-written RAM-A/RAM-B
-		// state; the delay-network read taps are the wet (reverb/delay)
-		// return the firmware wired up in the parameter file.
-		s32 const fx = s32(std::clamp(effect_in, -1.0F, 1.0F) * 4194303.0F);
-		m_dsp.run_frame(fx);
-		float const wet_l = float(m_dsp.wet_l) / 8388608.0F;
-		float const wet_r = float(m_dsp.wet_r) / 8388608.0F;
+		// DC-block the effect input: the real per-voice effect sends are
+		// gated coefficients (zeroed on release), but the summed-voice input
+		// model would otherwise feed the network the PCM chip's held DC
+		// tails.  One-pole high-pass, ~5Hz at 32kHz. [H input model]
+		m_effect_dc += (effect_in - m_effect_dc) * 0.001F;
+		float const effect_ac = effect_in - m_effect_dc;
 
-		m_chorus_buffer[0][m_chorus_position] = left;
-		m_chorus_buffer[1][m_chorus_position] = right;
-		float const chorus_left = chorus_read(0,
-			centre_delay + std::sin(m_chorus_phase) * left_depth);
-		float const chorus_right = chorus_read(1,
-			centre_delay - std::sin(m_chorus_phase) * right_depth);
+		// run the mask-ROM program for this frame
+		run_program(s32(std::clamp(effect_ac, -1.0F, 1.0F) * 4194303.0F));
+		float const wet_l = float(m_wet_l) / 8388608.0F;
+		float const wet_r = float(m_wet_r) / 8388608.0F;
+
+		// chorus lanes on the dry mix
+		m_chorus_buffer[0][m_chorus_position] = dry_l;
+		m_chorus_buffer[1][m_chorus_position] = dry_r;
+		float const chorus_l = chorus_read(0,
+			centre_delay + std::sin(m_chorus_phase) * left_depth) * left_wet;
+		float const chorus_r = chorus_read(1,
+			centre_delay - std::sin(m_chorus_phase) * right_depth) * right_wet;
 		m_chorus_position = (m_chorus_position + 1) & (CHORUS_BUFFER_SAMPLES - 1);
 		m_chorus_phase += phase_step;
 		if (m_chorus_phase >= 2.0 * pi)
 			m_chorus_phase -= 2.0 * pi;
 
-		float out_l = left + chorus_left * left_wet;
-		float out_r = right + chorus_right * right_wet;
-		if (m_dsp_output)
-		{
-			out_l += wet_l;
-			out_r += wet_r;
-		}
-		stream.put(0, sample, std::clamp(out_l, -1.0F, 1.0F));
-		stream.put(1, sample, std::clamp(out_r, -1.0F, 1.0F));
+		// output buses (see roland_rcc.h)
+		stream.put(0, sample, std::clamp(dry_l + chorus_l + wet_l, -1.0F, 1.0F));
+		stream.put(1, sample, std::clamp(dry_r + chorus_r + wet_r, -1.0F, 1.0F));
+		stream.put(2, sample, std::clamp(dry_l, -1.0F, 1.0F));
+		stream.put(3, sample, std::clamp(dry_r, -1.0F, 1.0F));
+		stream.put(4, sample, std::clamp(chorus_l, -1.0F, 1.0F));
+		stream.put(5, sample, std::clamp(chorus_r, -1.0F, 1.0F));
+		stream.put(6, sample, std::clamp(wet_l, -1.0F, 1.0F));
+		stream.put(7, sample, std::clamp(wet_r, -1.0F, 1.0F));
 	}
 }
