@@ -65,10 +65,6 @@ private:
 
 	// per-frame program results
 	s32 m_wet_l, m_wet_r;     // delay-network read-tap returns
-	s32 m_chorus_l = 0, m_chorus_r = 0;  // modulated-tap (chorus) returns
-	float m_effect_dc = 0.0F; // effect-input DC blocker state
-	int m_head_base = -1;     // first active write-head base this frame
-	double m_lfo_phase = 0.0; // chorus LFO phase (host-lane driven)
 
 	// hardware-calibrated dry mixer state
 	float m_gain[NUM_CHANNELS][2];

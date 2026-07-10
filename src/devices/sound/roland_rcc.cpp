@@ -96,10 +96,7 @@ void roland_rcc_device::device_start()
 	save_item(NAME(m_frame));
 	save_item(NAME(m_wet_l));
 	save_item(NAME(m_wet_r));
-	save_item(NAME(m_effect_dc));
-	save_item(NAME(m_chorus_l));
-	save_item(NAME(m_chorus_r));
-	save_item(NAME(m_lfo_phase));
+
 	save_item(NAME(m_gain));
 	save_item(NAME(m_program_voice_offset));
 }
@@ -115,7 +112,6 @@ void roland_rcc_device::device_reset()
 	m_frame = 0;
 	m_wet_l = 0;
 	m_wet_r = 0;
-	m_effect_dc = 0.0F;
 	std::fill_n(&m_gain[0][0], NUM_CHANNELS * 2, 0.0F);
 }
 
@@ -215,7 +211,6 @@ void roland_rcc_device::run_program(s32 effect_in)
 {
 	m_wet_l = 0;
 	m_wet_r = 0;
-	m_head_base = -1;
 
 	s32 acc = 0;                                     // 24-bit saturating accumulator
 	for (int step = 0; step < 256; ++step)
@@ -295,45 +290,6 @@ void roland_rcc_device::run_program(s32 effect_in)
 			}
 		}
 	}
-	// ---- chorus: host-lane-modulated read taps of the SAME delay ring ----
-	// The firmware writes the chorus controls into the RAM-A lanes identified
-	// by real-unit sweeps (09/0f = rate, 0a/10 = centre delay, 0b/11 = depth).
-	// On the chip these modulate delay-tap addressing; here we read the ring
-	// content the write heads just stored, at a host-controlled modulated
-	// distance behind the head, with linear interpolation.  Same parameters,
-	// same 8-bit delay memory, same tap mechanism -- only the modulation
-	// arithmetic is behavioral. [H mod math; V lanes/laws by U-220 sweeps]
-	m_chorus_l = 0;
-	m_chorus_r = 0;
-	if (m_head_base >= 0)
-	{
-		auto state24 = [this](unsigned i) {
-			return (u32(m_state[i][0]) << 16) | (u32(m_state[i][1]) << 8) | u32(m_state[i][2]);
-		};
-		unsigned const rate_value = std::clamp<int>(int(m_state[0x09][0]) - 0xe0, 0, 31);
-		double const rate_hz = 0.05 * std::pow(200.0, double(rate_value) / 31.0);
-		unsigned const delay_value = std::clamp<int>(int(m_state[0x0a][0]) - 0x20, 0, 64);
-		double const centre = (2.0 + double(delay_value) * (28.0 / 64.0)) * 32.0;   // samples @32kHz
-		double const depth_l = std::min(1.0, double(state24(0x0b)) / 0x2fd) * 5.0 * 32.0;
-		double const depth_r = std::min(1.0, double(state24(0x11)) / 0x0ff) * 5.0 * 32.0;
-		m_lfo_phase += 2.0 * 3.14159265358979323846 * rate_hz / 32000.0;
-		if (m_lfo_phase >= 2.0 * 3.14159265358979323846)
-			m_lfo_phase -= 2.0 * 3.14159265358979323846;
-		double const sn = std::sin(m_lfo_phase);
-		auto tap = [this](double back) {
-			double const pos = double(int(m_frame)) - back;
-			int const i0 = int(std::floor(pos));
-			double const fr = pos - std::floor(pos);
-			s32 const a = s32(m_dram[(((m_head_base << 6) + i0) & 0xffff)]) << 15;
-			s32 const b = s32(m_dram[(((m_head_base << 6) + i0 + 1) & 0xffff)]) << 15;
-			return s32(a + (b - a) * fr);
-		};
-		if (rate_value || delay_value)
-		{
-			m_chorus_l = tap(centre + sn * depth_l);
-			m_chorus_r = tap(centre - sn * depth_r);
-		}
-	}
 	++m_frame;
 }
 
@@ -379,30 +335,18 @@ void roland_rcc_device::sound_stream_update(sound_stream &stream)
 			effect_in += input;
 		}
 
-		// DC-block the effect input: the real per-voice effect sends are
-		// gated coefficients (zeroed on release), but the summed-voice input
-		// model would otherwise feed the network the PCM chip's held DC
-		// tails.  One-pole high-pass, ~5Hz at 32kHz. [H input model]
-		m_effect_dc += (effect_in - m_effect_dc) * 0.001F;
-		float const effect_ac = effect_in - m_effect_dc;
-
 		// run the mask-ROM program for this frame
-		run_program(s32(std::clamp(effect_ac, -1.0F, 1.0F) * 4194303.0F));
+		run_program(s32(std::clamp(effect_in, -1.0F, 1.0F) * 4194303.0F));
 		float const wet_l = float(m_wet_l) / 8388608.0F;
 		float const wet_r = float(m_wet_r) / 8388608.0F;
 
 		// output buses (see roland_rcc.h)
-		// chorus wet levels (program slots 0x01/0x03, calibrated)
-		float const cwl = float(m_program[0x01][2] & 0x7f) / 127.0F * 0.5F;
-		float const cwr = float(m_program[0x03][2] & 0x7f) / 127.0F * 0.5F;
-		float const cho_l = float(m_chorus_l) / 8388608.0F * cwl;
-		float const cho_r = float(m_chorus_r) / 8388608.0F * cwr;
-		stream.put(0, sample, std::clamp(dry_l + wet_l + cho_l, -1.0F, 1.0F));
-		stream.put(1, sample, std::clamp(dry_r + wet_r + cho_r, -1.0F, 1.0F));
+		stream.put(0, sample, std::clamp(dry_l + wet_l, -1.0F, 1.0F));
+		stream.put(1, sample, std::clamp(dry_r + wet_r, -1.0F, 1.0F));
 		stream.put(2, sample, std::clamp(dry_l, -1.0F, 1.0F));
 		stream.put(3, sample, std::clamp(dry_r, -1.0F, 1.0F));
-		stream.put(4, sample, std::clamp(cho_l, -1.0F, 1.0F));
-		stream.put(5, sample, std::clamp(cho_r, -1.0F, 1.0F));
+		stream.put(4, sample, 0.0F);
+		stream.put(5, sample, 0.0F);
 		stream.put(6, sample, std::clamp(wet_l, -1.0F, 1.0F));
 		stream.put(7, sample, std::clamp(wet_r, -1.0F, 1.0F));
 	}
