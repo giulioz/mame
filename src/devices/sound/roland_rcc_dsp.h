@@ -109,8 +109,13 @@ static inline instr decode(uint32_t w, bool ovf)
 	in.opcode         = ((w >> 26) & 1) | (((w >> 27) & 1) << 1) | (((w >> 28) & 1) << 2);
 	// op_mulsrc1 = ~band25, op_mulsrc0 = ~band24 [V]
 	in.mulsrc         = (int(!((w >> 25) & 1)) << 1) | int(!((w >> 24) & 1));
-	// op_macneg = band-driven product negate; op_macalign = param bit8 (below)
-	in.macneg         = (w >> 11) & 1;                     // approx: macneg source [S]
+	// Product negate: the earlier band-11 guess is REFUTED by a hardware
+	// constraint -- band 11 differs within one dry L/R slot pair, which would
+	// put that voice's outputs in opposite phase on the real unit (the U-220
+	// dry calibration shows coherent stereo).  Signal polarity is carried by
+	// the sign-magnitude coefficient instead (see decode_coef; the D-70's
+	// live image uses negative taps for its network).  No band negate.
+	in.macneg         = 0;
 	in.routing        = ((w >> 19) & 1) | (((w >> 20) & 1) << 1); // g373/g2947 [V]
 	// op_addasel0 = band21 & band23 [V]; op_addasel1 = (~ovf & ~band21) |
 	// (band21 & band22) [V, overflow-steered]
