@@ -79,9 +79,7 @@ roland_rcc_device::roland_rcc_device(const machine_config &mconfig, const char *
 	m_frame(0),
 	m_wet_l(0),
 	m_wet_r(0),
-	m_program_voice_offset(0),
-	m_chorus_position(0),
-	m_chorus_phase(0.0)
+	m_program_voice_offset(0)
 {
 }
 
@@ -101,9 +99,6 @@ void roland_rcc_device::device_start()
 	save_item(NAME(m_effect_dc));
 	save_item(NAME(m_gain));
 	save_item(NAME(m_program_voice_offset));
-	save_item(NAME(m_chorus_buffer));
-	save_item(NAME(m_chorus_position));
-	save_item(NAME(m_chorus_phase));
 }
 
 void roland_rcc_device::device_reset()
@@ -119,9 +114,6 @@ void roland_rcc_device::device_reset()
 	m_wet_r = 0;
 	m_effect_dc = 0.0F;
 	std::fill_n(&m_gain[0][0], NUM_CHANNELS * 2, 0.0F);
-	std::fill_n(&m_chorus_buffer[0][0], 2 * CHORUS_BUFFER_SAMPLES, 0.0F);
-	m_chorus_position = 0;
-	m_chorus_phase = 0.0;
 }
 
 //-------------------------------------------------------------------------
@@ -306,17 +298,6 @@ void roland_rcc_device::run_program(s32 effect_in)
 //  mixing
 //-------------------------------------------------------------------------
 
-float roland_rcc_device::chorus_read(unsigned side, double delay_samples) const
-{
-	double const read_position = double(m_chorus_position) - delay_samples;
-	int const integral = int(std::floor(read_position));
-	float const fraction = float(read_position - integral);
-	unsigned const first = unsigned(integral) & (CHORUS_BUFFER_SAMPLES - 1);
-	unsigned const second = (first + 1) & (CHORUS_BUFFER_SAMPLES - 1);
-	return m_chorus_buffer[side][first]
-		+ (m_chorus_buffer[side][second] - m_chorus_buffer[side][first]) * fraction;
-}
-
 void roland_rcc_device::update_dry_gain(u8 index)
 {
 	for (unsigned voice = 0; voice < NUM_CHANNELS; voice++)
@@ -339,32 +320,6 @@ void roland_rcc_device::update_dry_gain(u8 index)
 
 void roland_rcc_device::sound_stream_update(sound_stream &stream)
 {
-	// RAM-A locations 09/0f, 0a/10 and 0b/11 are the two chorus rate,
-	// centre-delay and depth lanes, identified by controlled U-220 sweeps.
-	// The chorus is host-modulated delay; run it as a bounded stereo
-	// fractional delay on the dry mix. [V hw lanes / H micro-ops]
-	auto state24 = [this](unsigned index)
-	{
-		return (u32(m_state[index][0]) << 16)
-			| (u32(m_state[index][1]) << 8)
-			| u32(m_state[index][2]);
-	};
-	unsigned const rate_value = std::clamp<int>(int(m_state[0x09][0]) - 0xe0, 0, 31);
-	double const rate_hz = 0.05 * std::pow(200.0, double(rate_value) / 31.0);
-	unsigned const delay_value = std::clamp<int>(int(m_state[0x0a][0]) - 0x20, 0, 64);
-	double const centre_delay = (2.0 + double(delay_value) * (28.0 / 64.0))
-		* clock() / 1000.0;
-	double const left_depth = std::min(1.0, double(state24(0x0b)) / 0x2fd)
-		* 5.0 * clock() / 1000.0;
-	double const right_depth = std::min(1.0, double(state24(0x11)) / 0x0ff)
-		* 5.0 * clock() / 1000.0;
-	float const left_wet = std::clamp(float(m_program[0x01][2] & 0x7f) / 127.0F, 0.0F, 1.0F)
-		* 0.5F;
-	float const right_wet = std::clamp(float(m_program[0x03][2] & 0x7f) / 127.0F, 0.0F, 1.0F)
-		* 0.5F;
-	double constexpr pi = 3.14159265358979323846;
-	double const phase_step = 2.0 * pi * rate_hz / clock();
-
 	for (int sample = 0; sample < stream.samples(); sample++)
 	{
 		// dry mix (hardware-calibrated per-voice gains) + effect-bus input
@@ -393,25 +348,16 @@ void roland_rcc_device::sound_stream_update(sound_stream &stream)
 		float const wet_l = float(m_wet_l) / 8388608.0F;
 		float const wet_r = float(m_wet_r) / 8388608.0F;
 
-		// chorus lanes on the dry mix
-		m_chorus_buffer[0][m_chorus_position] = dry_l;
-		m_chorus_buffer[1][m_chorus_position] = dry_r;
-		float const chorus_l = chorus_read(0,
-			centre_delay + std::sin(m_chorus_phase) * left_depth) * left_wet;
-		float const chorus_r = chorus_read(1,
-			centre_delay - std::sin(m_chorus_phase) * right_depth) * right_wet;
-		m_chorus_position = (m_chorus_position + 1) & (CHORUS_BUFFER_SAMPLES - 1);
-		m_chorus_phase += phase_step;
-		if (m_chorus_phase >= 2.0 * pi)
-			m_chorus_phase -= 2.0 * pi;
-
 		// output buses (see roland_rcc.h)
-		stream.put(0, sample, std::clamp(dry_l + chorus_l + wet_l, -1.0F, 1.0F));
-		stream.put(1, sample, std::clamp(dry_r + chorus_r + wet_r, -1.0F, 1.0F));
+		// chorus is NOT synthesized separately: on the real chip it is the
+		// program modulating delay taps via the host-written RAM-A lanes;
+		// it must emerge from exact program execution (in progress).
+		stream.put(0, sample, std::clamp(dry_l + wet_l, -1.0F, 1.0F));
+		stream.put(1, sample, std::clamp(dry_r + wet_r, -1.0F, 1.0F));
 		stream.put(2, sample, std::clamp(dry_l, -1.0F, 1.0F));
 		stream.put(3, sample, std::clamp(dry_r, -1.0F, 1.0F));
-		stream.put(4, sample, std::clamp(chorus_l, -1.0F, 1.0F));
-		stream.put(5, sample, std::clamp(chorus_r, -1.0F, 1.0F));
+		stream.put(4, sample, 0.0F);
+		stream.put(5, sample, 0.0F);
 		stream.put(6, sample, std::clamp(wet_l, -1.0F, 1.0F));
 		stream.put(7, sample, std::clamp(wet_r, -1.0F, 1.0F));
 	}

@@ -43,15 +43,12 @@ protected:
 	virtual void sound_stream_update(sound_stream &stream) override;
 
 private:
-	static constexpr unsigned CHORUS_BUFFER_SAMPLES = 2048;
-
 	// one pass of the 256-step mask-ROM program = one sample frame
 	void run_program(s32 effect_in);
 	static int rama_addr(int step);
 	static s32 decode_coef(u32 param);
 
 	void update_dry_gain(u8 index);
-	float chorus_read(unsigned side, double delay_samples) const;
 
 	sound_stream *m_stream;
 
@@ -63,7 +60,7 @@ private:
 	// chip memories
 	s32 m_ram_a[32];          // 32 x 24 working memory / delay line
 	u32 m_ram_b[256];         // 256 x 18 parameter file (one word per step)
-	s32 m_dram[1 << 16];      // external delay memory (64K ring)
+	s8 m_dram[1 << 16];       // two 4464 DRAMs: 64K x 8-bit delay ring [V board]
 	u32 m_frame;              // frame counter (walks the DRAM ring)
 
 	// per-frame program results
@@ -74,10 +71,6 @@ private:
 	float m_gain[NUM_CHANNELS][2];
 	u8 m_program_voice_offset;
 
-	// chorus lanes (host-modulated delay, calibrated by U-220 sweeps)
-	float m_chorus_buffer[2][CHORUS_BUFFER_SAMPLES];
-	u32 m_chorus_position;
-	double m_chorus_phase;
 };
 
 DECLARE_DEVICE_TYPE(ROLAND_RCC, roland_rcc_device)
