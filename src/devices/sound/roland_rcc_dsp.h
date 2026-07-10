@@ -211,12 +211,15 @@ struct engine
 			int32_t const sample = (in.mulsrc == 1) ? ain[step] : mem;
 
 			// ---- multiply-accumulate ----
-			// The runtime program uses exactly three opcodes (b26,b27,b28):
-			//   value 2 = (0,1,0) x246  the MAC (implemented below)     [V]
-			//   value 1 = (1,0,0) x2    special step (not implemented)  [TODO]
-			//   value 3 = (1,1,0) x8    special step (not implemented)  [TODO]
-			// The old 0b100 branch never occurs at runtime and is removed.
-			if (in.opcode == 0b010)
+			// The runtime program uses three opcodes (b26,b27,b28): value 2
+			// (010) x246, value 1 (100) x2, value 3 (110) x8.  Netlist trace:
+			// bands 26-28 drive the coefficient NAND-trees + macalign (not a
+			// separate capture/reset op) -- i.e. the opcode selects the
+			// coefficient SCALING MODE (block-floating-point exponent).  All
+			// three are MACs; 1/3 differ only in coef scaling, not yet modeled,
+			// so they are treated as the plain MAC for now.  Routing (bands
+			// 19,20 -> g373/g2947) selects the output bus.  [V structure]
+			if (in.opcode == 0b010 || in.opcode == 0b100 || in.opcode == 0b110)
 			{
 				int32_t const coef = decode_coef(q);
 				int64_t prod = (int64_t(sample) * coef) >> (q.macalign ? shift_align : shift_plain); // gain range [S]
