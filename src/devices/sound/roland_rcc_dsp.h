@@ -23,15 +23,13 @@
 // saturating MAC, RAM-A 32x24 working/delay memory, RAM-B 256x18 host parameter
 // file, external DRAM delay memory addressed by param-base + frame counter.
 //
-// The ONE piece that cannot be bit-exact yet is the multiplier COEFFICIENT: on
-// the die it is companded by a deliberate clock/data-complement timing race
-// (coef DFF clock g3883 and data g199 are exact complements from the same ring
-// FFs), which is absent from the logical netlist by construction.  decode_coef()
-// uses the parameter byte directly as a signed 8-bit gain as a documented
-// stand-in; a die/SPICE characterization of the coef cells drops straight in
-// there.  The product alignment shifts are likewise [S] guesses, so they are
-// engine parameters: the defaults match rcc_ref.cpp for conformance, and the
-// MAME device overrides them with the U-220 dry-unity hardware calibration.
+// Coefficient semantics are hardware-anchored: the U-220 dry-gain calibration
+// fixes the positive range at byte/64 (0x40 = unity), and the firmware's boot
+// parameter image implies sign-magnitude for the negative half (see
+// decode_coef).  The remaining known approximations, all tagged [H] below:
+// the per-voice input-bus multiplexing (owned by the PCM-side chip; modeled
+// as one summed effect input), the DRAM tap micro-order/feedback gain, and
+// the block-floating-point exponent scaling of large accumulator values.
 
 namespace roland_rcc_dsp {
 
@@ -158,16 +156,23 @@ struct engine
 	int32_t  out_l = 0;         // L output tap, latched at step 80        [V]
 	int32_t  out_r = 0;         // R output tap, latched at step 137       [V]
 
-	// Product alignment shifts, selected by op_macalign (param bit 8) [S].
-	// Defaults are the rcc_ref.cpp stand-in values (conformance); the MAME
-	// device narrows them to the hardware-calibrated dry-unity range.
-	int shift_plain = 14;
-	int shift_align = 20;
+	// Product alignment shifts, selected by op_macalign (param bit 8).
+	// The dry-gain slots all carry bit 8 SET (parameter banks 0x01/0x41/...),
+	// and the U-220 hardware calibration fixes their gain at byte/64, so
+	// shift_align = 6 [V by HW cal].  The bit-8-clear slots in the firmware
+	// boot image hold small mix constants (+16/+8) consistent with a
+	// 16-equals-unity range, so shift_plain = 4 [H].
+	int shift_plain = 4;
+	int shift_align = 6;
 
-	// Coefficient decode.  The EFFECTIVE multiplier coefficient is the signed
-	// parameter byte: the U-220 dry-gain calibration (roland_rcc.cpp) shows
-	// byte 0x40 = unity with shift_plain = 6, i.e. gain = byte/64, so the
-	// coefficient that reaches the multiplier is the byte itself.  [V by HW cal]
+	// Coefficient decode: SIGN-MAGNITUDE.  The U-220 dry-gain calibration
+	// (roland_rcc.cpp) shows byte 0x40 = unity with shift_plain = 6, i.e.
+	// gain = byte/64 over the positive range [V by HW cal].  The negative
+	// half is sign-magnitude rather than two's-complement [H]: the firmware's
+	// boot parameter image (progrom 0x1a000) fills the effect-network slots
+	// with 0x80 = "-0" (muted) -- as two's-complement those would be -2.0
+	// feedback taps, which cannot be a silent boot state.  The positive-only
+	// hardware calibration cannot distinguish the two encodings.
 	//
 	// (The coefficient DFF *storage* is a companded/complemented scramble of the
 	// byte - resolvable from the netlist under the hold-safe convention - but
@@ -176,7 +181,8 @@ struct engine
 	// large accumulator magnitudes; not yet modeled. [S])
 	static int32_t decode_coef(param const &q)
 	{
-		return sext(uint32_t(q.coef_code), 8);
+		int32_t const mag = q.coef_code & 0x7f;
+		return (q.coef_code & 0x80) ? -mag : mag;
 	}
 
 	// RAM-A serial address (verified: band-0 bitstream through a 7-tap shift
@@ -192,12 +198,22 @@ struct engine
 		return a & 31;
 	}
 
-	// Run one sample frame.  `ain` = the multiplexed input-bus sample word per
-	// step (the caller owns the step -> voice input mux, which is a separate
-	// hypothesis - see roland_rcc.cpp).
-	void run_frame(int32_t const (&ain)[256])
+	// Wet (effect) return: the sum of the delay-network read-tap contributions
+	// of the last frame, split L/R by program half (the L output bus is
+	// assembled in the first half of the program, tap at step 80; R in the
+	// second half, tap at step 137).  This is the reverb/delay send the
+	// firmware wires up in the parameter file.  [H routing]
+	int32_t wet_l = 0;
+	int32_t wet_r = 0;
+
+	// Run one sample frame.  `effect_in` = the effect-bus input sample (the
+	// summed voice mix; the exact per-voice input-bus multiplexing is owned by
+	// the PCM-side chip and is modeled as a generic mixer input).
+	void run_frame(int32_t effect_in)
 	{
 		int32_t acc = 0;                             // 24-bit saturating accumulator
+		wet_l = 0;
+		wet_r = 0;
 		for (int step = 0; step < 256; ++step)
 		{
 			instr const in = decode(PROGRAM_ROM[step], acc < 0); // ovf steer from acc sign [V]
@@ -208,7 +224,7 @@ struct engine
 			int32_t const mem = ram_a[ra];                       // delay-line tap [V]
 
 			// ---- multiplier sample source [S] ----
-			int32_t const sample = (in.mulsrc == 1) ? ain[step] : mem;
+			int32_t const sample = (in.mulsrc == 1) ? effect_in : mem;
 
 			// ---- multiply-accumulate ----
 			// The runtime program uses three opcodes (b26,b27,b28): value 2
@@ -246,12 +262,41 @@ struct engine
 				ram_a[ra] = acc;
 
 			// ---- DRAM delay tap: address = base(param) + frame counter [V] ----
+			// The parameter word's top 10 bits are a delay base in 64-sample
+			// (2ms) units; the external DRAM is one 65536-sample ring walked by
+			// the frame counter, so the delay between a write head at base_w
+			// and a read tap at base_r is (base_w - base_r) * 64 samples.
+			// Parameter bit 8 selects the slot's ROLE: 0 = write head (store
+			// the accumulator scaled by the coefficient -- the send level),
+			// 1 = read tap (mix the delayed content through the coefficient,
+			// no store).  This split is taken from the D-70 firmware's live
+			// parameter image, where bit-8-clear slots carry only small
+			// positive send levels (+0.12..+0.25) and bit-8-set slots carry
+			// the tap/feedback gains (+-0.75, +1.0, +1.25); it also prevents
+			// read taps from scrubbing the ring.  Muted slots (coef +-0) are
+			// inert.  [H behavioral: role bit, base width and micro-order
+			// inferred from firmware images + audio plausibility; the
+			// die-verified part is addr = param-base + frame counter on a
+			// 4-step cadence]
 			if (!in.host_gate && (step & 3) == 2)                // 4-step DRAM cadence [V]
 			{
-				int const daddr = ((q.delay_base << 12) + int(frame)) & 0xffff;
-				int32_t const tap = dram[daddr];
-				acc += tap >> 6;                                 // feedback mix [H gain]
-				dram[daddr] = acc;                               // write back (delay store) [H]
+				int32_t const coef = decode_coef(q);
+				if (coef != 0)
+				{
+					int const daddr = (((int(ram_b[step]) >> 8) << 6) + int(frame)) & 0xffff;
+					if (!q.macalign)                             // bit 8 clear: write head
+					{
+						dram[daddr] = int32_t((int64_t(acc) * coef) >> 6);
+					}
+					else                                         // bit 8 set: read tap
+					{
+						int32_t const c = int32_t((int64_t(dram[daddr]) * coef) >> 6);
+						acc += c;
+						if (acc >  0x7fffff) acc =  0x7fffff;
+						if (acc < -0x800000) acc = -0x800000;
+						if (step < 128) wet_l += c; else wet_r += c;   // effect return [H routing]
+					}
+				}
 			}
 
 			// ---- output taps: L at step 80, R at step 137 (blocks 2/4) [V] ----
