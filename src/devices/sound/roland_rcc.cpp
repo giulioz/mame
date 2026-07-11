@@ -56,14 +56,20 @@ static constexpr u32 PROGRAM_ROM[288] = {
 	0x0b843601, 0x0a843e11, 0x0bdf1601, 0x0b8c3e91, 0x0bfc1e91, 0x0b9c1e81, 0x0b9c1ea5, 0x0a843601,
 };
 
-// The canonical machine (rcc repo RCC_MACHINE.md, anchor-verified against
-// the LCD-labeled test-mode states).  Per step: one MAC with the die's own
-// A-select booleans, voice-phase sample map, 2-step result pipeline,
-// shared-serial memory reads (launch every other step, launch-time
-// snapshots), pipelined store addresses, 4-bank accumulator file, and the
-// DRAM delay engine (3-byte words, nibble/accumulator bases, fraction-tap
-// coefficients).  Output-stage strobe->jack mapping is provisional [H]:
-// buses 0/1 tap the strobe bus, 2/3 the MIX cells, 4/5 the DIR cell sums.
+// The machine model (rcc repo, 2026-07-11 session "solve12"): the mix rides
+// the ACCUMULATOR CHAIN -- every b21=0 step continues A = res(s-2); the
+// b21=1 codes are the special operations:
+//   100 = A = bank[read sel]     (re-inject a banked partial)
+//   110 = A = memword            (shared serial port, even-step launches)
+//   111 = A = 0                  (chain start)
+// This assignment is the unique 30/30 survivor of the ST1 own-voice suite
+// (every LCD-labeled test voice must reach the DAC strobes, as it audibly
+// does on hardware) and passes a bipolar sine test with zero saturation.
+// The earlier sign-gated memword reading (die boolean misassignment) is
+// retired -- it broke on negative half-cycles (the "DC output" bug).
+// Known-open [H]: the c1e-side pickup for some quad geometries (V03-class
+// L bytes), and the exact strobe->jack map (two strobe groups emerge:
+// {s35,s3b,s45} tracks the 1f byte, {s56,s72,s7a} the MIX-L side).
 
 roland_rcc_device::roland_rcc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock) :
 	device_t(mconfig, ROLAND_RCC, tag, owner, clock),
@@ -185,33 +191,51 @@ void roland_rcc_device::run_program(s32 const *voices)
 	static constexpr u8 WMAP[4] = { 2, 3, 0, 1 };
 	static constexpr u8 RMAP[4] = { 1, 3, 0, 2 };
 
+	// DRAM read data arrives two steps after the transaction [lab pend queue]
+	struct { s32 v; int at; } pend[4];
+	int npend = 0;
+
 	for (int s = 0; s < 256; ++s)
 	{
 		u32 const op = PROGRAM_ROM[s];
 		u32 const P = m_ram_b[s];
+		for (int i = 0; i < npend; ++i)
+		{
+			if (pend[i].at == s)
+			{
+				m_dword_prev = m_dword;
+				m_dword = pend[i].v;
+				pend[i] = pend[--npend];
+				--i;
+			}
+		}
 		int const a5s = (m_ram_b[(s - 2) & 255] >> 9) & 0x1f;  // store addr travels
 		s32 const coef = decode_coef(P);
 		int const align = BIT(P, 8) ? 6 : 4;                    // align0 open [H]
 
 		// sample source: b25 = voice (b24 selects the TDM phase),
 		// (0,1) = DRAM word, (0,0) = bank tap  [ANC voice phases]
+		// The DRAM word operand is MUTED until the delay schedule constants
+		// are anchored (delay-ladder captures): with the current provisional
+		// schedule the ring recirculates DC into the mix chain [H].  The
+		// engine itself still executes every transaction below.
 		s32 sample;
 		if (BIT(op, 25))
 			sample = BIT(op, 24) ? voices[s >> 3] : voices[((s - 2) & 255) >> 3];
 		else if (BIT(op, 24))
-			sample = BIT(op, 18) ? m_dword_prev : m_dword;
+			sample = 0;
 		else
-			sample = m_bank[RMAP[((BIT(op, 20) << 1) | BIT(op, 19)) ^ 1]];
+			sample = m_bank[RMAP[(BIT(op, 20) << 1) | BIT(op, 19)]];
 
-		// A operand: canonical silicon booleans [SIL+ANC]
-		// a0 = b21&b23, a1 = (~sign & ~b21) | (b21 & b22)
-		int const a0 = BIT(op, 21) & BIT(op, 23);
-		int const a1 = ((m_hist[0] >= 0) & !BIT(op, 21)) | (BIT(op, 21) & BIT(op, 22));
+		// A operand: accumulator chain by default; b21=1 specials [solve12]
 		s32 a;
-		if (a1 && a0)       a = BIT(op, 18) ? m_dword_prev : m_dword;
-		else if (a1 && !a0) a = m_mwq[0];                       // memword (launch pipeline)
-		else if (!a1 && a0) a = m_hist[1];                      // accw feedback
-		else                a = m_bank[RMAP[((BIT(op, 20) << 1) | BIT(op, 19)) ^ 1]];
+		switch ((BIT(op, 21) << 2) | (BIT(op, 22) << 1) | BIT(op, 23))
+		{
+		case 4:  a = m_bank[RMAP[(BIT(op, 20) << 1) | BIT(op, 19)]]; break;
+		case 6:  a = m_mwq[0]; break;
+		case 7:  a = 0; break;
+		default: a = m_hist[1]; break;
+		}
 
 		// coefficient source (b26-28, registers complemented) [SIL]
 		s32 c = coef;
@@ -234,10 +258,11 @@ void roland_rcc_device::run_program(s32 const *voices)
 		if (BIT(op, 2))
 			m_ram_a[a5s] = accw;
 
-		// DAC strobes: provisional jack map [H]
+		// DAC strobes.  Two groups emerge from the ST1/ST2 anchors:
+		// {s35,s3b,s45} tracks the 1f (R) byte, {s56,s72,s7a} the L side [H]
 		if (BIT(op, 3))
 		{
-			if (s == 0x56 || s == 0x61)
+			if (s == 0x56)
 				m_strobe_l = accw;
 			else if (s == 0x35)
 				m_strobe_r = accw;
@@ -267,11 +292,12 @@ void roland_rcc_device::run_program(s32 const *voices)
 				m_dram[(ba + 1) & 0xffff] = (accw >> 8) & 0xff;
 				m_dram[(ba + 2) & 0xffff] = (accw >> 16) & 0xff;
 			}
-			else
+			else if (npend < 4)
 			{
 				s32 v = m_dram[ba] | (m_dram[(ba + 1) & 0xffff] << 8) | (m_dram[(ba + 2) & 0xffff] << 16);
-				m_dword_prev = m_dword;
-				m_dword = util::sext(v, 24);
+				pend[npend].v = util::sext(v, 24);
+				pend[npend].at = (s + 2) & 255;
+				++npend;
 			}
 		}
 
@@ -326,9 +352,10 @@ void roland_rcc_device::sound_stream_update(sound_stream &stream)
 		float const dir_l = std::clamp(float(m_ram_a[0x18] + m_ram_a[0x1a]) * SC, -1.0F, 1.0F);
 		float const dir_r = std::clamp(float(m_ram_a[0x19] + m_ram_a[0x1b]) * SC, -1.0F, 1.0F);
 
-		// provisional tap layout for A/B listening [H]:
-		stream.put(0, sample, std::clamp(st_l + dir_l, -1.0F, 1.0F));
-		stream.put(1, sample, std::clamp(st_r + dir_r, -1.0F, 1.0F));
+		// tap layout: 0/1 = the two DAC strobe groups (jack map [H]),
+		// 2/3 = MIX cells, 4/5 = DIR cell sums for A/B listening
+		stream.put(0, sample, st_l);
+		stream.put(1, sample, st_r);
 		stream.put(2, sample, mix_l);
 		stream.put(3, sample, mix_r);
 		stream.put(4, sample, dir_l);
