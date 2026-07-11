@@ -236,16 +236,12 @@ void roland_rcc_device::run_program(s32 const *voices)
 		int const align = BIT(P, 8) ? 6 : 4;                    // align0 open [H]
 
 		// sample source: b25 = voice (b24 selects the TDM phase),
-		// (0,1) = DRAM word, (0,0) = bank tap  [ANC voice phases]
-		// The DRAM word operand is MUTED until the delay schedule constants
-		// are anchored (delay-ladder captures): with the current provisional
-		// schedule the ring recirculates DC into the mix chain [H].  The
-		// engine itself still executes every transaction below.
+		// (0,1) = DRAM word (delay return, now LIVE), (0,0) = bank tap.
 		s32 sample;
 		if (BIT(op, 25))
 			sample = BIT(op, 24) ? voices[s >> 3] : voices[((s - 2) & 255) >> 3];
 		else if (BIT(op, 24))
-			sample = 0;
+			sample = BIT(op, 18) ? m_dword_prev : m_dword;
 		else
 			sample = m_bank[RMAP[(BIT(op, 20) << 1) | BIT(op, 19)]];
 
@@ -280,21 +276,22 @@ void roland_rcc_device::run_program(s32 const *voices)
 		if (BIT(op, 2))
 			m_ram_a[a5s] = accw;
 
-		// DAC strobes.  Two groups emerge from the ST1/ST2 anchors:
-		// {s35,s3b,s45} tracks the 1f (R) byte, {s56,s72,s7a} the L side [H]
-		if (BIT(op, 3))
-		{
-			if (s == 0x56)
-				m_strobe_l = accw;
-			else if (s == 0x35)
-				m_strobe_r = accw;
-		}
+		// DAC output: the result the datapath leaves for the L / R DAC-load
+		// steps (gate-sim verified: L pickup = s06, R pickup = sfc; the analog
+		// DAC MUX/strobe timing is irrelevant to the sample value) [ANC].
+		if (s == 0x06)
+			m_strobe_l = accw;
+		else if (s == 0xfc)
+			m_strobe_r = accw;
 
 		// DRAM delay engine [SIL structure; schedule constants provisional]
 		if (BIT(op, 9))
 		{
+			// b6 polarity flipped vs earlier docs (lab impulse test): b6=1 =
+			// nibble base (MSB-first over the prefetched window [s-2..s+1]),
+			// b6=0 = variable base = accw[22:12] (chorus LFO offset) [H].
 			u32 base;
-			if (BIT(op, 6))
+			if (!BIT(op, 6))
 			{
 				s32 off = (accw >> 12) & 0x7ff;
 				if (accw < 0) off |= 0xf800;
@@ -304,7 +301,7 @@ void roland_rcc_device::run_program(s32 const *voices)
 			{
 				base = 0;
 				for (int k = 0; k < 4; ++k)
-					base |= ((m_ram_b[(s - k) & 255] >> 14) & 0xf) << (4 * k);
+					base |= ((m_ram_b[(s + 1 - k) & 255] >> 14) & 0xf) << (4 * k);
 			}
 			u32 const addr = (base + (~m_frame & 0xffff) + BIT(op, 7)) & 0xffff;
 			if (BIT(op, 1))
