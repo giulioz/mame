@@ -39,6 +39,9 @@
 #include "speaker.h"
 #include "multibyte.h"
 
+#include <cstdlib>
+#include <queue>
+
 #include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
@@ -591,11 +594,28 @@ void roland_u20_state::descramble_rom_external(u8* dst, const u8* src)
 INPUT_CHANGED_MEMBER(roland_u20_state::button) {
   // DEBUG
   if (sw2->read() & 0x1) {
-		printf("NOTE ON\n");
-		midi_queue.push(0x90);
-		midi_queue.push(0x3c);
-		midi_queue.push(0x70);
-	} else {
+		// Pan-discrimination capture (RCC_PAN_SWEEP): each press re-strikes the
+		// debug note at a stepped CC10 pan value so the firmware writes fresh,
+		// UNEQUAL L/R voice gains into the RCC RAM-B parameter file.  With
+		// RCC_DUMP_RAMB logging, the per-pan bytes reveal which slot carries the
+		// L gain, which the R gain, and the pan law -- the discriminating anchor
+		// the center-pan sound-test states cannot provide.
+		if (std::getenv("RCC_PAN_SWEEP")) {
+			static int pan_step = 0;
+			int pan = pan_step * 8;
+			if (pan > 127) pan = 127;
+			midi_queue.push(0x80); midi_queue.push(0x3c); midi_queue.push(0x00); // note off
+			midi_queue.push(0xB0); midi_queue.push(0x0A); midi_queue.push(u8(pan)); // CC10 pan
+			midi_queue.push(0x90); midi_queue.push(0x3c); midi_queue.push(0x70); // note on
+			printf("PAN SWEEP step %d pan %d\n", pan_step, pan);
+			pan_step++;
+		} else {
+			printf("NOTE ON\n");
+			midi_queue.push(0x90);
+			midi_queue.push(0x3c);
+			midi_queue.push(0x70);
+		}
+	} else if (!std::getenv("RCC_PAN_SWEEP")) {
 		printf("NOTE OFF\n");
 		midi_queue.push(0x80);
 		midi_queue.push(0x3c);
