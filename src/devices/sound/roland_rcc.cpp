@@ -56,23 +56,14 @@ static constexpr u32 PROGRAM_ROM[288] = {
 	0x0b843601, 0x0a843e11, 0x0bdf1601, 0x0b8c3e91, 0x0bfc1e91, 0x0b9c1e81, 0x0b9c1ea5, 0x0a843601,
 };
 
-// Field map v2.1 + anchor-searched dry machine (rcc repo,
-// db/RCC_FIELDMAP_V2.md).  RAM-B word, per step (all [V hw+die]):
-//   [17:14] DRAM address nibble (serial, 4 bits/step -- delay engine, TODO)
-//   [13:9]  RAM-A address a5: the step's memory operand / store target
-//   [8]     product alignment select ("shifter": 1 -> >>6, hw-calibrated)
-//   [7:0]   sign-magnitude coefficient (0x40 = unity at shift=1)
-//
-// Per-step datapath (unique survivor of the 3.6M-config anchor search
-// against the D-70/U-220 test-mode captures) [V hw]:
-//   sample (b25,b24): 0 | RAM-A[a5] | audio-in | acc-bank tap
-//   A-op   (b21..23): codes 001/010 -> RAM-A[a5] (read-modify-write),
-//                     011 -> audio-in (capture), 000/111 -> 0 [H: 2 codes]
-//   res    = sat24(A + (b13 ? (sample * coef) >> align : 0))
-//   pipeline: accw = res from TWO steps back (multiplier/adder registers)
-//   every step: bank[(b17,b16)] <= accw;  b2: RAM-A[a5] <= accw
-//   b3 strobes capture accw onto the DAC buses: mix L at step 0x61,
-//   mix R at step 0x35 [V hw]; direct-out strobe map still unknown [H]
+// The canonical machine (rcc repo RCC_MACHINE.md, anchor-verified against
+// the LCD-labeled test-mode states).  Per step: one MAC with the die's own
+// A-select booleans, voice-phase sample map, 2-step result pipeline,
+// shared-serial memory reads (launch every other step, launch-time
+// snapshots), pipelined store addresses, 4-bank accumulator file, and the
+// DRAM delay engine (3-byte words, nibble/accumulator bases, fraction-tap
+// coefficients).  Output-stage strobe->jack mapping is provisional [H]:
+// buses 0/1 tap the strobe bus, 2/3 the MIX cells, 4/5 the DIR cell sums.
 
 roland_rcc_device::roland_rcc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock) :
 	device_t(mconfig, ROLAND_RCC, tag, owner, clock),
@@ -94,10 +85,13 @@ void roland_rcc_device::device_start()
 	save_item(NAME(m_ram_b));
 	save_item(NAME(m_bank));
 	save_item(NAME(m_hist));
+	save_item(NAME(m_mwq));
 	save_item(NAME(m_dram));
 	save_item(NAME(m_frame));
-	save_item(NAME(m_mix_l));
-	save_item(NAME(m_mix_r));
+	save_item(NAME(m_dword));
+	save_item(NAME(m_dword_prev));
+	save_item(NAME(m_strobe_l));
+	save_item(NAME(m_strobe_r));
 	save_item(NAME(m_program_voice_offset));
 }
 
@@ -110,10 +104,13 @@ void roland_rcc_device::device_reset()
 	std::fill(std::begin(m_ram_b), std::end(m_ram_b), 0);
 	std::fill(std::begin(m_bank), std::end(m_bank), 0);
 	std::fill(std::begin(m_hist), std::end(m_hist), 0);
+	std::fill(std::begin(m_mwq), std::end(m_mwq), 0);
 	std::fill(std::begin(m_dram), std::end(m_dram), 0);
 	m_frame = 0;
-	m_mix_l = 0;
-	m_mix_r = 0;
+	m_dword = 0;
+	m_dword_prev = 0;
+	m_strobe_l = 0;
+	m_strobe_r = 0;
 }
 
 //-------------------------------------------------------------------------
@@ -136,14 +133,13 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 		if (m_stream)
 			m_stream->update();
 		std::copy_n(&m_io[0], 3, &m_state[data & 0x1f][0]);
-		// RAM-A host load: 24-bit signed data word. [V]
 		m_ram_a[data & 0x1f] = util::sext(
 				(u32(m_io[0]) << 16) | (u32(m_io[1]) << 8) | u32(m_io[2]), 24);
 		if (char const *dump = std::getenv("RCC_DUMP_RAMA"); dump)
 		{
 			if (FILE *f = std::fopen(dump, "a"); f)
 			{
-				std::fprintf(f, "%02x %02x%02x%02x\n", data & 0x1f, m_io[0], m_io[1], m_io[2]);
+				std::fprintf(f, "%u %02x %02x%02x%02x\n", m_frame, data & 0x1f, m_io[0], m_io[1], m_io[2]);
 				std::fclose(f);
 			}
 		}
@@ -153,7 +149,6 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 		if (m_stream)
 			m_stream->update();
 		std::copy_n(&m_io[0], 3, &m_program[data][0]);
-		// RAM-B parameter load: 18-bit word in the low bits. [V]
 		m_ram_b[data] = ((u32(m_io[0]) << 16) | (u32(m_io[1]) << 8) | u32(m_io[2])) & 0x3ffff;
 		if (char const *dump = std::getenv("RCC_DUMP_RAMB"); dump)
 		{
@@ -169,18 +164,15 @@ void roland_rcc_device::write(offs_t offset, u8 data)
 		std::copy_n(&m_program[data][0], 3, &m_io[0]);
 		break;
 
-	case 0x0c: // reset/control latch
-	case 0x0d: // operating mode latch
 	default:
 		break;
 	}
 }
 
 //-------------------------------------------------------------------------
-//  program execution -- one pass = one 32kHz sample frame
+//  the canonical machine -- one pass = one sample frame
 //-------------------------------------------------------------------------
 
-// Coefficient: sign-magnitude byte (0x40 = unity at shift=1). [V hw]
 s32 roland_rcc_device::decode_coef(u32 param)
 {
 	s32 const mag = param & 0x7f;
@@ -189,62 +181,106 @@ s32 roland_rcc_device::decode_coef(u32 param)
 
 void roland_rcc_device::run_program(s32 const *voices)
 {
-	// acc-bank select maps, from the die's one-hot decode / read muxes,
-	// polarity class fixed by the anchor search [V die + hw class]
-	static constexpr u8 WMAP[4] = { 2, 3, 0, 1 };  // idx = ((b17<<1)|b16)^1
-	static constexpr u8 RMAP[4] = { 1, 3, 0, 2 };  // idx = ((b20<<1)|b19)^1
+	// die-derived bank select maps [SIL]
+	static constexpr u8 WMAP[4] = { 2, 3, 0, 1 };
+	static constexpr u8 RMAP[4] = { 1, 3, 0, 2 };
 
-	for (int step = 0; step < 256; ++step)
+	for (int s = 0; s < 256; ++s)
 	{
-		u32 const op = PROGRAM_ROM[step];
-		u32 const P = m_ram_b[step];               // auto-fetched by PC [V]
-		int const a5 = (P >> 9) & 0x1f;
+		u32 const op = PROGRAM_ROM[s];
+		u32 const P = m_ram_b[s];
+		int const a5s = (m_ram_b[(s - 2) & 255] >> 9) & 0x1f;  // store addr travels
 		s32 const coef = decode_coef(P);
-		int const align = BIT(P, 8) ? 6 : 4;       // shift=0 scale open [H]
-		s32 const ain = voices[step >> 3];
+		int const align = BIT(P, 8) ? 6 : 4;                    // align0 open [H]
 
-		// multiplier sample source (b25,b24) [V]
+		// sample source: b25 = voice (b24 selects the TDM phase),
+		// (0,1) = DRAM word, (0,0) = bank tap  [ANC voice phases]
 		s32 sample;
-		switch ((BIT(op, 25) << 1) | BIT(op, 24))
-		{
-		case 0:  sample = 0; break;
-		case 1:  sample = m_ram_a[a5]; break;
-		case 2:  sample = ain; break;
-		default: sample = m_bank[RMAP[((BIT(op, 20) << 1) | BIT(op, 19)) ^ 1]]; break;
-		}
+		if (BIT(op, 25))
+			sample = BIT(op, 24) ? voices[s >> 3] : voices[((s - 2) & 255) >> 3];
+		else if (BIT(op, 24))
+			sample = BIT(op, 18) ? m_dword_prev : m_dword;
+		else
+			sample = m_bank[RMAP[((BIT(op, 20) << 1) | BIT(op, 19)) ^ 1]];
 
-		// A operand (b21..b23): RMW / audio capture / zero [V hw]
+		// A operand: canonical silicon booleans [SIL+ANC]
+		// a0 = b21&b23, a1 = (~sign & ~b21) | (b21 & b22)
+		int const a0 = BIT(op, 21) & BIT(op, 23);
+		int const a1 = ((m_hist[0] >= 0) & !BIT(op, 21)) | (BIT(op, 21) & BIT(op, 22));
 		s32 a;
-		switch ((BIT(op, 21) << 2) | (BIT(op, 22) << 1) | BIT(op, 23))
-		{
-		case 1: case 2: a = m_ram_a[a5]; break;
-		case 3:         a = ain; break;
-		default:        a = 0; break;             // 000/111 unresolved [H]
-		}
+		if (a1 && a0)       a = BIT(op, 18) ? m_dword_prev : m_dword;
+		else if (a1 && !a0) a = m_mwq[0];                       // memword (launch pipeline)
+		else if (!a1 && a0) a = m_hist[1];                      // accw feedback
+		else                a = m_bank[RMAP[((BIT(op, 20) << 1) | BIT(op, 19)) ^ 1]];
 
-		// MAC (product gated by b13) + 24-bit saturation [V]
+		// coefficient source (b26-28, registers complemented) [SIL]
+		s32 c = coef;
+		int const trio = (BIT(op, 26) << 2) | (BIT(op, 27) << 1) | BIT(op, 28);
+		if (trio == 6)                                          // frac-tap
+		{
+			s32 const fr = (m_hist[1] >> 5) & 0x7f;
+			c = (m_hist[1] < 0) ? -fr : fr;
+		}
+		else if (trio != 2 && trio != 4)
+			c = 0;
+
 		s64 acc = s64(a);
 		if (BIT(op, 13))
-			acc += (s64(sample) * coef) >> align;
+			acc += (s64(sample) * c) >> align;
 		s32 const res = s32(std::clamp<s64>(acc, -0x800000, 0x7fffff));
-
-		// two-step result pipeline: accw = res(step-2) [V hw]
 		s32 const accw = m_hist[1];
 
-		// acc-bank file write (every step) [V die]
 		m_bank[WMAP[((BIT(op, 17) << 1) | BIT(op, 16)) ^ 1]] = accw;
-
-		// RAM-A store (b2) [V]
 		if (BIT(op, 2))
-			m_ram_a[a5] = accw;
+			m_ram_a[a5s] = accw;
 
-		// DAC strobes (b3): mix pair identified by hardware routing [V hw];
-		// direct-out strobes not yet mapped, delay engine (b9/b14, nibble
-		// addresses) not yet modeled -- next bring-up stage
-		if (step == 0x61)
-			m_mix_l = accw;
-		else if (step == 0x35)
-			m_mix_r = accw;
+		// DAC strobes: provisional jack map [H]
+		if (BIT(op, 3))
+		{
+			if (s == 0x56 || s == 0x61)
+				m_strobe_l = accw;
+			else if (s == 0x35)
+				m_strobe_r = accw;
+		}
+
+		// DRAM delay engine [SIL structure; schedule constants provisional]
+		if (BIT(op, 9))
+		{
+			u32 base;
+			if (BIT(op, 6))
+			{
+				s32 off = (accw >> 12) & 0x7ff;
+				if (accw < 0) off |= 0xf800;
+				base = u16(off);
+			}
+			else
+			{
+				base = 0;
+				for (int k = 0; k < 4; ++k)
+					base |= ((m_ram_b[(s - k) & 255] >> 14) & 0xf) << (4 * k);
+			}
+			u32 const addr = (base + (~m_frame & 0xffff) + BIT(op, 7)) & 0xffff;
+			u32 const ba = (addr * 3) & 0xffff;
+			if (BIT(op, 1))
+			{
+				m_dram[ba] = accw & 0xff;
+				m_dram[(ba + 1) & 0xffff] = (accw >> 8) & 0xff;
+				m_dram[(ba + 2) & 0xffff] = (accw >> 16) & 0xff;
+			}
+			else
+			{
+				s32 v = m_dram[ba] | (m_dram[(ba + 1) & 0xffff] << 8) | (m_dram[(ba + 2) & 0xffff] << 16);
+				m_dword_prev = m_dword;
+				m_dword = util::sext(v, 24);
+			}
+		}
+
+		// shared serial read port: launch on even steps, snapshot now [ANC]
+		if (!(s & 1))
+		{
+			m_mwq[1] = m_mwq[0];
+			m_mwq[0] = m_ram_a[(P >> 9) & 0x1f];
+		}
 
 		m_hist[1] = m_hist[0];
 		m_hist[0] = res;
@@ -260,15 +296,13 @@ void roland_rcc_device::sound_stream_update(sound_stream &stream)
 {
 	for (int sample = 0; sample < stream.samples(); sample++)
 	{
-		// LP chip voice bus: 18-bit samples (17-bit magnitude + sign)
-		// time-multiplexed one voice per 8-step window; the D-70 offsets
-		// its LP contexts against the program windows. [V]
 		s32 voices[NUM_CHANNELS];
 		for (unsigned w = 0; w < NUM_CHANNELS; w++)
 		{
 			unsigned const v = (w - m_program_voice_offset) & (NUM_CHANNELS - 1);
 			voices[w] = s32(std::clamp(stream.get(v, sample), -1.0F, 1.0F) * 131071.0F);
 		}
+
 		if (char const *dump = std::getenv("RCC_DUMP_VOICES"); dump && (m_frame & 63) == 0)
 		{
 			unsigned best = 0;
@@ -284,19 +318,22 @@ void roland_rcc_device::sound_stream_update(sound_stream &stream)
 
 		run_program(voices);
 
-		// gain staging: one full-scale voice at the standard dry byte
-		// (0x2c) lands around -3 dBFS, matching the previous device's
-		// level; the full 32-voice sum clips into the clamp [H staging]
-		float const mix_l = std::clamp(float(m_mix_l) / 131072.0F, -1.0F, 1.0F);
-		float const mix_r = std::clamp(float(m_mix_r) / 131072.0F, -1.0F, 1.0F);
+		constexpr float SC = 1.0F / 131072.0F;   // gain staging [H]
+		float const st_l = std::clamp(float(m_strobe_l) * SC, -1.0F, 1.0F);
+		float const st_r = std::clamp(float(m_strobe_r) * SC, -1.0F, 1.0F);
+		float const mix_l = std::clamp(float(m_ram_a[0x1e]) * SC, -1.0F, 1.0F);
+		float const mix_r = std::clamp(float(m_ram_a[0x1f]) * SC, -1.0F, 1.0F);
+		float const dir_l = std::clamp(float(m_ram_a[0x18] + m_ram_a[0x1a]) * SC, -1.0F, 1.0F);
+		float const dir_r = std::clamp(float(m_ram_a[0x19] + m_ram_a[0x1b]) * SC, -1.0F, 1.0F);
 
-		stream.put(0, sample, mix_l);
-		stream.put(1, sample, mix_r);
-		stream.put(2, sample, mix_l);              // direct outs: strobe map
-		stream.put(3, sample, mix_r);              // pending, mirror mix [H]
-		stream.put(4, sample, 0.0F);
-		stream.put(5, sample, 0.0F);
-		stream.put(6, sample, 0.0F);               // effect returns: delay
-		stream.put(7, sample, 0.0F);               // engine pending
+		// provisional tap layout for A/B listening [H]:
+		stream.put(0, sample, std::clamp(st_l + dir_l, -1.0F, 1.0F));
+		stream.put(1, sample, std::clamp(st_r + dir_r, -1.0F, 1.0F));
+		stream.put(2, sample, mix_l);
+		stream.put(3, sample, mix_r);
+		stream.put(4, sample, dir_l);
+		stream.put(5, sample, dir_r);
+		stream.put(6, sample, st_l);
+		stream.put(7, sample, st_r);
 	}
 }

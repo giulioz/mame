@@ -66,11 +66,13 @@ private:
 	u32 m_ram_b[256];         // 256 x 18 parameter file (one word per step)
 	s32 m_bank[4];            // four-register accumulator file
 	s32 m_hist[2];            // result pipeline (accw = res two steps back)
-	s8 m_dram[1 << 16];       // two 4464 DRAMs: 64K x 8 delay ring [V board]
+	s32 m_mwq[2];             // shared serial read port (launch pipeline)
+	u8 m_dram[1 << 16];       // two 4464 DRAMs: 64K x 8 delay ring [V board]
 	u32 m_frame;              // frame counter (delay-engine ring position)
+	s32 m_dword, m_dword_prev; // DRAM read word pair (b18-selected)
 
-	// DAC strobe captures
-	s32 m_mix_l, m_mix_r;
+	// DAC strobe captures (provisional jack map)
+	s32 m_strobe_l, m_strobe_r;
 
 	u8 m_program_voice_offset;
 
