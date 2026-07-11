@@ -185,6 +185,28 @@ s32 roland_rcc_device::decode_coef(u32 param)
 	return (param & 0x80) ? -mag : mag;
 }
 
+// The RCC writes only six meaningful bits on each external DRAM transfer.
+// Three adjacent addresses carry one 18-bit stored sample.  The omitted
+// positions are the read-side/padding pads 32 and 38. [V die + gate trace]
+static u8 dram_pack_lane(s32 value, unsigned shift)
+{
+	static constexpr unsigned BITPOS[6] = { 0, 2, 3, 4, 5, 7 };
+	u8 packed = 0;
+	for (unsigned bit = 0; bit < 6; ++bit)
+		packed |= BIT(value, shift + BITPOS[bit]) << bit;
+	return packed;
+}
+
+static s32 dram_unpack_sample(u8 const *dram, u32 end_address)
+{
+	static constexpr unsigned BITPOS[6] = { 0, 2, 3, 4, 5, 7 };
+	u32 value = 0;
+	for (unsigned lane = 0; lane < 3; ++lane)
+		for (unsigned bit = 0; bit < 6; ++bit)
+			value |= BIT(dram[(end_address - 2 + lane) & 0xffff], bit) << (8 * lane + BITPOS[bit]);
+	return util::sext(value, 24);
+}
+
 void roland_rcc_device::run_program(s32 const *voices)
 {
 	// die-derived bank select maps [SIL]
@@ -285,17 +307,15 @@ void roland_rcc_device::run_program(s32 const *voices)
 					base |= ((m_ram_b[(s - k) & 255] >> 14) & 0xf) << (4 * k);
 			}
 			u32 const addr = (base + (~m_frame & 0xffff) + BIT(op, 7)) & 0xffff;
-			u32 const ba = (addr * 3) & 0xffff;
 			if (BIT(op, 1))
 			{
-				m_dram[ba] = accw & 0xff;
-				m_dram[(ba + 1) & 0xffff] = (accw >> 8) & 0xff;
-				m_dram[(ba + 2) & 0xffff] = (accw >> 16) & 0xff;
+				m_dram[(addr - 2) & 0xffff] = dram_pack_lane(accw, 0);
+				m_dram[(addr - 1) & 0xffff] = dram_pack_lane(accw, 8);
+				m_dram[addr] = dram_pack_lane(accw, 16);
 			}
 			else if (npend < 4)
 			{
-				s32 v = m_dram[ba] | (m_dram[(ba + 1) & 0xffff] << 8) | (m_dram[(ba + 2) & 0xffff] << 16);
-				pend[npend].v = util::sext(v, 24);
+				pend[npend].v = dram_unpack_sample(m_dram, addr);
 				pend[npend].at = (s + 2) & 255;
 				++npend;
 			}
@@ -320,6 +340,10 @@ void roland_rcc_device::run_program(s32 const *voices)
 
 void roland_rcc_device::sound_stream_update(sound_stream &stream)
 {
+	// FILE *f = fopen("rcc_ramb.bin", "wb");
+	// fwrite(m_ram_b, 1, sizeof(m_ram_b), f);
+	// fclose(f);
+
 	for (int sample = 0; sample < stream.samples(); sample++)
 	{
 		s32 voices[NUM_CHANNELS];
