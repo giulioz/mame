@@ -29,6 +29,14 @@
 // CRAM decodes per-column: the multiply/MAC columns read Roland's "C14" float
 // (value = sext14(m) << [0,1,2,4][exp] / 8192); the constant columns read a
 // sign-extended integer lane (sext15(raw) << (raw15 ? 13 : 0)).
+//
+// OPEN (why roland_xp.cpp gates the DSP off the DAC for now): replaying the real
+// boot program reveals the Stereo-EQ biquad state (IRAM3 D0-D3) diverges ~4x per
+// sample, and col 0x30 reading COEFREG (hardware-proven, ground4-E/E3) then
+// amplifies the railed state into the output.  The cross-slot col25-lock / COEFREG
+// carry that the isolated rig probes never exercised is not yet fully pinned, so
+// the EQ is not bit-correct.  The per-column ALU below is golden-validated; the
+// remaining work is the biquad structure / register carry, not this table.
 
 namespace roland_xp_dsp {
 
@@ -36,7 +44,10 @@ struct regs
 {
 	int64_t  acc = 0;       // wide accumulator (24-bit saturation applied on store)
 	int32_t  hold = 0;      // 24-bit signed operand latch
-	uint16_t coefreg = 0;   // raw C14 coefficient register (consumed by col 0x30)
+	uint16_t coefreg = 0x5000; // raw C14 coef register, default +1.0.  The multiplier lane
+	                        // applies it on EVERY mul/MAC column (0x13/0x15/0x19/0x23/0x25/…),
+	                        // not just col 0x30 - hardware-proven probe_coefreg/probe_mulcoef.
+	                        // Default +1.0 so it is invisible until a program loads it (col11/23/25).
 	bool     acc_lock = false; // col 0x25 latch; re-armed only by col 0x13/0x15/0x19
 	uint32_t eram_addr = 0; // ERAM read-address register (loaded by col 0x20)
 };
@@ -69,6 +80,22 @@ static inline int32_t c14_mul(int32_t x, uint16_t cram)
 	return sat24((((int64_t)x * m) << e) >> 13);
 }
 
+// Multiplier-lane product: x * c14(cram) * c14(coefreg), saturated once at the output.
+// Hardware-proven (probe_coefreg.py + probe_mulcoef.py, 2026-07-03): the persistent COEFREG
+// multiplies on top of the column's own C14 coefficient for the entire mul/MAC lane
+// (col 0x13/0x15/0x18/0x19/0x23/0x25/0x28/0x29).  With cram fixed the product scaled EXACTLY
+// with COEFREG across a 5-point sweep; col15 c=1.0 gave acc*COEFREG, col25 c=1.0 gave HOLD*COEFREG.
+// The original ground4/5/7 probes never saw this because COEFREG was +1.0 there.  The intermediate
+// is kept wide; only the final result is clamped.  `coefreg` here is the value BEFORE this column's
+// own COEFREG write (col23/25 update it as a side effect for the NEXT consumer).
+static inline int32_t mac_mul(int32_t x, uint16_t cram, uint16_t coefreg)
+{
+	static const int shift[4] = { 0, 1, 2, 4 };
+	int64_t p = (((int64_t)x * sext14(cram)) << shift[(cram >> 14) & 3]) >> 13;
+	p = ((p * sext14(coefreg)) << shift[(coefreg >> 14) & 3]) >> 13;
+	return sat24(p);
+}
+
 // Integer coefficient lane: sext15(raw[14:0]) << (raw[15] ? 13 : 0), saturated.
 static inline int32_t int_lane(uint16_t cram)
 {
@@ -83,6 +110,10 @@ static inline int32_t int_lane(uint16_t cram)
 // suppressed).  The st3 store happens in the caller before this is invoked.
 static inline void apply_column(regs &r, unsigned col, uint16_t cram, int32_t mem, bool has_mem)
 {
+	// The multiplier lane multiplies by the COEFREG value as it was BEFORE this column's
+	// own COEFREG write (col11/23/25 update it below for the NEXT consumer).
+	const uint16_t coefreg_prev = r.coefreg;
+
 	// ---- HOLD / COEFREG / ERAM-address side effects (independent of the acc lock) ----
 	switch (col)
 	{
@@ -97,12 +128,16 @@ static inline void apply_column(regs &r, unsigned col, uint16_t cram, int32_t me
 	}
 
 	// ---- accumulator write (proposed value + class, then lock gating) ----
-	// The HOLD-consuming columns take their operand from the memory read when the
-	// slot is a read (st1/st2), otherwise from the persistent HOLD latch.  This is
-	// why col04/14/24/34 mean "acc = mem" under a read yet "acc = HOLD" acc-only,
-	// and why the biquad's st1 col23/col25 MAC the freshly-read filter state.
-	// (col 0x30 is the exception: it uses HOLD *and* mem as separate operands.)
-	const int32_t opnd = has_mem ? mem : r.hold;
+	// HARDWARE-CORRECTED: the HOLD-consuming compute columns ALWAYS take their operand
+	// from the persistent HOLD latch, even on an st1/st2 read slot -- the freshly-read
+	// word is NOT consumed by these columns.  Only the fetch columns (0x00/0x01/0x03/0x21,
+	// handled in the side-effect switch above) and col 0x30 (its own mem operand below)
+	// consume the memory read; col25's own read explicitly does not even touch HOLD
+	// (XP_ARCH_REGISTERS.md:17).  Proven C39-clean and ==MATCH by rig_ground4 F2/G,
+	// rig_ground5 L, rig_ground7 R0.  The former `has_mem ? mem : r.hold` fed the read
+	// cell into col23/col25 under st1 and diverged from silicon on 6/19 conformance
+	// vectors (jv1080/re/debugrom/roland_xp_dsp_conformance.cpp).
+	const int32_t opnd = r.hold;
 
 	enum { NONE, ACC, REPL, MUL } cls = NONE;
 	int64_t val = r.acc;
@@ -117,7 +152,7 @@ static inline void apply_column(regs &r, unsigned col, uint16_t cram, int32_t me
 	// accumulate family (acc += ...)
 	case 0x02: val = r.acc + opnd; cls = ACC; break;                     // acc += operand
 	case 0x0f: case 0x2f: val = r.acc + int_lane(cram); cls = ACC; break;// acc += int C
-	case 0x23: val = r.acc + c14_mul(opnd, cram); cls = ACC; break;      // acc += operand*C (MAC)
+	case 0x23: val = r.acc + mac_mul(opnd, cram, coefreg_prev); cls = ACC; break; // acc += HOLD*C*COEFREG (MAC)
 	case 0x30:                                                           // acc += HOLD + mem*2*COEFREG
 	{
 		static const int shift[4] = { 0, 1, 2, 4 };
@@ -127,10 +162,11 @@ static inline void apply_column(regs &r, unsigned col, uint16_t cram, int32_t me
 		val = r.acc + r.hold + term; cls = ACC; break;
 	}
 
-	// multiply family: writes AND re-arms (clears the col 0x25 lock)
-	case 0x13: val = r.acc + c14_mul(sat24(r.acc), cram); cls = MUL; break;      // acc*(1+C)
-	case 0x15: case 0x19: val = c14_mul(sat24(r.acc), cram); cls = MUL; break;   // acc*C
-	case 0x18: val = (int64_t)c14_mul(sat24(r.acc), cram) - r.acc; cls = MUL; break; // acc*C - acc
+	// multiply family: writes AND re-arms (clears the col 0x25 lock).  The mul lane carries
+	// the ×COEFREG factor (probe_mulcoef: col15 c=1.0 scaled exactly with COEFREG).
+	case 0x13: val = r.acc + mac_mul(sat24(r.acc), cram, coefreg_prev); cls = MUL; break;      // acc + acc*C*COEFREG
+	case 0x15: case 0x19: val = mac_mul(sat24(r.acc), cram, coefreg_prev); cls = MUL; break;   // acc*C*COEFREG
+	case 0x18: val = (int64_t)mac_mul(sat24(r.acc), cram, coefreg_prev) - r.acc; cls = MUL; break; // acc*C*COEFREG - acc
 
 	// replace family (overwrites acc; suppressed while locked)
 	case 0x04: case 0x0a: case 0x14: case 0x1a:
@@ -140,14 +176,14 @@ static inline void apply_column(regs &r, unsigned col, uint16_t cram, int32_t me
 		val = -r.acc; cls = REPL; break;                                // acc = -acc
 	case 0x07: case 0x17: case 0x27: case 0x37:
 		val = (int64_t)opnd - r.acc; cls = REPL; break;                 // acc = operand - acc
-	case 0x28: val = (int64_t)c14_mul(opnd, cram) - r.acc; cls = REPL; break; // acc = -acc + operand*C
-	case 0x29: val = (int64_t)opnd + c14_mul(opnd, cram); cls = REPL; break;  // acc = operand*(1+C)
+	case 0x28: val = (int64_t)mac_mul(opnd, cram, coefreg_prev) - r.acc; cls = REPL; break; // -acc + HOLD*C*COEFREG
+	case 0x29: val = (int64_t)opnd + mac_mul(opnd, cram, coefreg_prev); cls = REPL; break;  // HOLD + HOLD*C*COEFREG
 	case 0x05: val = (int64_t)int_lane(cram) << 8; cls = REPL; break;   // acc = C<<8
 	case 0x09: val = (int64_t)opnd + ((int64_t)int_lane(cram) << 8); cls = REPL; break; // operand + C<<8
 	case 0x0e: val = 0; cls = REPL; break;                              // acc = 0
 	case 0x1f: val = (int64_t)opnd + int_lane(cram); cls = REPL; break; // acc = operand + int C
 	case 0x3f: val = (int64_t)int_lane(cram) - r.acc; cls = REPL; break;// acc = C - acc
-	case 0x25: val = c14_mul(opnd, cram); cls = REPL; break;            // acc = operand*C (also sets lock)
+	case 0x25: val = mac_mul(opnd, cram, coefreg_prev); cls = REPL; break; // acc = HOLD*C*COEFREG (also sets lock)
 
 	// wide-multiply tap family (reverb/chorus taps) - deferred to phase 2, keep acc
 	case 0x31: case 0x33: case 0x35: case 0x38: case 0x39:
@@ -156,11 +192,16 @@ static inline void apply_column(regs &r, unsigned col, uint16_t cram, int32_t me
 	default: cls = NONE; break;
 	}
 
+	// Lock model is UNRESOLVED: C40 (col23 blocked after col25) and hardware ground4-G (col23
+	// DID write after col25 -> 0x330) contradict each other, and neither model fixes the EQ
+	// biquad rail (that is a separate biquad-structure issue).  Keeping the original model,
+	// which passes all 21 conformance vectors incl. ground4-G.  Revisit with a freeze-and-dump
+	// lock rig (finding #2) once the biquad structure is understood.
 	switch (cls)
 	{
-	case ACC:  r.acc = val; break;                        // accumulate always writes
+	case ACC:  r.acc = val; r.acc_lock = false; break;    // accumulate consumes the product, clears the lock
 	case MUL:  if (!r.acc_lock) r.acc = val; r.acc_lock = false; break; // writes if unlocked; always re-arms
-	case REPL: if (!r.acc_lock) r.acc = val; break;       // suppressed while locked
+	case REPL: if (!r.acc_lock) r.acc = val; break;       // suppressed while locked (preserves the product)
 	case NONE: default: break;
 	}
 	if (col == 0x25)

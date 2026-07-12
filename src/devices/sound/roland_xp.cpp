@@ -1345,8 +1345,15 @@ void roland_xp_device::run_dsp_program(int64_t &dac_l, int64_t &dac_r, bool &dac
 			// Store the pre-op accumulator first, then run the column op acc-only.
 			const int32_t sv = sat24(r.acc);
 			dsp_iram_store(word, sv);
-			if (word == 0x55) { dac_l = sv; dac_valid = true; }       // EFX out L
-			else if (word == 0x56) { dac_r = sv; dac_valid = true; }  // EFX out R
+			// EQ PREVIEW: the RFX Stereo-EQ writes its output to 0x55/0x56 in slots < 104,
+			// BEFORE the system mixer (which combines the still-unmodeled chorus/reverb and
+			// currently rails - see scratchpad/boot_replay.cpp).  The RFX output alone is
+			// clean and correctly scaled, so with EQ_PREVIEW we tap it and ignore the later
+			// system-mix stores.  Set EQ_PREVIEW=false once ERAM + the mixer are modelled.
+			static constexpr bool EQ_PREVIEW = true;
+			const bool rfx = slot < 104;
+			if (word == 0x55 && (!EQ_PREVIEW || rfx)) { dac_l = sv; dac_valid = true; }      // EFX out L
+			else if (word == 0x56 && (!EQ_PREVIEW || rfx)) { dac_r = sv; dac_valid = true; } // EFX out R
 		}
 
 		apply_column(r, col, cram, mem, has_mem);
@@ -1363,7 +1370,14 @@ void roland_xp_device::sound_stream_update(sound_stream &stream)
 		int64_t dry_right = 0;
 		const bool control_tick_2 = (m_control_phase & 1) == 0;
 		const bool control_tick_8 = m_control_phase == 0;
-		if (control_tick_2)
+		// 0x3916 is the effect-DSP run/stop control (per the XP register map:
+		// 7 = run/free-run, 0 = stop, 4 = factory single-pass).  The firmware stops the
+		// engine before each factory RAM test - so the DSP cannot overwrite the host's
+		// walking patterns in the shared IRAM working buffer - and restores it (normal
+		// value 0x0007) afterwards.  While stopped the DSP must not touch any DSP RAM so
+		// the host-visible trigger-read returns the written RAM verbatim.
+		const bool dsp_running = ((unsigned(m_global_config[0x16]) << 8) | m_global_config[0x17]) != 0;
+		if (control_tick_2 && dsp_running)
 			update_iram3_breakpoints();
 
 		for (unsigned v_idx = 0; v_idx < NUM_VOICES; v_idx++)
@@ -1400,29 +1414,45 @@ void roland_xp_device::sound_stream_update(sound_stream &stream)
 			}
 		}
 
-		// Present the voice-send buses to the effect DSP as its working-buffer input
-		// words (bus b -> word 0x40+b -> IRAM index b).  Shifting the Q27 voice sum
-		// right by 4 aligns the DSP's 24-bit store saturation with sat_q27, so a
-		// unity effect reproduces the legacy dry level.  Only the low 16 buses feed
-		// the input region (0x40-0x4F); higher indices are DSP scratch/state.
-		static constexpr int BUS_SHIFT = 4;
-		for (unsigned b = 0; b < 16; b++)
-			dsp_iram_store(0x40 + b, roland_xp_dsp::sat24(buses[b] >> BUS_SHIFT));
+		// Route the effect DSP output to the DAC.  DISABLED: the standalone EQ harness
+		// (scratchpad/eq_harness.cpp) proved the Stereo-EQ does NOT filter - it is a flat x16
+		// passthrough (bands computed but the biquad recursion never closes), so the "preview"
+		// is just an inverted dry signal.  The biquad-structure decode is the open problem; keep
+		// the safe dry mix until it is resolved, then re-enable (and drop the EQ_PREVIEW tap).
+		static constexpr bool DSP_DRIVES_OUTPUT = false;
 
+		// Present the voice-send buses to the effect DSP as its working-buffer input
+		// words (bus b -> word 0x40+b -> IRAM index b).  A full-scale Q27 voice must
+		// not saturate the EQ's x(-16) input stage, so scale it to ~1/16 of 24-bit
+		// full scale: >>8 puts 2^27 at 2^19, which the x16 lifts to 2^23.  Only the
+		// low 16 buses feed the input region (0x40-0x4F); higher indices are state.
+		static constexpr int BUS_SHIFT = 8;
 		int64_t dac_l = 0, dac_r = 0;
 		bool dac_valid = false;
-		run_dsp_program(dac_l, dac_r, dac_valid);
-
-		if (dac_valid)
+		if (dsp_running)
 		{
-			// The effect program drives EFX-out L/R (stores to words 0x55/0x56).
-			stream.add_int(0, smpl, int32_t(dac_l), 1 << 17);
-			stream.add_int(1, smpl, int32_t(dac_r), 1 << 17);
+			for (unsigned b = 0; b < 16; b++)
+				dsp_iram_store(0x40 + b, roland_xp_dsp::sat24(buses[b] >> BUS_SHIFT));
+
+			run_dsp_program(dac_l, dac_r, dac_valid);
+		}
+
+		if (DSP_DRIVES_OUTPUT && dac_valid)
+		{
+			// The effect program drives EFX-out L/R (stores to words 0x55/0x56), 24-bit signed
+			// (full scale = 1<<23).  BUT the audio-I/O levels are not yet calibrated (G7): the EQ
+			// path is scaled for a full-scale voice, while the dry mix normalises at 1<<21 (~64x
+			// hotter), so real signals come through the EQ far too quiet.  Provisionally normalise
+			// the EQ preview near the dry level so it is audible; tune EQ_PREVIEW_NORM (smaller =
+			// louder).  If it clips on loud notes, raise it; if inaudible, lower it.
+			static constexpr int EQ_PREVIEW_NORM = 1 << 18;
+			stream.add_int(0, smpl, int32_t(dac_l), EQ_PREVIEW_NORM);
+			stream.add_int(1, smpl, int32_t(dac_r), EQ_PREVIEW_NORM);
 		}
 		else
 		{
-			// No effect program loaded yet: fall back to the direct dry mix so audio
-			// keeps working through boot and before the DSP is programmed.
+			// Default / boot: direct dry mix, so audio is correct and never rails
+			// while the effect DSP is still being reverse-engineered.
 			stream.add_int(0, smpl, sat_q27(dry_left), 1 << 21);
 			stream.add_int(1, smpl, sat_q27(dry_right), 1 << 21);
 		}
