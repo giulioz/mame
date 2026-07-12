@@ -567,6 +567,11 @@ void xv_state::xv5080(machine_config &config)
 	SED1330(config, m_sed1335, 8'000'000);
 	m_sed1335->set_screen("screen");
 	m_sed1335->set_addrmap(0, &xv_state::sed1335_vram);
+
+	// Reuse the XV-3080 panel layout: the key matrix, LEDs and encoder are shared.
+	// (The XV-5080 relabels the LCD-row buttons as SYSTEM/UTILITY + F1..F6 and adds
+	// a second part-select row, so its labels are provisional here.)
+	config.set_default_layout(layout_xv3080);
 }
 
 
