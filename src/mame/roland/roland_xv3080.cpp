@@ -128,17 +128,10 @@ private:
 		// BTN3: the numbered/part buttons [1/9]..[8/16] = keycodes 0x0f..0x08
 		0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08, // PART1..PART8
 	};
-	// The XV-5080 shares the matrix mechanism but uses different keycode values,
-	// different direct-port bits, and a raw-matrix power-on TEST gate (reg 0x05).
+	// The XV-5080 shares the key matrix wiring/keycodes with the XV-3080; it differs
+	// only in its direct-port bits and a raw-matrix power-on TEST gate (reg 0x05).
 	bool m_5080 = false;
-	static constexpr u8 KEYCODE_MAP_5080[32] = {
-		// BTN0: nav / edit   (5080 raw keycodes; EXIT/SHIFT confirmed, rest TBD)
-		0x3e, 0xff, 0x43, 0xff, 0xff, 0xff, 0xff, 0xff, // EXIT .. SHIFT ..
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-	};
-	const u8 *keymap() const { return m_5080 ? KEYCODE_MAP_5080 : KEYCODE_MAP; }
+	const u8 *keymap() const { return KEYCODE_MAP; }
 
 	emu_timer *m_kc_scan_timer = nullptr;
 	u32 m_btn_prev = 0;
