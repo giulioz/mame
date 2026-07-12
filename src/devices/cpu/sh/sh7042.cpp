@@ -47,6 +47,7 @@ sh7042_device::sh7042_device(const machine_config &mconfig, device_type type, co
 	m_dmac1(*this, "dmac:1"),
 	m_dmac2(*this, "dmac:2"),
 	m_dmac3(*this, "dmac:3"),
+	m_dtc(*this, "dtc"),
 	m_mtu(*this, "mtu"),
 	m_mtu0(*this, "mtu:0"),
 	m_mtu1(*this, "mtu:1"),
@@ -118,7 +119,10 @@ void sh7042_device::device_start()
 	sh2_device::device_start();
 
 	m_event_timer = timer_alloc(FUNC(sh7042_device::event_timer_tick), this);
+	m_wdt_timer = timer_alloc(FUNC(sh7042_device::wdt_tick), this);
 
+	save_item(NAME(m_wdt_tcsr));
+	save_item(NAME(m_wdt_tcnt));
 	save_item(NAME(m_pcf_ah));
 	save_item(NAME(m_pcf_al));
 	save_item(NAME(m_pcf_b));
@@ -136,11 +140,59 @@ void sh7042_device::device_start()
 	m_pcf_dl = 0;
 	m_pcf_e = 0;
 	m_pcf_if = 0;
+
+	// Let the interrupt controller consult the DTC before raising an interrupt
+	// to the CPU: a DTC-enabled source is serviced by the DTC instead.
+	m_intc->set_dtc(m_dtc);
 }
 
 void sh7042_device::execute_set_input(int irqline, int state)
 {
 	m_intc->set_input(irqline, state);
+}
+
+// Watchdog timer.  TCSR at 0xFFFF8610, TCNT at 0xFFFF8611; writes are word
+// accesses whose high byte is a protection key (0xA5 -> TCSR, 0x5A -> TCNT).
+u16 sh7042_device::wdt_r()
+{
+	return (u16(m_wdt_tcsr) << 8) | m_wdt_tcnt;
+}
+
+void sh7042_device::wdt_w(offs_t, u16 data, u16 mem_mask)
+{
+	switch (data >> 8)
+	{
+	case 0xa5: // TCSR: OVF (bit 7) is clear-only (write 0 after reading 1)
+		m_wdt_tcsr = (data & 0x7f) | (m_wdt_tcsr & data & 0x80);
+		wdt_reschedule();
+		break;
+	case 0x5a: // TCNT
+		m_wdt_tcnt = data & 0xff;
+		wdt_reschedule();
+		break;
+	}
+}
+
+void sh7042_device::wdt_reschedule()
+{
+	// Count only while enabled (TME).  CKS selects the phi divider.
+	if (BIT(m_wdt_tcsr, 5))
+	{
+		static const u32 div[8] = { 2, 64, 128, 256, 512, 1024, 4096, 8192 };
+		u32 ticks = (0x100 - m_wdt_tcnt) * div[m_wdt_tcsr & 7];
+		m_wdt_timer->adjust(attotime::from_ticks(ticks, clock()));
+	}
+	else
+		m_wdt_timer->adjust(attotime::never);
+}
+
+TIMER_CALLBACK_MEMBER(sh7042_device::wdt_tick)
+{
+	m_wdt_tcsr |= 0x80; // OVF
+	m_wdt_tcnt = 0;
+	if (!BIT(m_wdt_tcsr, 6)) // WT/IT = 0 -> interval timer mode: raise ITI (vector 152)
+		m_intc->internal_interrupt(152);
+	wdt_reschedule();
 }
 
 void sh7042_device::device_reset()
@@ -255,6 +307,12 @@ void sh7042_device::map(address_map &map)
 		map(0xffff8413, 0xffff8413).rw(m_adc1, FUNC(sh_adc_device::adcr_r), FUNC(sh_adc_device::adcr_w));
 	}
 
+	map(0xffff8610, 0xffff8611).rw(FUNC(sh7042_device::wdt_r), FUNC(sh7042_device::wdt_w));
+
+	map(0xffff8700, 0xffff8704).rw(m_dtc, FUNC(sh_dtc_device::dter_r), FUNC(sh_dtc_device::dter_w));
+	map(0xffff8706, 0xffff8707).rw(m_dtc, FUNC(sh_dtc_device::dtcsr_r), FUNC(sh_dtc_device::dtcsr_w));
+	map(0xffff8708, 0xffff8709).rw(m_dtc, FUNC(sh_dtc_device::dtbr_r), FUNC(sh_dtc_device::dtbr_w));
+
 	map(0xffff8620, 0xffff8621).rw(m_bsc, FUNC(sh_bsc_device::bcr1_r), FUNC(sh_bsc_device::bcr1_w));
 	map(0xffff8622, 0xffff8623).rw(m_bsc, FUNC(sh_bsc_device::bcr2_r), FUNC(sh_bsc_device::bcr2_w));
 	map(0xffff8624, 0xffff8625).rw(m_bsc, FUNC(sh_bsc_device::wcr1_r), FUNC(sh_bsc_device::wcr1_w));
@@ -295,10 +353,11 @@ void sh7042_device::device_add_mconfig(machine_config &config)
 	SH_BSC(config, m_bsc);
 	SH_CMT(config, m_cmt, *this, m_intc, 144, 148);
 	SH_DMAC(config, m_dmac, *this);
-	SH_DMAC_CHANNEL(config, m_dmac0, *this, m_intc);
-	SH_DMAC_CHANNEL(config, m_dmac1, *this, m_intc);
-	SH_DMAC_CHANNEL(config, m_dmac2, *this, m_intc);
-	SH_DMAC_CHANNEL(config, m_dmac3, *this, m_intc);
+	SH_DMAC_CHANNEL(config, m_dmac0, *this, m_intc, 72); // DEI0
+	SH_DMAC_CHANNEL(config, m_dmac1, *this, m_intc, 76); // DEI1
+	SH_DMAC_CHANNEL(config, m_dmac2, *this, m_intc, 80); // DEI2
+	SH_DMAC_CHANNEL(config, m_dmac3, *this, m_intc, 84); // DEI3
+	SH_DTC(config, m_dtc, *this, m_intc);
 	SH_MTU(config, m_mtu, *this, 5);
 	SH_MTU_CHANNEL(config, m_mtu0, *this, 4, 0x60, m_intc, 88,
 			sh_mtu_channel_device::DIV_1,

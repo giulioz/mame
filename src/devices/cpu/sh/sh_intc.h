@@ -14,6 +14,7 @@
 #pragma once
 
 class sh7042_device;
+class sh_dtc_device;
 
 class sh_intc_device : public device_t {
 public:
@@ -23,6 +24,10 @@ public:
 	{
 		m_cpu.set_tag(std::forward<T>(cpu));
 	}
+
+	// Optional data transfer controller: consulted before an internal interrupt
+	// is raised to the CPU, so a DTC-driven source is serviced by the DTC.
+	void set_dtc(sh_dtc_device *dtc) { m_dtc = dtc; }
 
 	void interrupt_taken(int irqline, int vector);
 	void internal_interrupt(int vector);
@@ -44,6 +49,8 @@ protected:
 	u16 m_isr, m_icr;
 
 	u8 m_lines;
+
+	sh_dtc_device *m_dtc = nullptr;
 
 	required_device<sh7042_device> m_cpu;
 

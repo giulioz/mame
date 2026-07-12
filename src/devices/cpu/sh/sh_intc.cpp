@@ -12,6 +12,7 @@
 #include "sh_intc.h"
 
 #include "sh7042.h"
+#include "sh_dtc.h"
 
 DEFINE_DEVICE_TYPE(SH_INTC, sh_intc_device, "sh_intc", "SH interrupt controller")
 
@@ -94,6 +95,12 @@ void sh_intc_device::update_irq()
 
 void sh_intc_device::internal_interrupt(int vector)
 {
+	// A DTC-enabled source is serviced by the data transfer controller instead
+	// of interrupting the CPU; it returns true while more transfers remain, in
+	// which case the CPU interrupt is suppressed.
+	if(m_dtc && m_dtc->trigger(vector))
+		return;
+
 	m_pending[vector >> 5] |= 1 << (vector & 31);
 	update_irq();
 }

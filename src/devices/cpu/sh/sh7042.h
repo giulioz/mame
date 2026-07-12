@@ -14,6 +14,7 @@
 #include "sh_bsc.h"
 #include "sh_cmt.h"
 #include "sh_dmac.h"
+#include "sh_dtc.h"
 #include "sh_mtu.h"
 #include "sh_port.h"
 #include "sh_sci.h"
@@ -100,6 +101,7 @@ private:
 	required_device<sh_dmac_channel_device> m_dmac1;
 	required_device<sh_dmac_channel_device> m_dmac2;
 	required_device<sh_dmac_channel_device> m_dmac3;
+	required_device<sh_dtc_device> m_dtc;
 	required_device<sh_mtu_device> m_mtu;
 	required_device<sh_mtu_channel_device> m_mtu0;
 	required_device<sh_mtu_channel_device> m_mtu1;
@@ -123,6 +125,13 @@ private:
 
 	emu_timer *m_event_timer;
 
+	// Watchdog timer used by the firmware as an interval timer: in interval mode
+	// (WT/IT=0, TME=1) each TCNT overflow raises the ITI interrupt (vector 152),
+	// which the RTOS uses as its preemptive-dispatch software interrupt.
+	emu_timer *m_wdt_timer = nullptr;
+	u8 m_wdt_tcsr = 0x18;
+	u8 m_wdt_tcnt = 0;
+
 	u16 m_pcf_ah;
 	u32 m_pcf_al;
 	u32 m_pcf_b;
@@ -144,6 +153,11 @@ private:
 	void recompute_timer(u64 event_time);
 	TIMER_CALLBACK_MEMBER(event_timer_tick);
 	void internal_update(u64 current_time);
+
+	u16 wdt_r();
+	void wdt_w(offs_t, u16 data, u16 mem_mask);
+	void wdt_reschedule();
+	TIMER_CALLBACK_MEMBER(wdt_tick);
 
 	u16 pcf_ah_r();
 	void pcf_ah_w(offs_t, u16 data, u16 mem_mask);

@@ -46,13 +46,13 @@ class sh_dmac_channel_device : public device_t {
 public:
 	sh_dmac_channel_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 
-	template <typename T, typename U> sh_dmac_channel_device(const machine_config &mconfig, const char *tag, device_t *owner, T &&cpu, U &&intc)
+	template <typename T, typename U> sh_dmac_channel_device(const machine_config &mconfig, const char *tag, device_t *owner, T &&cpu, U &&intc, int dei_vector = 0)
 		: sh_dmac_channel_device(mconfig, tag, owner)
 	{
-		set_info(cpu, intc);
+		set_info(cpu, intc, dei_vector);
 	}
 
-	template<typename T, typename U> void set_info(T &&cpu, U &&intc) { m_cpu.set_tag(std::forward<T>(cpu)); m_intc.set_tag(std::forward<U>(intc)); }
+	template<typename T, typename U> void set_info(T &&cpu, U &&intc, int dei_vector = 0) { m_cpu.set_tag(std::forward<T>(cpu)); m_intc.set_tag(std::forward<U>(intc)); m_dei_vector = dei_vector; }
 
 	u32 sar_r();
 	void sar_w(offs_t, u32 data, u32 mem_mask);
@@ -68,6 +68,9 @@ protected:
 	required_device<sh_intc_device> m_intc;
 
 	u32 m_sar, m_dar, m_dmatcr, m_chcr;
+	int m_dei_vector = 0;
+
+	void execute_dma();
 
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
