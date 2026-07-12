@@ -102,6 +102,7 @@ private:
 	void map_common(address_map &map) ATTR_COLD;
 	void map_3080(address_map &map) ATTR_COLD;
 	void map_5080(address_map &map) ATTR_COLD;
+	void sed1335_vram(address_map &map) ATTR_COLD;
 };
 
 void xv_state::machine_start()
@@ -223,6 +224,17 @@ void xv_state::map_5080(address_map &map)
 	map_common(map);
 	// CS0: XV voice chips (not yet modelled) — backed as RAM so read-backs work.
 	map(0x00200000, 0x002fffff).ram();
+
+	// SED1335 graphic LCD, memory-mapped on two adjacent addresses within CS1
+	// (the firmware DMAs the framebuffer to them).  Even = data / status,
+	// odd = command / data-read, as on other SED133x boards (e.g. ympsr2000).
+	map(0x005c0000, 0x005c0000).rw(m_sed1335, FUNC(sed1330_device::status_r), FUNC(sed1330_device::data_w));
+	map(0x005c0001, 0x005c0001).rw(m_sed1335, FUNC(sed1330_device::data_r), FUNC(sed1330_device::command_w));
+}
+
+void xv_state::sed1335_vram(address_map &map)
+{
+	map(0x0000, 0x7fff).ram(); // 32 KB display RAM
 }
 
 
@@ -296,7 +308,17 @@ void xv_state::xv5080(machine_config &config)
 	xv_base(config);
 	m_maincpu->set_addrmap(AS_PROGRAM, &xv_state::map_5080);
 
-	// TODO: SED1335 graphic LCD (m_sed1335) once its bus address is traced.
+	// SED1335 graphic LCD at 0x005C0000/0x005C0001 (DMA-fed by the firmware).
+	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_LCD));
+	screen.set_refresh_hz(60);
+	screen.set_size(320, 80);
+	screen.set_visarea_full();
+	screen.set_screen_update("sed1335", FUNC(sed1330_device::screen_update));
+	screen.set_palette("palette");
+	PALETTE(config, "palette", FUNC(xv_state::lcd_palette), 2);
+	SED1330(config, m_sed1335, 8'000'000);
+	m_sed1335->set_screen("screen");
+	m_sed1335->set_addrmap(0, &xv_state::sed1335_vram);
 }
 
 
