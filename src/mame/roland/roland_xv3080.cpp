@@ -22,7 +22,10 @@
     The gate array (CS1) is modelled as a MULTIPLEXED INTERRUPT CONTROLLER: it
     drives IRQ0 (GAINT), and its register 0x40 low nibble is the pending-source
     index the internal-ROM dispatcher (0x000086BC) uses to index the handler
-    table.  Sources: 0 = MIDI-RX, 9 = periodic RTOS tick, 1/7/8 = RTOS events.
+    table.  Sources: 0 = front-panel key event, 9 = periodic RTOS tick, 1/7/8 =
+    RTOS events.  (The GA-mux source->handler table is in the app ROM right after
+    the 256-entry SH-2 vector table; on the XV-3080 v1.11 image, source 0 vectors
+    to the key ISR 0xE8F764.)
 
     Booting the ITRON kernel additionally needed, in the CPU device: the WDT
     interval-timer interrupt (ITI, vector 152) which the kernel uses as its
@@ -30,12 +33,22 @@
     preempt the spinning main thread and boot deadlocks); and the DMAC transfer
     engine, which streams the framebuffer to the LCD.
 
+    Front panel: most buttons are a scanned key matrix delivered as a keycode in
+    GA reg 0x43 (bit 7 = press) on GA-mux IRQ source 0; the VALUE rotary encoder,
+    its push-switch and PREVIEW are direct-port inputs on GA reg 0x3a/0x3b.  With
+    this the XV-3080 accepts front-panel input and enters its factory TEST mode
+    (power on -> hold EXIT + press cursor-left for DEMO -> hold up+down + press
+    VALUE for the TEST top page).
+
     Status:
     - XV-3080: BOOTS to the main PERFORM screen on its HD44780 character LCD
-      (DMA-fed to gate-array reg 0x38 = command / 0x39 = data, as on the JV-1080).
-    - XV-5080: same board with a SED1335 graphic LCD.
+      (DMA-fed to gate-array reg 0x38 = command / 0x39 = data, as on the JV-1080),
+      and accepts front-panel input (keycode matrix + VALUE encoder).
+    - XV-5080: same board with a SED1335 graphic LCD.  Its v1.30 firmware uses a
+      different GA-mux/keycode layout, so it shares the input ports but not yet the
+      live key delivery.
 
-    Not yet done: sound (voice/effect DSP output), front-panel input, NVRAM.
+    Not yet done: sound (voice/effect DSP output), XV-5080 key delivery, NVRAM.
 
 ***************************************************************************/
 
@@ -63,7 +76,9 @@ public:
 		m_maincpu(*this, "maincpu"),
 		m_xp(*this, "xp%u", 0U),
 		m_hd44780(*this, "hd44780"),
-		m_sed1335(*this, "sed1335")
+		m_sed1335(*this, "sed1335"),
+		m_btn(*this, "BTN%u", 0U),
+		m_direct(*this, "DIRECT")
 	{ }
 
 	void xv3080(machine_config &config);
@@ -77,6 +92,8 @@ private:
 	optional_device_array<roland_xp_device, 2> m_xp;
 	optional_device<hd44780_device> m_hd44780;
 	optional_device<sed1330_device> m_sed1335;
+	required_ioport_array<4> m_btn;    // matrix buttons -> keycodes (GA reg 0x43, IRQ source 0)
+	required_ioport m_direct;          // encoder + PREVIEW + VALUE switch on GA reg 0x3a/0x3b
 
 	u16 m_pe = 0;
 	emu_timer *m_ga_irq_timer = nullptr;
@@ -87,6 +104,29 @@ private:
 	void ga_set_pending(unsigned source);
 	void ga_update_irq();
 	TIMER_CALLBACK_MEMBER(ga_irq_tick);
+
+	// Front-panel keycode delivery (matrix buttons).  The GA scans the key matrix
+	// and raises IRQ source 0 with a keycode in reg 0x43 (bit 7 = press).  We diff
+	// the button ioports on a scan timer, queue press/release keycodes, and hand
+	// them to the firmware one per read-acknowledge.
+	static constexpr u8 KEYCODE_MAP[32] = {
+		// BTN0: nav / edit
+		0x10, 0x26, 0x27, 0x1d, 0x1a, 0x1b, 0x23, 0x22, // EXIT ENTER SHIFT INC DEC Up Down Left
+		// BTN1: mode
+		0x1c, 0x06, 0x07, 0x04, 0x05, 0x11, 0x16, 0x17, // Right PATCH PERFORM GM RHYTHM PALETTE SYSTEM UTILITY
+		// BTN2: function / group
+		0x24, 0x18, 0x19, 0x1f, 0x00, 0x01, 0x02, 0x03, // EFFECTS PART-SEL MIDI PAT-FIND EXP PRESET CARD USER
+		// BTN3: parts
+		0x1e, 0x0f, 0x0d, 0x0b, 0x0a, 0x09, 0x08, 0x25, // PART1..PART7, PART8
+	};
+	emu_timer *m_kc_scan_timer = nullptr;
+	u32 m_btn_prev = 0;
+	u8  m_kc_fifo[64] = {};
+	u8  m_kc_head = 0, m_kc_tail = 0;
+	bool m_kc_busy = false;
+	void kc_enqueue(u8 keycode);
+	void kc_try_deliver();
+	TIMER_CALLBACK_MEMBER(kc_scan);
 
 	template <unsigned N> u8 xp_r(offs_t offset) { return m_xp[N]->read(offset); }
 	template <unsigned N> void xp_w(offs_t offset, u8 data) { m_xp[N]->write(offset, data); }
@@ -114,6 +154,57 @@ void xv_state::machine_start()
 	// safe to run this from the start. Rate provisional (~1 kHz).
 	m_ga_irq_timer = timer_alloc(FUNC(xv_state::ga_irq_tick), this);
 	m_ga_irq_timer->adjust(attotime::from_hz(1000), 0, attotime::from_hz(1000));
+
+	// Front-panel key-matrix scan: diff the button ioports and deliver keycodes.
+	save_item(NAME(m_btn_prev));
+	save_item(NAME(m_kc_fifo));
+	save_item(NAME(m_kc_head));
+	save_item(NAME(m_kc_tail));
+	save_item(NAME(m_kc_busy));
+	m_kc_scan_timer = timer_alloc(FUNC(xv_state::kc_scan), this);
+	m_kc_scan_timer->adjust(attotime::from_hz(120), 0, attotime::from_hz(120));
+}
+
+void xv_state::kc_enqueue(u8 keycode)
+{
+	u8 next = (m_kc_tail + 1) % std::size(m_kc_fifo);
+	if (next == m_kc_head)
+		return; // full, drop
+	m_kc_fifo[m_kc_tail] = keycode;
+	m_kc_tail = next;
+}
+
+void xv_state::kc_try_deliver()
+{
+	// Present one queued keycode at a time; the firmware reads reg 0x43 to ack.
+	if (m_kc_busy || m_kc_head == m_kc_tail)
+		return;
+	m_ga_regs[0x43] = m_kc_fifo[m_kc_head];
+	m_kc_head = (m_kc_head + 1) % std::size(m_kc_fifo);
+	m_kc_busy = true;
+	ga_set_pending(0); // GA IRQ source 0 = key event
+}
+
+TIMER_CALLBACK_MEMBER(xv_state::kc_scan)
+{
+	// Matrix buttons: active-high ioports; a change queues a press/release keycode
+	// (bit 7 set = press).  The firmware maintains the held-state bitmap, so chords
+	// (e.g. hold EXIT + press cursor) work naturally.
+	u32 cur = 0;
+	for (int i = 0; i < 4; i++)
+		cur |= u32(m_btn[i]->read()) << (i * 8);
+	u32 changed = cur ^ m_btn_prev;
+	m_btn_prev = cur;
+	for (int bit = 0; bit < 32; bit++)
+	{
+		if (!BIT(changed, bit))
+			continue;
+		u8 kc = KEYCODE_MAP[bit];
+		if (kc == 0xff)
+			continue;
+		kc_enqueue(BIT(cur, bit) ? (kc | 0x80) : kc);
+	}
+	kc_try_deliver();
 }
 
 void xv_state::ga_update_irq()
@@ -150,6 +241,35 @@ u8 xv_state::ga_r(offs_t offset)
 			ga_update_irq();
 		}
 		return source;
+	}
+
+	// Direct-port inputs (active low; asserted bit reads 0).  DIRECT ioport bits:
+	//   0 = encoder phase A, 1 = encoder phase B  -> GA reg 0x3a bit0/bit1
+	//   2 = PREVIEW, 3 = VALUE dial push-switch    -> GA reg 0x3b bit0/bit1
+	if (offset == 0x3a)
+	{
+		u8 d = m_direct->read();
+		u8 v = 0xff;
+		if (BIT(d, 0)) v &= ~0x01; // encoder A
+		if (BIT(d, 1)) v &= ~0x02; // encoder B
+		return v;
+	}
+	if (offset == 0x3b)
+	{
+		u8 d = m_direct->read();
+		u8 v = 0xff;
+		if (BIT(d, 2)) v &= ~0x01; // PREVIEW
+		if (BIT(d, 3)) v &= ~0x02; // VALUE push
+		return v;
+	}
+
+	// reg 0x43: front-panel keycode latch (IRQ source 0).  Reading it acknowledges
+	// the current keycode; present the next queued one on the following scan.
+	if (offset == 0x43)
+	{
+		if (!machine().side_effects_disabled())
+			m_kc_busy = false;
+		return m_ga_regs[0x43];
 	}
 
 	return m_ga_regs[offset];
@@ -241,7 +361,56 @@ void xv_state::sed1335_vram(address_map &map)
 }
 
 
+// Front panel.  Most buttons are a scanned key matrix delivered as keycodes in GA
+// reg 0x43 (IRQ source 0); their bit position here indexes KEYCODE_MAP.  The VALUE
+// dial (rotary encoder + push) and PREVIEW are direct-port inputs on GA reg 0x3a/0x3b.
 static INPUT_PORTS_START(xv)
+	PORT_START("BTN0") // nav / edit  (KEYCODE_MAP[0..7])
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("EXIT")        PORT_CODE(KEYCODE_ESC)
+	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("ENTER")       PORT_CODE(KEYCODE_ENTER)
+	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("SHIFT")       PORT_CODE(KEYCODE_LSHIFT)
+	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("INC")         PORT_CODE(KEYCODE_EQUALS)
+	PORT_BIT(0x10, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("DEC")         PORT_CODE(KEYCODE_MINUS)
+	PORT_BIT(0x20, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Cursor Up")   PORT_CODE(KEYCODE_UP)
+	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Cursor Down") PORT_CODE(KEYCODE_DOWN)
+	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Cursor Left") PORT_CODE(KEYCODE_LEFT)
+
+	PORT_START("BTN1") // mode  (KEYCODE_MAP[8..15])
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Cursor Right") PORT_CODE(KEYCODE_RIGHT)
+	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PATCH")        PORT_CODE(KEYCODE_F2)
+	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PERFORM")      PORT_CODE(KEYCODE_F1)
+	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("GM")           PORT_CODE(KEYCODE_F4)
+	PORT_BIT(0x10, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("RHYTHM")       PORT_CODE(KEYCODE_F3)
+	PORT_BIT(0x20, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PALETTE")      PORT_CODE(KEYCODE_F5)
+	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("SYSTEM")       PORT_CODE(KEYCODE_F6)
+	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("UTILITY")      PORT_CODE(KEYCODE_F7)
+
+	PORT_START("BTN2") // function / group  (KEYCODE_MAP[16..23])
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("EFFECTS")      PORT_CODE(KEYCODE_F8)
+	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART Select")  PORT_CODE(KEYCODE_TAB)
+	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("MIDI Message") PORT_CODE(KEYCODE_M)
+	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Patch Finder") PORT_CODE(KEYCODE_F)
+	PORT_BIT(0x10, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Group EXP")    PORT_CODE(KEYCODE_Z)
+	PORT_BIT(0x20, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Group PRESET") PORT_CODE(KEYCODE_X)
+	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Group CARD")   PORT_CODE(KEYCODE_C)
+	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("Group USER")   PORT_CODE(KEYCODE_V)
+
+	PORT_START("BTN3") // part select  (KEYCODE_MAP[24..31])
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 1") PORT_CODE(KEYCODE_1)
+	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 2") PORT_CODE(KEYCODE_2)
+	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 3") PORT_CODE(KEYCODE_3)
+	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 4") PORT_CODE(KEYCODE_4)
+	PORT_BIT(0x10, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 5") PORT_CODE(KEYCODE_5)
+	PORT_BIT(0x20, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 6") PORT_CODE(KEYCODE_6)
+	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 7") PORT_CODE(KEYCODE_7)
+	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 8") PORT_CODE(KEYCODE_8)
+
+	PORT_START("DIRECT") // encoder + PREVIEW + VALUE switch (GA reg 0x3a/0x3b, active low)
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE Encoder A") PORT_CODE(KEYCODE_OPENBRACE)
+	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE Encoder B") PORT_CODE(KEYCODE_CLOSEBRACE)
+	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PREVIEW")         PORT_CODE(KEYCODE_P)
+	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE (push)")    PORT_CODE(KEYCODE_SPACE)
+	PORT_BIT(0xf0, IP_ACTIVE_HIGH, IPT_UNUSED)
 INPUT_PORTS_END
 
 
