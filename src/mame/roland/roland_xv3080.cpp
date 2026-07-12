@@ -234,7 +234,10 @@ void xv_state::map_5080(address_map &map)
 
 void xv_state::sed1335_vram(address_map &map)
 {
-	map(0x0000, 0x7fff).ram(); // 32 KB display RAM
+	// 32 KB display SRAM, addressed with 15 bits (A15 ignored), so the
+	// SED1335's 16-bit addresses wrap — a graphics page that runs off the top of
+	// the 32 KB continues from the bottom.
+	map(0x0000, 0x7fff).ram().mirror(0x8000);
 }
 
 
