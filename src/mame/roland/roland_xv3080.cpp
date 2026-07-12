@@ -211,6 +211,15 @@ TIMER_CALLBACK_MEMBER(xv_state::kc_scan)
 		kc_enqueue(BIT(cur, bit) ? (kc | 0x80) : kc);
 	}
 	kc_try_deliver();
+
+	// VALUE dial: the GA presents a signed step delta in reg 0x42 and raises IRQ
+	// source 1, which the firmware accumulates.  One step per scan tick while held.
+	u8 dir = m_direct->read();
+	if (BIT(dir, 0) || BIT(dir, 1))
+	{
+		m_ga_regs[0x42] = BIT(dir, 0) ? 0x01 : 0xff; // CW = +1, CCW = -1
+		ga_set_pending(1);
+	}
 }
 
 void xv_state::ga_update_irq()
@@ -253,13 +262,7 @@ u8 xv_state::ga_r(offs_t offset)
 	//   0 = encoder phase A, 1 = encoder phase B  -> GA reg 0x3a bit0/bit1
 	//   2 = PREVIEW, 3 = VALUE dial push-switch    -> GA reg 0x3b bit0/bit1
 	if (offset == 0x3a)
-	{
-		u8 d = m_direct->read();
-		u8 v = 0xff;
-		if (BIT(d, 0)) v &= ~0x01; // encoder A
-		if (BIT(d, 1)) v &= ~0x02; // encoder B
-		return v;
-	}
+		return 0xff; // 0x3a bits are status/output lines, not the encoder
 	if (offset == 0x3b)
 	{
 		u8 d = m_direct->read();
@@ -429,11 +432,11 @@ static INPUT_PORTS_START(xv)
 	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 7") PORT_CODE(KEYCODE_7)
 	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 8") PORT_CODE(KEYCODE_8)
 
-	PORT_START("DIRECT") // encoder + PREVIEW + VALUE switch (GA reg 0x3a/0x3b, active low)
-	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE Encoder A") PORT_CODE(KEYCODE_OPENBRACE)
-	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE Encoder B") PORT_CODE(KEYCODE_CLOSEBRACE)
-	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PREVIEW")         PORT_CODE(KEYCODE_P)
-	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE (push)")    PORT_CODE(KEYCODE_SPACE)
+	PORT_START("DIRECT") // VALUE dial + PREVIEW + VALUE switch (GA reg 0x3a/0x3b)
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE Dial CW")  PORT_CODE(KEYCODE_CLOSEBRACE)
+	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE Dial CCW") PORT_CODE(KEYCODE_OPENBRACE)
+	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PREVIEW")        PORT_CODE(KEYCODE_P)
+	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE (push)")   PORT_CODE(KEYCODE_SPACE)
 	PORT_BIT(0xf0, IP_ACTIVE_HIGH, IPT_UNUSED)
 
 	PORT_START("LOOPBACK")
