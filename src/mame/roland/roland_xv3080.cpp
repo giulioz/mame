@@ -57,6 +57,7 @@
 #include "bus/midi/midiinport.h"
 #include "bus/midi/midioutport.h"
 #include "cpu/sh/sh7042.h"
+#include "machine/nvram.h"
 #include "sound/roland_xp.h"
 #include "video/hd44780.h"
 #include "video/sed1330.h"
@@ -78,7 +79,10 @@ public:
 		m_hd44780(*this, "hd44780"),
 		m_sed1335(*this, "sed1335"),
 		m_btn(*this, "BTN%u", 0U),
-		m_direct(*this, "DIRECT")
+		m_direct(*this, "DIRECT"),
+		m_mdout(*this, "mdout"),
+		m_midi_loopback(*this, "LOOPBACK"),
+		m_leds(*this, "led%u", 0U)
 	{ }
 
 	void xv3080(machine_config &config);
@@ -94,6 +98,9 @@ private:
 	optional_device<sed1330_device> m_sed1335;
 	required_ioport_array<4> m_btn;    // matrix buttons -> keycodes (GA reg 0x43, IRQ source 0)
 	required_ioport m_direct;          // encoder + PREVIEW + VALUE switch on GA reg 0x3a/0x3b
+	required_device<midi_port_device> m_mdout;
+	required_ioport m_midi_loopback;   // factory MIDI OUT->IN loopback cable
+	output_finder<32> m_leds;          // front-panel LEDs (GA regs 0x10-0x13)
 
 	u16 m_pe = 0;
 	emu_timer *m_ga_irq_timer = nullptr;
@@ -132,10 +139,9 @@ private:
 	template <unsigned N> void xp_w(offs_t offset, u8 data) { m_xp[N]->write(offset, data); }
 	u8 ga_r(offs_t offset);
 	void ga_w(offs_t offset, u8 data);
-	u16 cs2_r(offs_t offset, u16 mem_mask) { return 0; }
-	void cs2_w(offs_t offset, u16 data, u16 mem_mask) { }
 	u16 pe_r() { return m_pe | 0xc000; }
 	void pe_w(u16 data) { m_pe = data; }
+	void sci0_tx(int state);
 	void lcd_palette(palette_device &palette) const;
 
 	void xv_base(machine_config &config);
@@ -300,7 +306,24 @@ void xv_state::ga_w(offs_t offset, u8 data)
 		return;
 	}
 
+	// Front-panel LEDs: GA regs 0x10-0x13 are 4 x 8-bit LED latches (32 LEDs).
+	if (offset >= 0x10 && offset <= 0x13)
+	{
+		const unsigned base = (offset - 0x10) * 8;
+		for (unsigned bit = 0; bit < 8; bit++)
+			m_leds[base + bit] = BIT(data, bit);
+	}
+
 	m_ga_regs[offset] = data;
+}
+
+void xv_state::sci0_tx(int state)
+{
+	// Drive the physical MIDI OUT, and — when the factory loopback cable is
+	// engaged — feed the same serial line back into the SCI0 receiver.
+	m_mdout->write_txd(state);
+	if (BIT(m_midi_loopback->read(), 0))
+		m_maincpu->sci_rx_w<0>(state);
 }
 
 void xv_state::lcd_palette(palette_device &palette) const
@@ -320,8 +343,9 @@ void xv_state::map_common(address_map &map)
 	map(0x00400000, 0x007fffff).ram();
 	map(0x006c0000, 0x006c0fff).rw(FUNC(xv_state::ga_r), FUNC(xv_state::ga_w));
 
-	// CS2: battery SRAM. Zero-returning handler for bring-up.
-	map(0x00800000, 0x00bfffff).rw(FUNC(xv_state::cs2_r), FUNC(xv_state::cs2_w));
+	// CS2: 512 KB battery-backed SRAM (user/system data), mirrored across the
+	// 4 MB CS2 window (so e.g. 0x0093xxxx aliases 0x0083xxxx).
+	map(0x00800000, 0x0087ffff).ram().share("nvram").mirror(0x00380000);
 
 	// CS3: flash PROM (application ROM), 2 MB at 0x00D00000.
 	map(0x00d00000, 0x00efffff).rom().region("progrom", 0);
@@ -411,6 +435,11 @@ static INPUT_PORTS_START(xv)
 	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PREVIEW")         PORT_CODE(KEYCODE_P)
 	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE (push)")    PORT_CODE(KEYCODE_SPACE)
 	PORT_BIT(0xf0, IP_ACTIVE_HIGH, IPT_UNUSED)
+
+	PORT_START("LOOPBACK")
+	PORT_CONFNAME(0x01, 0x00, "MIDI OUT->IN loopback cable")
+	PORT_CONFSETTING(0x00, DEF_STR(Off))
+	PORT_CONFSETTING(0x01, DEF_STR(On))
 INPUT_PORTS_END
 
 
@@ -433,16 +462,20 @@ void xv_state::xv_base(machine_config &config)
 	m_maincpu->read_adc<6>().set_constant(0x266);
 	m_maincpu->read_adc<7>().set_constant(0x266);
 
+	// Battery-backed SRAM (CS2) holds user patches/performances and system data.
+	NVRAM(config, "nvram", nvram_device::DEFAULT_ALL_0);
+
 	SPEAKER(config, "speaker", 2).front();
 
-	// MIDI is on SCI0.
+	// MIDI is on SCI0.  The factory MIDI test needs an OUT->IN loopback cable; the
+	// MIDI_LOOPBACK toggle supplies that by feeding the SCI0 TX line back to RX.
 	auto &mdin(MIDI_PORT(config, "mdin"));
 	midiin_slot(mdin);
 	mdin.rxd_handler().set(m_maincpu, FUNC(sh7042_device::sci_rx_w<0>));
 
-	auto &mdout(MIDI_PORT(config, "mdout"));
-	midiout_slot(mdout);
-	m_maincpu->write_sci_tx<0>().set(mdout, FUNC(midi_port_device::write_txd));
+	MIDI_PORT(config, m_mdout);
+	midiout_slot(*m_mdout);
+	m_maincpu->write_sci_tx<0>().set(FUNC(xv_state::sci0_tx));
 }
 
 void xv_state::xv3080(machine_config &config)
