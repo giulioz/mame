@@ -44,11 +44,13 @@
     - XV-3080: BOOTS to the main PERFORM screen on its HD44780 character LCD
       (DMA-fed to gate-array reg 0x38 = command / 0x39 = data, as on the JV-1080),
       and accepts front-panel input (keycode matrix + VALUE encoder).
-    - XV-5080: same board with a SED1335 graphic LCD.  Its v1.30 firmware uses a
-      different GA-mux/keycode layout, so it shares the input ports but not yet the
-      live key delivery.
+    - XV-5080: same board with a SED1335 graphic LCD.  Same GA-mux/keycode
+      mechanism as the XV-3080 (source 0 + reg 0x43), but its v1.30 firmware uses
+      different keycode values, direct switches on reg 0x3b bit1 (PHRASE PREVIEW) /
+      bit2 (VALUE-push), and a raw-matrix power-on TEST gate (reg 0x05 == 1 when
+      EXIT is held).  Enters TEST mode: power on holding EXIT, then PHRASE PREVIEW.
 
-    Not yet done: sound (voice/effect DSP output), XV-5080 key delivery, NVRAM.
+    Not yet done: sound (voice/effect DSP output), XV-5080 full keycode map.
 
 ***************************************************************************/
 
@@ -126,6 +128,18 @@ private:
 		// BTN3: the numbered/part buttons [1/9]..[8/16] = keycodes 0x0f..0x08
 		0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08, // PART1..PART8
 	};
+	// The XV-5080 shares the matrix mechanism but uses different keycode values,
+	// different direct-port bits, and a raw-matrix power-on TEST gate (reg 0x05).
+	bool m_5080 = false;
+	static constexpr u8 KEYCODE_MAP_5080[32] = {
+		// BTN0: nav / edit   (5080 raw keycodes; EXIT/SHIFT confirmed, rest TBD)
+		0x3e, 0xff, 0x43, 0xff, 0xff, 0xff, 0xff, 0xff, // EXIT .. SHIFT ..
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	};
+	const u8 *keymap() const { return m_5080 ? KEYCODE_MAP_5080 : KEYCODE_MAP; }
+
 	emu_timer *m_kc_scan_timer = nullptr;
 	u32 m_btn_prev = 0;
 	u8  m_kc_fifo[64] = {};
@@ -205,7 +219,7 @@ TIMER_CALLBACK_MEMBER(xv_state::kc_scan)
 	{
 		if (!BIT(changed, bit))
 			continue;
-		u8 kc = KEYCODE_MAP[bit];
+		u8 kc = keymap()[bit];
 		if (kc == 0xff)
 			continue;
 		kc_enqueue(BIT(cur, bit) ? (kc | 0x80) : kc);
@@ -258,19 +272,34 @@ u8 xv_state::ga_r(offs_t offset)
 		return source;
 	}
 
-	// Direct-port inputs (active low; asserted bit reads 0).  DIRECT ioport bits:
-	//   0 = encoder phase A, 1 = encoder phase B  -> GA reg 0x3a bit0/bit1
-	//   2 = PREVIEW, 3 = VALUE dial push-switch    -> GA reg 0x3b bit0/bit1
 	if (offset == 0x3a)
 		return 0xff; // 0x3a bits are status/output lines, not the encoder
+
+	// Direct-port switches (active low; asserted bit reads 0).  DIRECT ioport bit 2
+	// = PREVIEW, bit 3 = VALUE dial push-switch.  The GA reg 0x3b bit they land on
+	// differs by model: XV-3080 uses bit0/bit1, XV-5080 uses bit1(PHRASE PREVIEW)/
+	// bit2(VALUE-push).
 	if (offset == 0x3b)
 	{
 		u8 d = m_direct->read();
 		u8 v = 0xff;
-		if (BIT(d, 2)) v &= ~0x01; // PREVIEW
-		if (BIT(d, 3)) v &= ~0x02; // VALUE push
+		if (m_5080)
+		{
+			if (BIT(d, 2)) v &= ~0x02; // PHRASE PREVIEW
+			if (BIT(d, 3)) v &= ~0x04; // VALUE push
+		}
+		else
+		{
+			if (BIT(d, 2)) v &= ~0x01; // PREVIEW
+			if (BIT(d, 3)) v &= ~0x02; // VALUE push
+		}
 		return v;
 	}
+
+	// XV-5080 power-on TEST gate: the boot code reads the raw key matrix and enters
+	// the opening/TEST path when [EXIT] is held, which it sees as GA reg 0x05 == 1.
+	if (offset == 0x05 && m_5080)
+		return BIT(m_btn[0]->read(), 0) ? 0x01 : 0x00; // BTN0 bit0 = EXIT
 
 	// reg 0x43: front-panel keycode latch (IRQ source 0).  Reading it acknowledges
 	// the current keycode; present the next queued one on the following scan.
@@ -513,6 +542,7 @@ void xv_state::xv3080(machine_config &config)
 
 void xv_state::xv5080(machine_config &config)
 {
+	m_5080 = true;
 	xv_base(config);
 	m_maincpu->set_addrmap(AS_PROGRAM, &xv_state::map_5080);
 
