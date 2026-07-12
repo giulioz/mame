@@ -68,6 +68,8 @@
 #include "screen.h"
 #include "speaker.h"
 
+#include "xv3080.lh"
+
 
 namespace {
 
@@ -98,7 +100,7 @@ private:
 	optional_device_array<roland_xp_device, 2> m_xp;
 	optional_device<hd44780_device> m_hd44780;
 	optional_device<sed1330_device> m_sed1335;
-	required_ioport_array<4> m_btn;    // matrix buttons -> keycodes (GA reg 0x43, IRQ source 0)
+	required_ioport_array<5> m_btn;    // matrix buttons -> keycodes (GA reg 0x43, IRQ source 0)
 	required_ioport m_direct;          // encoder + PREVIEW + VALUE switch on GA reg 0x3a/0x3b
 	required_device<midi_port_device> m_mdout;
 	required_ioport m_midi_loopback;   // factory MIDI OUT->IN loopback cable
@@ -118,7 +120,7 @@ private:
 	// and raises IRQ source 0 with a keycode in reg 0x43 (bit 7 = press).  We diff
 	// the button ioports on a scan timer, queue press/release keycodes, and hand
 	// them to the firmware one per read-acknowledge.
-	static constexpr u8 KEYCODE_MAP[32] = {
+	static constexpr u8 KEYCODE_MAP[40] = {
 		// BTN0: nav / edit
 		0x10, 0x26, 0x27, 0x1d, 0x1a, 0x1b, 0x23, 0x22, // EXIT ENTER SHIFT INC DEC Up Down Left
 		// BTN1: mode
@@ -127,6 +129,9 @@ private:
 		0x24, 0x18, 0x19, 0x1f, 0x00, 0x01, 0x02, 0x03, // EFFECTS PART-SEL MIDI PAT-FIND EXP PRESET CARD USER
 		// BTN3: the numbered/part buttons [1/9]..[8/16] = keycodes 0x0f..0x08
 		0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08, // PART1..PART8
+		// BTN4: the edit / "LCD row" buttons (XV-3080 labels; the XV-5080 repurposes
+		// these matrix positions as SYSTEM/UTILITY + F1..F6).
+		0x25, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, // UNDO COMMON EFFECTS-edit MIDI-edit PART-edit LFO PITCH TVF
 	};
 	// The XV-5080 shares the key matrix wiring/keycodes with the XV-3080; it differs
 	// only in its direct-port bits and a raw-matrix power-on TEST gate (reg 0x05).
@@ -134,7 +139,7 @@ private:
 	const u8 *keymap() const { return KEYCODE_MAP; }
 
 	emu_timer *m_kc_scan_timer = nullptr;
-	u32 m_btn_prev = 0;
+	u64 m_btn_prev = 0;
 	u8  m_kc_fifo[64] = {};
 	u8  m_kc_head = 0, m_kc_tail = 0;
 	bool m_kc_busy = false;
@@ -203,12 +208,12 @@ TIMER_CALLBACK_MEMBER(xv_state::kc_scan)
 	// Matrix buttons: active-high ioports; a change queues a press/release keycode
 	// (bit 7 set = press).  The firmware maintains the held-state bitmap, so chords
 	// (e.g. hold EXIT + press cursor) work naturally.
-	u32 cur = 0;
-	for (int i = 0; i < 4; i++)
-		cur |= u32(m_btn[i]->read()) << (i * 8);
-	u32 changed = cur ^ m_btn_prev;
+	u64 cur = 0;
+	for (int i = 0; i < 5; i++)
+		cur |= u64(m_btn[i]->read()) << (i * 8);
+	u64 changed = cur ^ m_btn_prev;
 	m_btn_prev = cur;
-	for (int bit = 0; bit < 32; bit++)
+	for (int bit = 0; bit < 40; bit++)
 	{
 		if (!BIT(changed, bit))
 			continue;
@@ -454,6 +459,16 @@ static INPUT_PORTS_START(xv)
 	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 7") PORT_CODE(KEYCODE_7)
 	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART 8") PORT_CODE(KEYCODE_8)
 
+	PORT_START("BTN4") // edit / LCD-row buttons (KEYCODE_MAP[32..39])
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("UNDO")          PORT_CODE(KEYCODE_BACKSPACE)
+	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("COMMON")        PORT_CODE(KEYCODE_Q)
+	PORT_BIT(0x04, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("EFFECTS (edit)") PORT_CODE(KEYCODE_W)
+	PORT_BIT(0x08, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("MIDI (edit)")   PORT_CODE(KEYCODE_E)
+	PORT_BIT(0x10, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PART (edit)")   PORT_CODE(KEYCODE_R)
+	PORT_BIT(0x20, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("LFO")           PORT_CODE(KEYCODE_T)
+	PORT_BIT(0x40, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("PITCH")         PORT_CODE(KEYCODE_G)
+	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("TVF")           PORT_CODE(KEYCODE_H)
+
 	PORT_START("DIRECT") // VALUE dial + PREVIEW + VALUE switch (GA reg 0x3a/0x3b)
 	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE Dial CW")  PORT_CODE(KEYCODE_CLOSEBRACE)
 	PORT_BIT(0x02, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("VALUE Dial CCW") PORT_CODE(KEYCODE_OPENBRACE)
@@ -531,6 +546,8 @@ void xv_state::xv3080(machine_config &config)
 	}
 	m_xp[0]->int_callback().set_inputline(m_maincpu, 1); // XP0INT -> IRQ1
 	m_xp[1]->int_callback().set_inputline(m_maincpu, 2); // XP1INT -> IRQ2
+
+	config.set_default_layout(layout_xv3080);
 }
 
 void xv_state::xv5080(machine_config &config)
