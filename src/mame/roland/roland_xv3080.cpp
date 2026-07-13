@@ -486,7 +486,11 @@ INPUT_PORTS_END
 void xv_state::xv_base(machine_config &config)
 {
 	// SH7042A: the "A"-die variant with the dual mid-speed A/D at 0xFFFF8410/8411.
-	SH7042A(config, m_maincpu, 28'000'000); // TODO: exact XTAL/PLL not yet confirmed
+	// 33.000 MHz: uniquely fixed by the firmware's SCI0 setup (BRR=32 → MIDI baud =
+	// clock/1056; 31250 * 1056 = 33.000 MHz).  At the old 28 MHz placeholder the UART
+	// ran at 26515 baud and every received MIDI byte was corrupted, so no external note
+	// ever reached the voice engine.
+	SH7042A(config, m_maincpu, 33'000'000);
 	m_maincpu->read_porte().set(FUNC(xv_state::pe_r));
 	m_maincpu->write_porte().set(FUNC(xv_state::pe_w));
 
