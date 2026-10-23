@@ -1889,6 +1889,30 @@ if SOUNDS["ROLANDLP"] then
 end
 
 ---------------------------------------------------
+-- Roland RCC chorus/reverb DSP
+--@src/devices/sound/roland_rcc.h,SOUNDS["ROLANDRCC"] = true
+---------------------------------------------------
+
+if SOUNDS["ROLANDRCC"] then
+	files {
+		MAME_DIR .. "src/devices/sound/roland_rcc.cpp",
+		MAME_DIR .. "src/devices/sound/roland_rcc.h",
+	}
+end
+
+---------------------------------------------------
+-- Roland TVF/TVA filter and amplifier
+--@src/devices/sound/roland_tvf.h,SOUNDS["ROLANDTVF"] = true
+---------------------------------------------------
+
+if SOUNDS["ROLANDTVF"] then
+	files {
+		MAME_DIR .. "src/devices/sound/roland_tvf.cpp",
+		MAME_DIR .. "src/devices/sound/roland_tvf.h",
+	}
+end
+
+---------------------------------------------------
 -- Roland RPP-324 RDAC phrase player
 --@src/devices/sound/roland_rpp324.h,SOUNDS["ROLANDRPP324"] = true
 ---------------------------------------------------
