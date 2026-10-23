@@ -1,5 +1,5 @@
 // license:GPL-2.0
-// copyright-holders:Giulio Zausa
+// copyright-holders:giulioz
 /***************************************************************************
 
     Roland/Fujitsu MB87126 Reverb/EQ DSP (DEP-5, D-50, RE-3, ...)

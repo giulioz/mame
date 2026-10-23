@@ -1,5 +1,5 @@
 // license:GPL-2.0
-// copyright-holders:Giulio Zausa
+// copyright-holders:giulioz
 #ifndef MAME_SOUND_MB87126_H
 #define MAME_SOUND_MB87126_H
 #pragma once

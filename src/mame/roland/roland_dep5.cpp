@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders:Giulio Zausa
+// copyright-holders:giulioz
 /*
  Roland DEP-5 (1986) / RE-3 (1988), original 8097 firmware.
 

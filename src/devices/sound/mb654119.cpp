@@ -1,5 +1,5 @@
 // license:GPL-2.0
-// copyright-holders:Giulio Zausa
+// copyright-holders:giulioz
 /*
  Roland/Boss/Fujitsu MB654119 chorus/delay gate array, R15229844 (DEP-5, RCE-10 and more).
 
