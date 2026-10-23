@@ -48,6 +48,7 @@ DEFINE_DEVICE_TYPE(I8272A,         i8272a_device,         "i8272a",         "Int
 DEFINE_DEVICE_TYPE(UPD72065,       upd72065_device,       "upd72065",       "NEC uPD72065 FDC")
 DEFINE_DEVICE_TYPE(UPD72066,       upd72066_device,       "upd72066",       "NEC uPD72066 FDC")
 DEFINE_DEVICE_TYPE(UPD72067,       upd72067_device,       "upd72067",       "NEC uPD72067 FDC")
+DEFINE_DEVICE_TYPE(UPD72068,       upd72068_device,       "upd72068",       "NEC uPD72068 FDC")
 DEFINE_DEVICE_TYPE(UPD72069,       upd72069_device,       "upd72069",       "NEC uPD72069 FDC")
 DEFINE_DEVICE_TYPE(I82072,         i82072_device,         "i82072",         "Intel 82072 FDC")
 DEFINE_DEVICE_TYPE(FDC9266,        fdc9266_device,        "fdc9266",        "SMC FDC9266 FDC")
@@ -2998,12 +2999,20 @@ upd72067_device::upd72067_device(const machine_config &mconfig, const char *tag,
 	select_multiplexed = false;
 }
 
-upd72069_device::upd72069_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock) : upd72065_device(mconfig, UPD72069, tag, owner, clock)
+upd72068_device::upd72068_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock) : upd72068_device(mconfig, UPD72068, tag, owner, clock)
+{
+}
+
+upd72068_device::upd72068_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock) : upd72065_device(mconfig, type, tag, owner, clock)
 {
 	ready_polled = true;
 	ready_connected = true;
 	select_connected = true;
 	select_multiplexed = false;
+}
+
+upd72069_device::upd72069_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock) : upd72068_device(mconfig, UPD72069, tag, owner, clock)
+{
 }
 
 i82072_device::i82072_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock) : upd765_family_device(mconfig, I82072, tag, owner, clock)
@@ -3565,9 +3574,8 @@ void upd72067_device::auxcmd_w(uint8_t data)
 	}
 }
 
-void upd72069_device::auxcmd_w(uint8_t data)
+void upd72068_device::auxcmd_w(uint8_t data)
 {
-	// 72068 has all but two of the following auxiliary commands
 	switch(data) {
 	case 0x36: // software reset
 		soft_reset();
@@ -3598,7 +3606,23 @@ void upd72069_device::auxcmd_w(uint8_t data)
 		result[0] = ST0_UNK;
 		result_pos = 1;
 		break;
-	case 0x88: case 0x98: case 0xa8: case 0xb8: // control data transfer rate (72069 exclusive)
+	case 0x4f: // select IBM format (select 77 tracks on some other 7206x variants)
+	case 0x5f: // select ECMA/ISO format (select 255 tracks on some other 7206x variants)
+	case 0x35: // set standby
+	case 0x47: // start clock
+	case 0x34: // reset standby
+	case 0x33: // enable external mode
+		main_phase = PHASE_RESULT;
+		result[0] = ST0_UNK;
+		result_pos = 1;
+		break;
+	}
+}
+
+void upd72069_device::auxcmd_w(uint8_t data)
+{
+	switch(data) {
+	case 0x88: case 0x98: case 0xa8: case 0xb8: // extended data transfer rates
 	case 0xc8: case 0xd8: case 0xe8: case 0xf8:
 		switch(data & 0x70)
 		{
@@ -3613,17 +3637,14 @@ void upd72069_device::auxcmd_w(uint8_t data)
 		result[0] = ST0_UNK;
 		result_pos = 1;
 		break;
-	case 0xc3: case 0xd3: case 0xe3: case 0xf3: // precompensation (72069 exclusive)
-	case 0x4f: // select IBM format (select 77 tracks on some other 7206x variants)
-	case 0x5f: // select ECMA/ISO format (select 255 tracks on some other 7206x variants)
-	case 0x35: // set standby
-	case 0x47: // start clock
-	case 0x34: // reset standby
-	case 0x33: // enable external mode
+	case 0xc3: case 0xd3: case 0xe3: case 0xf3: // programmable precompensation
 	case 0x80: // Not a valid auxcmd, but the Akai S3000 sends it and expects an ACK.
 		main_phase = PHASE_RESULT;
 		result[0] = ST0_UNK;
 		result_pos = 1;
+		break;
+	default:
+		upd72068_device::auxcmd_w(data);
 		break;
 	}
 }
