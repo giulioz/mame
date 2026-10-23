@@ -3,7 +3,10 @@
 /****************************************************************************
 
     Driver for Roland D-70 synthesizer.
-    Derived by the CM32P driver by ValleyBell
+    Derived from the CM-32P driver by ValleyBell.
+
+    The keyboard gate array, PCM cards and analog output stages are not
+    emulated.
 
 ****************************************************************************/
 
@@ -15,8 +18,10 @@
 #include "bus/midi/midioutport.h"
 #include "cpu/mcs96/i8x9x.h"
 #include "cpu/mcs96/i8xc196.h"
-#include "machine/timer.h"
+#include "machine/nvram.h"
 #include "sound/roland_lp.h"
+#include "sound/roland_rcc.h"
+#include "sound/roland_tvf.h"
 #include "video/t6963c.h"
 
 #include "emupal.h"
@@ -25,8 +30,6 @@
 #include "speaker.h"
 
 #include "multibyte.h"
-
-#include <queue>
 
 #include "roland_d70.lh"
 
@@ -174,26 +177,21 @@ public:
 	roland_d70_state(const machine_config &mconfig, device_type type, const char *tag) :
 		driver_device(mconfig, type, tag),
 		m_bank_view(*this, "bank"),
-		m_ram(*this, "ram", 128 * 1024, ENDIANNESS_LITTLE),
-		m_dsp_ram(*this, "dsp_ram", 8 * 1024, ENDIANNESS_LITTLE),
+		m_ram(*this, "ram", 0x4000, ENDIANNESS_LITTLE),
+		m_banked_ram(*this, "banked_ram", 0x8000, ENDIANNESS_LITTLE),
+		m_card_ram(*this, "card_ram", 0x8000, ENDIANNESS_LITTLE),
 		m_rom_bank(*this, "rom_bank"),
 		m_ram_bank(*this, "ram_bank"),
-		m_pcm_rom(*this, "pcm"),
+		m_card_bank(*this, "card_bank"),
 		m_cpu(*this, "maincpu"),
 		m_pcm(*this, "pcm"),
+		m_tvf(*this, "tvf"),
+		m_rcc(*this, "rcc"),
 		m_lcd(*this, "lcd"),
-		m_midi_timer(*this, "midi_timer"),
 		m_keys(*this, "KEY%u", 0),
 		m_sliders(*this, "SLIDER%u", 0),
 		m_protect_sw(*this, "PROTECT_SW"),
-		m_selected_slider(0),
-		m_sw_scan_index(0),
-		m_sw_scan_bank(-1),
-		m_sw_scan_state(0xff),
-		m_sw_scan_mode(0),
-		m_sw_scan_current_out(0xff),
-		m_midi_rx(0),
-		m_midi_pos(0)
+		m_pcm_rom(*this, "pcm")
 	{
 	}
 
@@ -202,236 +200,135 @@ public:
 
 protected:
 	virtual void machine_start() override ATTR_COLD;
+	virtual void machine_reset() override ATTR_COLD;
 
 private:
 	void lcd_map(address_map &map) ATTR_COLD;
 	void lcd_palette(palette_device &palette) const ATTR_COLD;
+	void d70_map(address_map &map) ATTR_COLD;
+	void descramble_rom_internal(u8 *dst, const u8 *src) ATTR_COLD;
 
 	void bank_w(u8 data);
-	u8 ksga_io_r(offs_t offset);
-	void ksga_io_w(offs_t offset, u8 data);
-	u16 port0_r();
+	u8 port0_r();
 	u8 port1_r();
 	u8 port2_r();
 	void port1_w(u8 data);
-	void port2_w(u8 data);
-	u8 dsp_io_r(offs_t offset);
-	void dsp_io_w(offs_t offset, u8 data);
-	u8 tvf_io_r(offs_t offset);
-	void tvf_io_w(offs_t offset, u8 data);
+	void port2_w(u8 data) { m_selected_slider = data >> 5; }
+	void lp_irq_w(int state) { m_lp_irq = state; }
 	u8 snd_io_r(offs_t offset);
 	void snd_io_w(offs_t offset, u8 data);
-
-	u8 ach0_r();
-	u8 ach1_r();
-	u8 ach2_r();
-	u8 ach3_r();
-	u8 ach4_r();
-
-	TIMER_DEVICE_CALLBACK_MEMBER(midi_timer_cb);
-	TIMER_DEVICE_CALLBACK_MEMBER(samples_timer_cb);
-
-	void midi_in_w(int state);
-
-	void d70_map(address_map &map) ATTR_COLD;
-
-	void descramble_rom_internal(u8 *dst, const u8 *src) ATTR_COLD;
-	void descramble_rom_external(u8 *dst, const u8 *src) ATTR_COLD;
+	u16 ach0_r() { return m_sliders[m_selected_slider & 7]->read() * 0x3ff / 100; }
+	u16 ach1_r() { return 0x200; } // External pedal, centered
+	u16 ach2_r() { return 0x200; } // Pitch bender, centered
+	u16 ach3_r() { return 0x280; } // Battery voltage
+	u16 ach4_r() { return 0x200; } // RAM card supply
 
 	memory_view m_bank_view;
-	memory_share_creator<u16> m_ram;
-	memory_share_creator<u8> m_dsp_ram;
-	required_memory_bank m_rom_bank;
-	required_memory_bank m_ram_bank;
-	required_region_ptr<u8> m_pcm_rom;
-	required_device<i8x9x_device> m_cpu;
+	memory_share_creator<u8> m_ram, m_banked_ram, m_card_ram;
+	required_memory_bank m_rom_bank, m_ram_bank, m_card_bank;
+	required_device<i80c196kb_device> m_cpu;
 	required_device<mb87419_mb87420_device> m_pcm;
+	required_device<mb87424_device> m_tvf;
+	required_device<tc23sc140_device> m_rcc;
 	required_device<t6963c_device> m_lcd;
-	required_device<timer_device> m_midi_timer;
 	required_ioport_array<8> m_keys;
 	required_ioport_array<8> m_sliders;
 	required_ioport m_protect_sw;
+	required_region_ptr<u8> m_pcm_rom;
 
-	u8 m_sound_io_buffer[0x100];
-	u8 m_dsp_io_buffer[0x80];
-	u8 m_selected_slider;
-	int m_sw_scan_index;
-	int m_sw_scan_bank;
-	u8 m_sw_scan_state;
-	u8 m_sw_scan_mode;
-	u8 m_sw_scan_current_out;
-	u8 m_midi_rx;
-	int m_midi_pos;
-	std::queue<u8> midi_queue;
+	u8 m_sound_io_buffer[0x100]{};
+	u8 m_selected_slider = 0;
+	int m_sw_scan_index = 0, m_sw_scan_bank = 0;
+	u8 m_sw_scan_state = 0;
+	bool m_scan_write = true, m_scan_ad = true, m_lp_irq = false;
 };
 
 void roland_d70_state::machine_start() {
-	m_bank_view.select(0);
 	m_rom_bank->configure_entries(0, 8, memregion("maincpu")->base(), 0x4000);
-	m_ram_bank->configure_entries(0, 2, &m_ram[0], 0x4000);
-	m_cpu->space(AS_PROGRAM).install_ram(0xc000, 0xffff, &m_ram[0]);
+	m_ram_bank->configure_entries(0, 2, &m_banked_ram[0], 0x4000);
+	m_card_bank->configure_entries(0, 2, &m_card_ram[0], 0x4000);
+	save_item(NAME(m_sound_io_buffer));
+	save_item(NAME(m_selected_slider));
+	save_item(NAME(m_sw_scan_index));
+	save_item(NAME(m_sw_scan_bank));
+	save_item(NAME(m_sw_scan_state));
+	save_item(NAME(m_scan_write));
+	save_item(NAME(m_scan_ad));
+	save_item(NAME(m_lp_irq));
+}
+
+void roland_d70_state::machine_reset() {
+	bank_w(0);
+	std::fill(std::begin(m_sound_io_buffer), std::end(m_sound_io_buffer), 0);
+	m_selected_slider = m_sw_scan_state = 0;
+	m_sw_scan_index = m_sw_scan_bank = 0;
+	m_scan_write = m_scan_ad = true;
+	m_lp_irq = false;
 }
 
 void roland_d70_state::bank_w(u8 data) {
-	m_bank_view.select(BIT(data, 5));
-	m_rom_bank->set_entry(data & 0x07);
-	m_ram_bank->set_entry(data & 0x01);
-}
-
-u8 roland_d70_state::ksga_io_r(offs_t offset) {
-	return 0;
-}
-
-void roland_d70_state::ksga_io_w(offs_t offset, u8 data) {
+	m_bank_view.select((data >> 4) & 3);
+	m_rom_bank->set_entry(data & 7);
+	m_ram_bank->set_entry(data & 1);
+	m_card_bank->set_entry(data & 1);
 }
 
 void roland_d70_state::lcd_map(address_map &map) {
 	map(0x0000, 0x7fff).ram();
 }
 
-void roland_d70_state::midi_in_w(int state) {
-	if (m_midi_pos == 0 || m_midi_pos == 9) {
-		m_midi_pos += 1;
-	} else if (m_midi_pos == 10) {
-		midi_queue.push(m_midi_rx);
-		// logerror("midi enqueued %x\n", m_midi_rx);
-		m_midi_rx = 0;
-		m_midi_pos = 0;
-	} else {
-		m_midi_rx |= state << (m_midi_pos - 1);
-		m_midi_pos += 1;
-	}
-}
-
-TIMER_DEVICE_CALLBACK_MEMBER(roland_d70_state::midi_timer_cb) {
-	// CPU doesn't have a proper serial interface so we are forced
-	// to simulate it this way for now
-	if (midi_queue.empty())
-		return;
-
-	u8 midi = midi_queue.front();
-	if (midi == 0x90)
-		midi = 0x9a;
-	if (midi == 0x80)
-		midi = 0x8a;
-	midi_queue.pop();
-	logerror("midi_in %02x\n", midi);
-	m_cpu->serial_w(midi);
-}
-
-u16 roland_d70_state::port0_r() {
-	return 0x00;
+u8 roland_d70_state::port0_r() {
+	return 0x60 | (m_lp_irq ? 0 : 0x80);
 }
 
 u8 roland_d70_state::port1_r() {
-	m_sw_scan_current_out = m_ram[0x0f / 2] >> 8;
-	// logerror("p1r %02x\n", m_sw_scan_current_out);
-	return m_sw_scan_current_out;
+	if (!m_scan_write && m_scan_ad) {
+		if (m_sw_scan_bank == 0xff)
+			return 0;
+		if (m_sw_scan_bank >= 0 && m_sw_scan_bank < 8 && m_sw_scan_index >= 0 && m_sw_scan_index < 8)
+			return BIT(m_keys[m_sw_scan_bank]->read(), m_sw_scan_index) ? 0xff : u8(~SO_MASK);
+	}
+	return 0xff;
 }
 
 void roland_d70_state::port1_w(u8 data) {
-	// logerror("p1w %02x\n", data);
-	// m_sw_scan_current_out = data & ~(SO_MASK);
-
-	if (data & RW_MASK) {
-		if ((data & CONT_MASK) && !(m_sw_scan_state & CONT_MASK)) {
-			m_sw_scan_index = 0;
-			m_sw_scan_bank += 1;
-		}
-
-		// Clock cycle
-		if ((data & SCK_MASK) && !(m_sw_scan_state & SCK_MASK)) {
-			if ((data & AD_MASK)) {
-				if (m_sw_scan_mode == 0) {
-					m_sw_scan_current_out &= ~(SO_MASK);
-				} else if (m_sw_scan_mode == 1) {
-					u8 buttonState = m_sw_scan_bank != -1 ? BIT(m_keys[m_sw_scan_bank]->read(), m_sw_scan_index) : 1;
-
-					if (buttonState) {
-						m_sw_scan_current_out |= SO_MASK;
-					} else {
-						m_sw_scan_current_out &= ~(SO_MASK);
-					}
-					m_sw_scan_index += 1;
-				}
-			} else {
-				m_sw_scan_mode += 1;
-			}
-		}
-	} else {
-		m_sw_scan_mode = 0;
-		m_sw_scan_index = 0;
-		m_sw_scan_bank = -1;
+	if ((m_sw_scan_state & SCK_MASK) && !(data & SCK_MASK)) {
+		if (!m_scan_write && !m_scan_ad)
+			m_sw_scan_index = m_sw_scan_bank = -1;
+		else if (!m_scan_write && m_scan_ad)
+			++m_sw_scan_index;
 	}
-
+	if (!(m_sw_scan_state & RW_MASK) && (data & RW_MASK)) {
+		m_scan_write = false;
+		m_sw_scan_index = 0;
+		m_sw_scan_bank = 0xfe;
+	}
+	if ((m_sw_scan_state & RW_MASK) && !(data & RW_MASK))
+		m_scan_write = true;
+	m_scan_ad = (data & AD_MASK) != 0;
+	if (!(m_sw_scan_state & CONT_MASK) && (data & CONT_MASK)) {
+		m_sw_scan_index = -1;
+		++m_sw_scan_bank;
+	}
 	m_sw_scan_state = data;
-
-	m_ram[0x0f / 2] = (m_ram[0x0f / 2] & 0x00ff) | (u16(m_sw_scan_current_out) << 8);
 }
 
 u8 roland_d70_state::port2_r() {
-	u8 value = m_selected_slider << 5;
-	if (m_protect_sw->read())
-		value |= (1 << 4);
-	return value;
-}
-
-void roland_d70_state::port2_w(u8 data) {
-	m_selected_slider = data >> 5;
-}
-
-u8 roland_d70_state::dsp_io_r(offs_t offset) {
-	return m_dsp_io_buffer[offset];
-}
-
-void roland_d70_state::dsp_io_w(offs_t offset, u8 data) {
-	m_dsp_io_buffer[offset] = data;
-	// do read/write to some external memory, makes the RCC-CPU check pass.
-	// (routine at 0x4679)
-	switch (offset) {
-	case 0x04:
-		// write to partials?? (written in loop at 0x4375)
-		break;
-
-	case 0x06:
-		m_dsp_ram[0x000 | data] = m_dsp_io_buffer[0x00] & 0x03;
-		m_dsp_ram[0x100 | data] = m_dsp_io_buffer[0x01];
-		m_dsp_ram[0x200 | data] = m_dsp_io_buffer[0x02];
-		break;
-
-	case 0x0a:
-		m_dsp_io_buffer[0x00] = m_dsp_ram[0x000 | data];
-		m_dsp_io_buffer[0x01] = m_dsp_ram[0x100 | data];
-		m_dsp_io_buffer[0x02] = m_dsp_ram[0x200 | data];
-		break;
-	}
-}
-
-u8 roland_d70_state::tvf_io_r(offs_t offset) {
-	logerror("tvf read %04x\n", offset);
-	return 0;
-}
-
-void roland_d70_state::tvf_io_w(offs_t offset, u8 data) {
-	logerror("tvf write %04x= %02x\n", offset, data);
+	return (m_selected_slider << 5) | (m_protect_sw->read() ? 0x10 : 0);
 }
 
 u8 roland_d70_state::snd_io_r(offs_t offset) {
-	// logerror("lp read %x\n", offset);
 	// lots of offset modification magic to achieve the following:
 	//  - offsets 00..1F are "sound chip read"
 	//  - offsets 20..3F are a readback of what was written to registers 00..1F
 	//  - This behaviour is reversed for offset 01/21, which is used for reading
 	//  the PCM sample tables.
-	// All this is just for making debugging easier, as it allows one to check the
-	// register state using the Memory Viewer.
 	if (offset == 0x01 || offset == 0x21)
-		offset ^= 0x20; // remove when PCM data readback via sound chip is confirmed to work
+		offset ^= 0x20;
 	if (offset < 0x20)
 		return m_pcm->read(offset);
 	if (offset < 0x40)
 		offset -= 0x20;
-
 	if (offset == 0x01) {
 		// code for reading from the PCM sample table is at 0xb027
 		// The code at 0xb0ac writes to 1411/1F (??), then 1403/02 (bank), then
@@ -441,9 +338,7 @@ u8 roland_d70_state::snd_io_r(offs_t offset) {
 		offs_t addr = get_u24le(&m_sound_io_buffer[0x09]);
 		addr = ((addr >> 6) + 2) & 0x3ffff;
 		addr |= (bank << 16);
-		// write actual ROM address to 1440..1443 for debugging
-		put_u32be(&m_sound_io_buffer[40], addr);
-		return m_pcm_rom[addr];
+		return addr < m_pcm_rom.length() ? m_pcm_rom[addr] : 0xff;
 	}
 	return m_sound_io_buffer[offset];
 }
@@ -468,41 +363,34 @@ void roland_d70_state::snd_io_w(offs_t offset, u8 data) {
 	m_sound_io_buffer[offset] = data;
 }
 
-u8 roland_d70_state::ach0_r() {
-	return m_sliders[m_selected_slider & 7]->read();
-}
-
-u8 roland_d70_state::ach1_r() { return 128; } // TODO: EXT PEDAL
-u8 roland_d70_state::ach2_r() { return 128; } // TODO: BENDER
-u8 roland_d70_state::ach3_r() { return 128; } // TODO: BATTERY
-u8 roland_d70_state::ach4_r() { return 128; } // TODO: RAM CARD (VBB)
-
-TIMER_DEVICE_CALLBACK_MEMBER(roland_d70_state::samples_timer_cb) {
-}
-
 void roland_d70_state::lcd_palette(palette_device &palette) const {
 	palette.set_pen_color(0, rgb_t(0x9f, 0xb4, 0x86));
 	palette.set_pen_color(1, rgb_t(0x5e, 0x5f, 0x71));
 }
 
 void roland_d70_state::d70_map(address_map &map) {
+	map.unmap_value_high();
 	map(0x0100, 0x0100).w(FUNC(roland_d70_state::bank_w));
-	map(0x0400, 0x07ff).rw(FUNC(roland_d70_state::ksga_io_r), FUNC(roland_d70_state::ksga_io_w));
+	map(0x0400, 0x07ff).noprw(); // KSGA keyboard interface
 	map(0x0800, 0x0802).rw(m_lcd, FUNC(t6963c_device::read), FUNC(t6963c_device::write)).umask16(0x00ff);
 	map(0x0900, 0x09ff).rw(FUNC(roland_d70_state::snd_io_r), FUNC(roland_d70_state::snd_io_w));
-	map(0x0a00, 0x0aff).rw(FUNC(roland_d70_state::dsp_io_r), FUNC(roland_d70_state::dsp_io_w));
-	map(0x0c00, 0x0cff).rw(FUNC(roland_d70_state::tvf_io_r), FUNC(roland_d70_state::tvf_io_w));
+	map(0x0a00, 0x0aff).rw(m_rcc, FUNC(tc23sc140_device::read), FUNC(tc23sc140_device::write));
+	map(0x0c00, 0x0cff).rw(m_tvf, FUNC(mb87424_device::read), FUNC(mb87424_device::write));
 	map(0x1000, 0x7fff).rom().region("maincpu", 0x1000);
 	map(0x8000, 0xbfff).view(m_bank_view);
 	m_bank_view[0](0x8000, 0xbfff).bankr(m_rom_bank);
-	m_bank_view[1](0x8000, 0xbfff).bankrw(m_ram_bank);
-	//map(0xc000, 0xffff) fixed RAM - will install on start
+	m_bank_view[1](0x8000, 0xbfff).noprw();
+	m_bank_view[2](0x8000, 0xbfff).bankrw(m_ram_bank);
+	m_bank_view[3](0x8000, 0xbfff).bankrw(m_card_bank);
+	map(0xc000, 0xffff).lrw8(
+			[this](offs_t offset) -> u8 { return m_ram[offset]; }, "fixed_ram_r",
+			[this](offs_t offset, u8 data) { m_ram[offset] = data; }, "fixed_ram_w");
 }
 
 void roland_d70_state::d70(machine_config &config) {
-	i8x9x_device &maincpu(N8097BH(config, m_cpu, 12_MHz_XTAL));
+	i80c196kb_device &maincpu(I80C196KB(config, m_cpu, 12_MHz_XTAL));
 	maincpu.set_addrmap(AS_PROGRAM, &roland_d70_state::d70_map);
-	maincpu.serial_tx_cb().set("mdout", FUNC(midi_port_device::write_txd));
+	maincpu.txd_cb().set("mdout", FUNC(midi_port_device::write_txd));
 	maincpu.in_p0_cb().set(FUNC(roland_d70_state::port0_r));
 	maincpu.in_p1_cb().set(FUNC(roland_d70_state::port1_r));
 	maincpu.out_p1_cb().set(FUNC(roland_d70_state::port1_w));
@@ -517,9 +405,22 @@ void roland_d70_state::d70(machine_config &config) {
 	SPEAKER(config, "speaker", 2).front();
 
 	MB87419_MB87420(config, m_pcm, 32.768_MHz_XTAL);
-	m_pcm->int_callback().set_inputline(m_cpu, i8x9x_device::EXTINT_LINE);
-	m_pcm->add_route(0, "speaker", 1.0, 0);
-	m_pcm->add_route(1, "speaker", 1.0, 1);
+	m_pcm->int_callback().set(FUNC(roland_d70_state::lp_irq_w));
+
+	MB87424(config, m_tvf, 16.384_MHz_XTAL);
+	m_tvf->set_input_bus(21);
+	TC23SC140(config, m_rcc, 16.384_MHz_XTAL);
+	m_rcc->set_dram_mask(0x3fff); // External 16K-word DRAM
+	m_rcc->set_input_bus(23, true); // Four-slot serial pipeline, including frame wrap
+	for (unsigned voice = 0; voice < 32; ++voice) {
+		m_pcm->add_route(voice, "tvf", 1.0, voice);
+		m_tvf->add_route(voice, "rcc", 1.0, voice);
+	}
+	m_rcc->add_route(6, "speaker", 1.0, 0);
+	m_rcc->add_route(0, "speaker", 1.0, 1);
+
+	NVRAM(config, "ram", nvram_device::DEFAULT_ALL_0);
+	NVRAM(config, "banked_ram", nvram_device::DEFAULT_ALL_0);
 
 	T6963C(config, m_lcd);
 	m_lcd->set_addrmap(0, &roland_d70_state::lcd_map);
@@ -533,12 +434,8 @@ void roland_d70_state::d70(machine_config &config) {
 
 	PALETTE(config, "palette", FUNC(roland_d70_state::lcd_palette), 2);
 
-	TIMER(config, m_midi_timer).configure_periodic(FUNC(roland_d70_state::midi_timer_cb), attotime::from_hz(1250));
-
-	TIMER(config, "samples_timer").configure_periodic(FUNC(roland_d70_state::samples_timer_cb), attotime::from_hz(32000 * 2));
-
 	midi_port_device &mdin(MIDI_PORT(config, "mdin", midiin_slot, "midiin"));
-	mdin.rxd_handler().set(FUNC(roland_d70_state::midi_in_w));
+	mdin.rxd_handler().set(m_cpu, FUNC(i80c196kb_device::rxd_w));
 	mdin.rxd_handler().append("mdthru", FUNC(midi_port_device::write_txd));
 
 	MIDI_PORT(config, "mdout", midiout_slot, "midiout");
@@ -617,4 +514,4 @@ ROM_END
 
 } // anonymous namespace
 
-SYST(1991, d70, 0, 0, d70, d70, roland_d70_state, init_d70, "Roland", "D-70 Super LA Synthesizer", MACHINE_NOT_WORKING | MACHINE_IMPERFECT_SOUND)
+SYST(1991, d70, 0, 0, d70, d70, roland_d70_state, init_d70, "Roland", "D-70 Super LA Synthesizer", MACHINE_IMPERFECT_SOUND | MACHINE_IMPERFECT_CONTROLS)
