@@ -262,8 +262,9 @@ void roland_r8_base_state::r8_common(machine_config &config)
 	MB87419_MB87420(config, m_pcm, 33.8688_MHz_XTAL);
 	//m_pcm->int_callback().set_inputline(m_maincpu, upd78k2_device::INTP1_LINE);
 	m_pcm->set_device_rom_tag("pcm");
-	m_pcm->add_route(0, "speaker", 1.0, 0);
-	m_pcm->add_route(1, "speaker", 1.0, 1);
+	// TODO: individual voices are summed until the downstream mixing is emulated
+	m_pcm->add_route(ALL_OUTPUTS, "speaker", 1.0, 0);
+	m_pcm->add_route(ALL_OUTPUTS, "speaker", 1.0, 1);
 }
 
 void roland_r8_state::r8(machine_config &config)
@@ -311,8 +312,9 @@ void roland_r8mk2_state::r8mk2(machine_config &config)
 	MB87419_MB87420(config, m_pcm, 33.8688_MHz_XTAL);
 	//m_pcm->int_callback().set_inputline(m_maincpu, upd78k2_device::INTP1_LINE);
 	m_pcm->set_device_rom_tag("pcm");
-	m_pcm->add_route(0, "speaker", 1.0, 0);
-	m_pcm->add_route(1, "speaker", 1.0, 1);
+	// TODO: individual voices are summed until the downstream mixing is emulated
+	m_pcm->add_route(ALL_OUTPUTS, "speaker", 1.0, 0);
+	m_pcm->add_route(ALL_OUTPUTS, "speaker", 1.0, 1);
 
 	GENERIC_CARTSLOT(config, m_pcmcard, generic_romram_plain_slot, "r8_card", "bin");
 	m_pcmcard->set_device_load(FUNC(roland_r8mk2_state::pcmcard_load));

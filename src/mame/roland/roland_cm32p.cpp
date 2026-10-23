@@ -327,7 +327,6 @@ private:
 	void lcd_ctrl_w(u8 data);
 	void lcd_data_w(u8 data);
 	u16 port0_r();
-	u8 pcmrom_r(offs_t offset);
 	u8 dsp_io_r(offs_t offset);
 	void dsp_io_w(offs_t offset, u8 data);
 	u8 snd_io_r(offs_t offset);
@@ -498,12 +497,6 @@ u16 cm32p_state::port0_r()
 	return service_port->read() | (pcmard_loaded ? 0x10 : 0x00);
 }
 
-u8 cm32p_state::pcmrom_r(offs_t offset)
-{
-	const u8 *pcm_rom = memregion("pcm")->base();
-	return pcm_rom[offset];
-}
-
 u8 cm32p_state::dsp_io_r(offs_t offset)
 {
 	return dsp_io_buffer[offset];
@@ -541,54 +534,14 @@ void cm32p_state::dsp_io_w(offs_t offset, u8 data)
 
 u8 cm32p_state::snd_io_r(offs_t offset)
 {
-	// lots of offset modification magic to achieve the following:
-	//  - offsets 00..1F are "sound chip read"
-	//  - offsets 20..3F are a readback of what was written to registers 00..1F
-	//  - This behaviour is reversed for offset 01/21, which is used for reading the PCM sample tables.
-	// All this is just for making debugging easier, as it allows one to check the
-	// register state using the Memory Viewer.
-	if (offset == 0x01 || offset == 0x21)
-		offset ^= 0x20; // remove when PCM data readback via sound chip is confirmed to work
 	if (offset < 0x20)
 		return pcm->read(offset);
-	if (offset < 0x40)
-		offset -= 0x20;
-
-	if (offset == 0x01)
-	{
-		// code for reading from the PCM sample table is at 0xb027
-		// The code at 0xb0ac writes to 1411/1F (??), then 1403/02 (bank), then 1409/08/0B/0A (address).
-		// It waits a few cycles and at 0xb0f7 it reads the resulting data from 1401.
-		offs_t bank = sound_io_buffer[0x03];
-		offs_t addr = (sound_io_buffer[0x09] << 0) | (sound_io_buffer[0x0a] << 8) | (sound_io_buffer[0x0b] << 16);
-		addr = ((addr >> 6) + 2) & 0x3ffff;
-		addr |= (bank << 16);
-		// write actual ROM address to 1440..1443 for debugging
-		sound_io_buffer[0x43] = (addr >>  0) & 0xff;
-		sound_io_buffer[0x42] = (addr >>  8) & 0xff;
-		sound_io_buffer[0x41] = (addr >> 16) & 0xff;
-		sound_io_buffer[0x40] = (addr >> 24) & 0xff;
-		return pcmrom_r(addr);
-	}
-	return sound_io_buffer[offset];
+	// Retain the driver's debugger-only write mirror above the LP registers.
+	return sound_io_buffer[offset < 0x40 ? offset - 0x20 : offset];
 }
 
 void cm32p_state::snd_io_w(offs_t offset, u8 data)
 {
-	// register map
-	// ------------
-	// Note: 16-bit words are Little Endian, the firmware writes the odd byte is first
-	//  00/01 - ??
-	//  02/03 - ROM bank (only bits 11-13 are used, bit 11 = PCM card, bits 12-13 select between IC18/19/20)
-	//  04/05 - frequency (2.14 fixed point, 0x4000 = 32000 Hz)
-	//  06/07 - volume
-	//  08/09 - sample start address, fraction (2.14 fixed point, i.e. 1 byte = 0x4000)
-	//  0A/0B - sample start address (high word, i.e. address bits 2..17)
-	//  0C/0D - sample end address (high word)
-	//  0E/0F - sample loop address (high word)
-	//  11/13/15/17 - voice enable mask (11 = least significant 8 bits, 17 = most significant 8 bits)
-	//  1A - ??
-	//  1F - voice select
 	if (offset < 0x20)
 		pcm->write(offset, data);
 	sound_io_buffer[offset] = data;
@@ -634,8 +587,9 @@ void cm32p_state::cm32p(machine_config &config)
 
 	MB87419_MB87420(config, pcm, 32.768_MHz_XTAL);
 	pcm->int_callback().set_inputline(cpu, i8x9x_device::EXTINT_LINE);
-	pcm->add_route(0, "speaker", 1.0, 0);
-	pcm->add_route(1, "speaker", 1.0, 1);
+	// TODO: individual voices are summed until the downstream mixing is emulated
+	pcm->add_route(ALL_OUTPUTS, "speaker", 1.0, 0);
+	pcm->add_route(ALL_OUTPUTS, "speaker", 1.0, 1);
 
 	RAM(config, some_ram).set_default_size("8K");
 
