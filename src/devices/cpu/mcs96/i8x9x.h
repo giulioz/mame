@@ -76,7 +76,7 @@ public:
 	virtual u8 i8x9x_p2_mask() const noexcept { return 0xff; }
 
 protected:
-	i8x9x_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock, int data_width);
+	i8x9x_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock, int data_width, address_map_constructor regs_map = address_map_constructor());
 
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
@@ -95,6 +95,9 @@ protected:
 	void hsi_mode_w(u8 data);
 	void hso_time_w(u16 data);
 	u16 hsi_time_r();
+	u8 hsi_time_byte_r(offs_t offset);
+	void hsi_holding_time_w(u16 data, u16 mem_mask);
+	void hsi_holding_status_w(u8 data);
 	void hso_command_w(u8 data);
 	u8 hsi_status_r();
 	void sbuf_w(u8 data);
@@ -117,7 +120,7 @@ protected:
 	u8 ios1_r();
 	void pwm_control_w(u8 data);
 
-private:
+protected:
 	enum {
 		IRQ_TIMER  = 0x01,
 		IRQ_AD     = 0x02,
@@ -156,7 +159,19 @@ private:
 	hso_cam_entry hso_info[8];
 	hso_cam_entry hso_cam_hold;
 
+	u64 base_timer1 = 0;
+	u64 timer1_overflow = 0, timer2_overflow = 0, ad_started = 0;
+	u16 ad_sample = 0;
 	u64 base_timer2, ad_done;
+	bool serial_rx_full = false;
+	// Seven FIFO records plus a distinct holding register (KB guide, section 8).
+	std::array<u16, 7> m_hsi_times{};
+	std::array<u8, 7> m_hsi_events{};
+	std::array<u8, 4> m_hsi_transitions{};
+	u8 m_hsi_head = 0, m_hsi_count = 0, m_hsi_hold_events = 0;
+	u16 m_hsi_hold_time = 0xffff, m_hsi_read_latch = 0xffff;
+	bool m_hsi_hold_valid = false, m_hsi_read_valid = false;
+	u64 m_hsi_transfer_at = 0;
 	u8 hsi_mode, hsi_status, hso_command, ad_command, hso_active;
 	u16 hso_time, ad_result;
 	u8 pwm_control;
@@ -189,6 +204,9 @@ private:
 	u64 timer_time_until(int timer, u64 current_time, u16 timer_value) const;
 	void timer2_reset(u64 current_time);
 	void set_hsi_state(int pin, bool state);
+	void hsi_capture(int pin, u64 current_time);
+	void hsi_update_status();
+	void hsi_unload();
 	void commit_hso_cam();
 	void trigger_cam(int id, u64 current_time);
 	void set_hso(u8 mask, bool state);
@@ -202,6 +220,9 @@ private:
 	void update_txd();
 	void tx_event(u64 current_time);
 	void rx_event(u64 current_time);
+	virtual unsigned ad_conversion_states() const { return 88; }
+	virtual bool is_196() const noexcept { return false; }
+	u32 timer_divisor() const { return 8 * cycles_scaling; }
 };
 
 class c8095_90_device : public i8x9x_device {

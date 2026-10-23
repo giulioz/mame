@@ -1,11 +1,10 @@
 # license:BSD-3-Clause
 # copyright-holders:Olivier Galibert
 fetch
-	m_long_index = false;
 	if(irq_requested) {
 		int level;
-		for(level = 7; level >= 0 && !(PSW & pending_irq & (1<<level)); level--);
-		if(level != 7)
+		for(level = 15; level >= 0 && !(interrupt_pending() & (1<<level)); level--);
+		if(is_cmos() || level != 7)
 			pending_irq &= ~(1<<level);
 		OP1 = level;
 		standard_irq_callback(OP1, PC);
@@ -13,9 +12,13 @@ fetch
 		TMP -= 2;
 		reg_w16(0x18, TMP);
 		any_w16(TMP, PC);
-		PC = any_r16(0x2000+2*OP1);
+		PC = any_r16(interrupt_vector(OP1));
+		icount -= cycles_scaling * (is_cmos() ? (TMP < 0x100 ? 16 : 18) : (TMP < 0x100 ? 21 : 24));
+		inst_state = STATE_FETCH_NOIRQ;
 		check_irq();
+		return;
 	}
+	m_long_index = false;
 	PPC = PC;
 	if(debugger_enabled())
 		debugger_instruction_hook(PC);
@@ -200,7 +203,7 @@ eadr  indexed_2b
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
 	if(OPI) {
-		OP1 += reg_r16(OPI);
+		OP1 = uint16_t(OP1 + reg_r16(OPI));
 	}
 	OP2 = read_pc();
 
@@ -214,7 +217,7 @@ eadr  indexed_3b
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
 	if(OPI) {
-		OP1 += reg_r16(OPI);
+		OP1 = uint16_t(OP1 + reg_r16(OPI));
 	}
 	OP2 = read_pc();
 	OP3 = read_pc();
@@ -229,7 +232,7 @@ eadr  indexed_3e
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
 	if(OPI) {
-		OP1 += reg_r16(OPI);
+		OP1 = uint16_t(OP1 + reg_r16(OPI));
 	}
 	OP2 = read_pc();
 	OP3 = read_pc();
@@ -244,7 +247,7 @@ eadr  indexed_1w
 	} else
 		OP1 = int8_t(OP1);
 	if(OPI) {
-		OP1 += reg_r16(OPI);
+		OP1 = uint16_t(OP1 + reg_r16(OPI));
 	}
 
 eadr  indexed_2w
@@ -257,7 +260,7 @@ eadr  indexed_2w
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
 	if(OPI) {
-		OP1 += reg_r16(OPI);
+		OP1 = uint16_t(OP1 + reg_r16(OPI));
 	}
 	OP2 = read_pc();
 
@@ -271,7 +274,7 @@ eadr  indexed_3w
 	} else if(OP1 & 0x80)
 		OP1 |= 0xff00;
 	if(OPI) {
-		OP1 += reg_r16(OPI);
+		OP1 = uint16_t(OP1 + reg_r16(OPI));
 	}
 	OP2 = read_pc();
 	OP3 = read_pc();
@@ -297,8 +300,6 @@ macro post_indexed $cycles1 $cycles2
 	TMP = reg_r16(OP1);
 	reg_w16(OP1, do_sub(0, TMP));
 	next(4);
-
-04    xch   direct_2w
 
 05    dec   direct_1w
 	TMP = reg_r16(OP1);
@@ -391,8 +392,6 @@ macro post_indexed $cycles1 $cycles2
 	TMP = reg_r8(OP1);
 	reg_w8(OP1, do_subb(0, TMP));
 	next(4);
-
-14    xchb  direct_2b
 
 15    decb  direct_1b
 	TMP = reg_r8(OP1);
@@ -1542,6 +1541,20 @@ c0    st    direct_2w
 	next(4);
 
 c1    bmov  direct_2w 196
+	OP2 &= 0xfc;
+	uint32_t count = reg_r16(OP1);
+	if (!count) count = 0x10000;
+	uint16_t source = reg_r16(OP2), destination = reg_r16(OP2+2);
+	int cycles = 6;
+	while (count--) {
+		any_w16(destination, any_r16(source));
+		cycles += (source < 0x100 ? 8 : 11) + (destination < 0x100 ? 0 : 3);
+		source += 2;
+		destination += 2;
+	}
+	reg_w16(OP2, source);
+	reg_w16(OP2+2, destination);
+	next(cycles);
 
 c2    st    indirect_2w
 	any_w16(OP1, reg_r16(OP2));
@@ -1556,6 +1569,18 @@ c4    stb   direct_2b
 	next(4);
 
 c5    cmpl  direct_2w 196
+	OP1 &= 0xfc;
+	OP2 &= 0xfc;
+	uint32_t left = reg_r16(OP2) | (uint32_t(reg_r16(OP2+2)) << 16);
+	uint32_t right = reg_r16(OP1) | (uint32_t(reg_r16(OP1+2)) << 16);
+	uint64_t diff = uint64_t(left) - right;
+	const bool overflow = ((left ^ right) & (left ^ uint32_t(diff)) & 0x80000000U) != 0;
+	PSW &= ~(F_N|F_Z|F_C|F_V);
+	if (!uint32_t(diff)) PSW |= F_Z;
+	if (bool(uint32_t(diff) & 0x80000000U) != overflow) PSW |= F_N;
+	if (overflow) PSW |= F_V|F_VT;
+	if (!(diff >> 32)) PSW |= F_C;
+	next(7);
 
 c6    stb   indirect_2b
 	any_w8(OP1, reg_r8(OP2));
@@ -1604,6 +1629,7 @@ cc    pop   direct_1w
 	next(12); // +2 when external sp
 
 cd    bmovi direct_2w 196
+	bmov_direct_2w_196_full();
 
 ce    pop   indirect_1w
 	TMP = reg_r16(0x18);
@@ -1784,7 +1810,7 @@ e0    djnz  rrel8
 
 e1    djnzw wrrel8 196
 	TMP = reg_r16(OP2);
-	TMP = TMP-1;
+	TMP = uint16_t(TMP-1);
 	reg_w16(OP2, TMP);
 	if(TMP) {
 		PC += OP1;
@@ -1832,10 +1858,31 @@ f3    popf  none
 	next_noirq(9); // +4 for external sp
 
 f4    pusha none 196
+	TMP = reg_r16(0x18) - 2;
+	reg_w16(0x18, TMP);
+	any_w16(TMP, PSW);
+	PSW = 0;
+	reg_w16(0x18, TMP-2);
+	any_w16(TMP-2, auxiliary_psw());
+	auxiliary_psw_w(0);
+	check_irq();
+	next_noirq(TMP < 0x100 ? 12 : 18);
 
 f5    popa  none 196
+	TMP = reg_r16(0x18);
+	auxiliary_psw_w(any_r16(TMP));
+	PSW = any_r16(TMP+2);
+	reg_w16(0x18, TMP+4);
+	check_irq();
+	next_noirq(TMP < 0x100 ? 12 : 18);
 
 f6    idlpd none 196
+	OP1 = read_pc();
+	if (OP1 == 1 || OP1 == 2)
+		suspend(SUSPEND_REASON_HALT, true);
+	else
+		device_reset();
+	next_noirq(2);
 
 f7    trap  none
 	TMP = reg_r16(0x18);
@@ -1871,5 +1918,5 @@ fd    nop   none
 	next(4);
 
 ff    rst   none
-	PC = 0x2080;
+	device_reset();
 	next(4);

@@ -64,15 +64,17 @@ protected:
 	virtual void state_export(const device_state_entry &entry) override;
 	virtual void state_string_export(const device_state_entry &entry, std::string &str) const override;
 
-	address_space_config program_config, regs_config;
-	address_space *program, *regs;
+	// Optional external data map for boards that bank code and data separately.
+	// With no AS_IO map, external data accesses retain the unified program bus.
+	address_space_config program_config, regs_config, io_config;
+	address_space *program, *regs, *io;
 	memory_access<16, 0, 0, ENDIANNESS_LITTLE>::cache m_cache8;
 	memory_access<16, 1, 0, ENDIANNESS_LITTLE>::cache m_cache16;
 	std::function<u8 (offs_t address)> m_pr8;
 	required_shared_ptr<u16> register_file;
 
 	int icount, bcount, inst_state, cycles_scaling;
-	uint8_t pending_irq;
+	uint16_t pending_irq;
 	uint16_t PC, PPC, PSW;
 	uint16_t OP1;
 	uint8_t OP2, OP3, OPI;
@@ -86,9 +88,18 @@ protected:
 
 	void recompute_bcount(uint64_t event_time);
 
-	inline void next(int cycles) { icount -= cycles_scaling*cycles; inst_state = STATE_FETCH; }
-	inline void next_noirq(int cycles) { icount -= cycles_scaling*cycles; inst_state = STATE_FETCH_NOIRQ; }
+	inline void next(int cycles) { icount -= cycles_scaling*instruction_cycles(cycles); inst_state = STATE_FETCH; }
+	inline void next_noirq(int cycles) { icount -= cycles_scaling*instruction_cycles(cycles); inst_state = STATE_FETCH_NOIRQ; }
 	void check_irq();
+	virtual int instruction_cycles(int cycles) { return cycles; }
+	virtual u16 interrupt_pending() const { return (PSW & F_I) ? interrupt_mask() & pending_irq : 0; }
+	virtual u16 interrupt_mask() const { return PSW & 0xff; }
+	virtual u16 interrupt_vector(int level) const { return 0x2000 + level * 2; }
+	virtual bool is_cmos() const noexcept { return false; }
+	virtual u16 auxiliary_psw() const { return 0; }
+	virtual void auxiliary_psw_w(u16 value) { }
+	void illegal_opcode();
+	u32 shift(u32 value, unsigned width, unsigned count, unsigned kind);
 	inline uint8_t read_pc() { return m_pr8(PC++); }
 
 	void int_mask_w(u8 data);
@@ -213,8 +224,6 @@ protected:
 	O(subc_direct_2w); O(subc_immed_2w); O(subc_indexed_2w); O(subc_indirect_2w);
 	O(subcb_direct_2b); O(subcb_immed_2b); O(subcb_indexed_2b); O(subcb_indirect_2b);
 	O(trap_none);
-	O(xch_direct_2w);
-	O(xchb_direct_2b);
 	O(xor_direct_2w); O(xor_immed_2w); O(xor_indexed_2w); O(xor_indirect_2w);
 	O(xorb_direct_2b); O(xorb_immed_2b); O(xorb_indexed_2b); O(xorb_indirect_2b);
 

@@ -14,8 +14,8 @@
 
 #include <bit>
 
-i8x9x_device::i8x9x_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock, int data_width) :
-	mcs96_device(mconfig, type, tag, owner, clock, data_width, address_map_constructor(FUNC(i8x9x_device::internal_regs), this)),
+i8x9x_device::i8x9x_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock, int data_width, address_map_constructor regs_map) :
+	mcs96_device(mconfig, type, tag, owner, clock, data_width, regs_map.isnull() ? address_map_constructor(FUNC(i8x9x_device::internal_regs), this) : regs_map),
 	m_ach_cb(*this, 0),
 	m_hso_cb(*this),
 	m_serial_tx_cb(*this),
@@ -83,10 +83,27 @@ void i8x9x_device::device_start()
 	save_item(NAME(hso_cam_hold.time));
 	save_item(NAME(hso_cam_hold.fire_at));
 
+	save_item(NAME(base_timer1));
+	save_item(NAME(timer1_overflow));
+	save_item(NAME(timer2_overflow));
+	save_item(NAME(ad_started));
+	save_item(NAME(ad_sample));
+	save_item(NAME(serial_rx_full));
 	save_item(NAME(base_timer2));
 	save_item(NAME(ad_done));
 	save_item(NAME(hsi_mode));
 	save_item(NAME(hsi_status));
+	save_item(NAME(m_hsi_times));
+	save_item(NAME(m_hsi_events));
+	save_item(NAME(m_hsi_transitions));
+	save_item(NAME(m_hsi_head));
+	save_item(NAME(m_hsi_count));
+	save_item(NAME(m_hsi_hold_events));
+	save_item(NAME(m_hsi_hold_time));
+	save_item(NAME(m_hsi_hold_valid));
+	save_item(NAME(m_hsi_read_latch));
+	save_item(NAME(m_hsi_read_valid));
+	save_item(NAME(m_hsi_transfer_at));
 	save_item(NAME(hso_command));
 	save_item(NAME(ad_command));
 	save_item(NAME(hso_active));
@@ -129,17 +146,30 @@ void i8x9x_device::device_reset()
 	hso_active = 0;
 	hso_command = 0;
 	hso_time = 0;
+	base_timer1 = is_196() ? total_cycles() : 0;
+	timer1_overflow = timer_time_until(1, total_cycles(), 0);
+	ad_sample = 0;
+	ad_started = 0;
 	timer2_reset(total_cycles());
 	port1 = 0xff;
 	port2 = 0xc1 & i8x9x_p2_mask(); // P2.5 is cleared
 	ios0 = ios1 = 0x00;
+	m_hsi_times.fill(0);
+	m_hsi_events.fill(0);
+	m_hsi_transitions.fill(0);
+	m_hsi_head = m_hsi_count = m_hsi_hold_events = 0;
+	m_hsi_hold_time = m_hsi_read_latch = 0xffff;
+	m_hsi_hold_valid = m_hsi_read_valid = false;
+	m_hsi_transfer_at = 0;
+	hsi_status &= 0xaa;
 	ioc0 &= 0xaa;
 	ioc1 = (ioc1 & 0xae) | 0x01;
 	ad_result = 0;
 	ad_done = 0;
+	serial_rx_full = false;
 	pwm_control = 0x00;
 	sp_con &= 0x17;
-	sp_stat &= 0x80;
+	sp_stat &= is_196() ? 0x88 : 0x80;
 	brh = false;
 	m_out_p1_cb(0xff);
 	m_out_p2_cb(0xc1);
@@ -170,14 +200,14 @@ void i8x9x_device::commit_hso_cam()
 
 void i8x9x_device::ad_start(u64 current_time)
 {
-	ad_result = 8 | (ad_command & 7);
+	ad_started = current_time;
+	ad_sample = 0;
 	if (!BIT(i8x9x_p0_mask(), ad_command & 7))
 		logerror("Analog input on ACH%d does not exist on this device\n", ad_command & 7);
-	else if (m_ach_cb[ad_command & 7].isunset())
-		logerror("Analog input on ACH%d not configured\n", ad_command & 7);
-	else
-		ad_result |= m_ach_cb[ad_command & 7]() << 6;
-	ad_done = current_time + 88;
+	else if (!m_ach_cb[ad_command & 7].isunset())
+		ad_sample = m_ach_cb[ad_command & 7]() & 0x3ff;
+	ad_result = is_196() ? (ad_result & 0xffc0) | (ad_command & 7) : 8 | (ad_command & 7) | (ad_sample << 6);
+	ad_done = current_time + u64(cycles_scaling) * ad_conversion_states();
 	internal_update(current_time);
 }
 
@@ -189,8 +219,11 @@ u32 i8x9x_device::serial_bit_clocks() const
 	if (!BIT(baud_reg, 15))
 		return 960;
 
+	// Asynchronous modes take XTAL1/64 per baud count on the 8X9X and
+	// XTAL1/16 on the 8XC196KB (the D-70 and MV-30 program 0x8017 for MIDI
+	// at 12 MHz)
 	u32 const divisor = (baud_reg & 0x7fff) + 1;
-	return ((sp_con & 3) == 0 ? 4 : 64) * divisor;
+	return ((sp_con & 3) == 0 ? 4 : is_196() ? 16 : 64) * divisor;
 }
 
 u8 i8x9x_device::serial_data_bits() const
@@ -211,6 +244,7 @@ void i8x9x_device::serial_send(u8 data, u64 current_time)
 	}
 
 	serial_send_buf = data;
+	sp_stat &= ~0x08; // TXE (8XC196 only)
 
 	u8 const mode = sp_con & 3;
 	bool const pen = BIT(sp_con, 2);
@@ -242,7 +276,7 @@ void i8x9x_device::serial_tx_done()
 {
 	sp_con &= ~0x10; // TB8 is cleared after each transmission
 	m_serial_tx_cb(serial_send_buf);
-	pending_irq |= IRQ_SERIAL;
+	pending_irq |= IRQ_SERIAL | (is_196() ? 0x0100 : 0); // 8XC196 also has a separate TI interrupt
 	sp_stat |= 0x20;
 	check_irq();
 }
@@ -254,6 +288,8 @@ void i8x9x_device::serial_tx_stop()
 	tx_pending = false;
 	tx_ti_due = false;
 	tx_bits = 0;
+	if (is_196())
+		sp_stat |= 0x08; // TXE
 	txd_serial = 1;
 	update_txd();
 }
@@ -285,6 +321,8 @@ void i8x9x_device::tx_event(u64 current_time)
 			tx_pending = false;
 			serial_send(tx_pending_buf, current_time);
 		}
+		else if (is_196())
+			sp_stat |= 0x08; // TXE
 		return;
 	}
 
@@ -386,6 +424,10 @@ void i8x9x_device::rx_event(u64 current_time)
 		if (mode == 2 && !BIT(rx_shift, 8))
 			return;
 
+		// The 8XC196 flags an overrun (OE) when SBUF wasn't read in time
+		if (is_196() && serial_rx_full)
+			sp_stat |= 0x04;
+		serial_rx_full = true;
 		sbuf = rx_shift & 0xff;
 		if (pen && mode != 2)
 		{
@@ -399,7 +441,7 @@ void i8x9x_device::rx_event(u64 current_time)
 			sp_stat = (sp_stat & 0x7f) | (BIT(rx_shift, 8) << 7);
 		}
 		sp_stat |= 0x40;
-		pending_irq |= IRQ_SERIAL;
+		pending_irq |= IRQ_SERIAL | (is_196() ? 0x0200 : 0);
 		check_irq();
 		return;
 	}
@@ -410,7 +452,7 @@ void i8x9x_device::rx_event(u64 current_time)
 
 void i8x9x_device::internal_regs(address_map &map)
 {
-	map(0x00, 0x01).lr16([] () -> u16 { return 0; }, "r0").nopw();
+	map(0x00, 0x01).lr16([]() -> u16 { return 0; }, "r0").nopw();
 	map(0x02, 0x03).r(FUNC(i8x9x_device::ad_result_r)); // 8-bit access
 	map(0x02, 0x02).w(FUNC(i8x9x_device::ad_command_w));
 	map(0x03, 0x03).w(FUNC(i8x9x_device::hsi_mode_w));
@@ -441,7 +483,9 @@ void i8x9x_device::ad_command_w(u8 data)
 
 u8 i8x9x_device::ad_result_r(offs_t offset)
 {
-	return ad_result >> (offset ? 8 : 0);
+	const u16 result = is_196() && ad_done && total_cycles() - ad_started >= 8 * cycles_scaling
+		? ad_result | 8 : ad_result;
+	return result >> (offset ? 8 : 0);
 }
 
 void i8x9x_device::hsi_mode_w(u8 data)
@@ -458,9 +502,99 @@ void i8x9x_device::hso_time_w(u16 data)
 
 u16 i8x9x_device::hsi_time_r()
 {
+	if (!is_196())
+		return 0;
+	const u16 result = m_hsi_hold_valid ? m_hsi_hold_time : 0xffff;
 	if (!machine().side_effects_disabled())
-		logerror("read hsi time (%04x)\n", PPC);
-	return 0x0000;
+		hsi_unload();
+	return result;
+}
+
+u8 i8x9x_device::hsi_time_byte_r(offs_t offset)
+{
+	// A word read arrives as two byte SFR accesses. Keep the same record for
+	// both lanes; the high lane unloads it rather than reading the next event.
+	if (machine().side_effects_disabled())
+		return (m_hsi_read_valid ? m_hsi_read_latch : m_hsi_hold_time) >> (offset * 8);
+	if (!m_hsi_read_valid)
+	{
+		m_hsi_read_latch = m_hsi_hold_valid ? m_hsi_hold_time : 0xffff;
+		m_hsi_read_valid = true;
+	}
+	const u8 result = m_hsi_read_latch >> (offset * 8);
+	if (offset)
+	{
+		m_hsi_read_valid = false;
+		hsi_unload();
+	}
+	return result;
+}
+
+void i8x9x_device::hsi_holding_time_w(u16 data, u16 mem_mask)
+{
+	m_hsi_hold_time = (m_hsi_hold_time & ~mem_mask) | (data & mem_mask);
+	m_hsi_hold_valid = true;
+	m_hsi_transfer_at = 0;
+	hsi_update_status();
+}
+
+void i8x9x_device::hsi_holding_status_w(u8 data)
+{
+	m_hsi_hold_events = data & 0x55;
+	hsi_update_status();
+}
+
+void i8x9x_device::hsi_unload()
+{
+	m_hsi_hold_valid = false;
+	m_hsi_hold_events = 0;
+	if (m_hsi_count && !m_hsi_transfer_at)
+		m_hsi_transfer_at = total_cycles() + 8 * cycles_scaling;
+	hsi_update_status();
+	internal_update(total_cycles());
+}
+
+void i8x9x_device::hsi_update_status()
+{
+	hsi_status = (hsi_status & 0xaa) | (m_hsi_hold_valid ? m_hsi_hold_events : 0);
+	ios1 = (ios1 & 0x3f) | (m_hsi_hold_valid ? 0x80 : 0) | (m_hsi_count >= 6 ? 0x40 : 0);
+}
+
+void i8x9x_device::hsi_capture(int pin, u64 current_time)
+{
+	const u16 time = timer_value(1, current_time);
+	const u8 event = 1 << (pin * 2);
+	// Simultaneous pins share a time tag and one record.
+	if (m_hsi_count && m_hsi_times[(m_hsi_head + m_hsi_count - 1) % 7] == time)
+	{
+		m_hsi_events[(m_hsi_head + m_hsi_count - 1) % 7] |= event;
+		return;
+	}
+	if (!m_hsi_count && m_hsi_hold_valid && m_hsi_hold_time == time)
+	{
+		m_hsi_hold_events |= event;
+		hsi_update_status();
+		return;
+	}
+	if (m_hsi_count == 7)
+		return; // Full FIFO drops new events, preserving unread records.
+	const unsigned tail = (m_hsi_head + m_hsi_count) % 7;
+	m_hsi_times[tail] = time;
+	m_hsi_events[tail] = event;
+	++m_hsi_count;
+	if (!m_hsi_hold_valid && !m_hsi_transfer_at)
+		m_hsi_transfer_at = current_time + 8 * cycles_scaling;
+	if (m_hsi_count == 4)
+		pending_irq |= 0x0400; // Fourth FIFO entry, independent of holding register.
+	if (m_hsi_count == 6)
+	{
+		pending_irq |= 0x4000;
+		if (BIT(ioc1, 7))
+			pending_irq |= IRQ_HSI;
+	}
+	hsi_update_status();
+	check_irq();
+	internal_update(current_time);
 }
 
 void i8x9x_device::hso_command_w(u8 data)
@@ -484,6 +618,8 @@ u8 i8x9x_device::sbuf_r()
 {
 	if (!machine().side_effects_disabled())
 		logerror("read sbuf %02x (%04x)\n", sbuf, PPC);
+	if (!machine().side_effects_disabled())
+		serial_rx_full = false;
 	return sbuf;
 }
 
@@ -565,7 +701,10 @@ u8 i8x9x_device::port2_r()
 {
 	// P2.0 and P2.5 are for output only (but can be read back despite what Intel claims?)
 	// P2.1 is also the RXD input, which rxd_w drives
-	return (m_in_p2_cb() | 0x25 | ~i8x9x_p2_mask()) & (port2 | (extint ? 0x1e : 0x1a)) & (rxd_pin ? 0xff : 0xfd);
+	u8 const data = is_196()
+		? (port2 & 0x21) | (m_in_p2_cb() & 0x1e) | (m_in_p2_cb() & port2 & 0xc0)
+		: (m_in_p2_cb() | 0x25 | ~i8x9x_p2_mask()) & (port2 | (extint ? 0x1e : 0x1a));
+	return data & (rxd_pin ? 0xff : 0xfd);
 }
 
 void i8x9x_device::sp_con_w(u8 data)
@@ -591,7 +730,7 @@ u8 i8x9x_device::sp_stat_r()
 	u8 res = sp_stat;
 	if (!machine().side_effects_disabled())
 	{
-		sp_stat &= 0x80;
+		sp_stat &= is_196() ? 0x88 : 0x80;
 		logerror("read sp stat %02x (%04x)\n", res, PPC);
 	}
 	return res;
@@ -642,36 +781,41 @@ void i8x9x_device::do_exec_partial()
 
 void i8x9x_device::serial_w(u8 val)
 {
+	if (is_196() && !(sp_con & 8))
+		return;
+	if (is_196() && serial_rx_full)
+		sp_stat |= 0x04;
+	serial_rx_full = true;
 	sbuf = val;
 	sp_stat |= 0x40;
-	pending_irq |= IRQ_SERIAL;
+	pending_irq |= IRQ_SERIAL | (is_196() ? 0x0200 : 0);
 	check_irq();
 }
 
 // Timer 1 increments once every eight state times, and a state time is three
 // oscillator periods on this family, so the divisor is 8 * 3 = 24.
-static constexpr u32 TIMER_DIVISOR = 24;
+// The CMOS KB uses two oscillator periods per state; NMOS uses three.
 
 u16 i8x9x_device::timer_value(int timer, u64 current_time) const
 {
-	if(timer == 2)
-		current_time -= base_timer2;
-	return u16(current_time / TIMER_DIVISOR);
+	current_time -= timer == 2 ? base_timer2 : base_timer1;
+	return u16(current_time / timer_divisor());
 }
 
 u64 i8x9x_device::timer_time_until(int timer, u64 current_time, u16 timer_value) const
 {
-	u64 timer_base = timer == 2 ? base_timer2 : 0;
-	u64 delta = (current_time - timer_base) / TIMER_DIVISOR;
+	u64 timer_base = timer == 2 ? base_timer2 : base_timer1;
+	u64 delta = (current_time - timer_base) / timer_divisor();
 	u32 tdelta = u16(timer_value - delta);
 	if(!tdelta)
 		tdelta = 0x10000;
-	return timer_base + ((delta + tdelta) * TIMER_DIVISOR);
+	return timer_base + ((delta + tdelta) * timer_divisor());
 }
 
 void i8x9x_device::timer2_reset(u64 current_time)
 {
 	base_timer2 = current_time;
+	timer2_overflow = timer_time_until(2, current_time, is_196() ? 0x8000 : 0);
 	// hso_info[].time holds a timer value, not a deadline, so timer2-relative
 	// entries need fire_at recomputed against the new base.
 	for(int i=0; i<8; i++)
@@ -681,19 +825,34 @@ void i8x9x_device::timer2_reset(u64 current_time)
 
 void i8x9x_device::set_hsi_state(int pin, bool state)
 {
-	if(pin == 0 && !BIT(hsi_status, 1) && state) {
-		if(BIT(ioc1, 1)) {
-			pending_irq |= IRQ_HSI0;
-			check_irq();
-		}
-		if((ioc0 & 0x28) == 0x28)
-			timer2_reset(total_cycles());
-	}
-
-	if(state)
+	const bool old = BIT(hsi_status, pin * 2 + 1);
+	if (old == state)
+		return;
+	if (state)
 		hsi_status |= 2 << (pin * 2);
 	else
 		hsi_status &= ~(2 << (pin * 2));
+	if (pin == 0 && state)
+	{
+		if (is_196() || BIT(ioc1, 1))
+		{
+			pending_irq |= IRQ_HSI0;
+			check_irq();
+		}
+		if ((ioc0 & 0x28) == 0x28)
+			timer2_reset(total_cycles());
+	}
+	if (!is_196() || !BIT(ioc0, pin * 2))
+		return;
+	const unsigned mode = (hsi_mode >> (pin * 2)) & 3;
+	bool capture = mode == 3 || (mode == 1 && state) || (mode == 2 && !state);
+	if (!mode && state)
+	{
+		m_hsi_transitions[pin] = (m_hsi_transitions[pin] + 1) & 7;
+		capture = !m_hsi_transitions[pin];
+	}
+	if (capture)
+		hsi_capture(pin, total_cycles());
 }
 
 void i8x9x_device::trigger_cam(int id, u64 current_time)
@@ -762,7 +921,7 @@ void i8x9x_device::internal_update(u64 current_time)
 	if(ad_done && current_time >= ad_done) {
 		// A/D conversion complete
 		ad_done = 0;
-		ad_result &= ~8;
+		ad_result = is_196() ? (ad_sample << 6) | (ad_command & 7) : ad_result & ~8;
 		pending_irq |= IRQ_AD;
 		check_irq();
 	}
@@ -775,6 +934,42 @@ void i8x9x_device::internal_update(u64 current_time)
 		rx_event(rx_next);
 
 	u64 event_time = 0;
+	if (is_196() && m_hsi_transfer_at && current_time >= m_hsi_transfer_at)
+	{
+		m_hsi_transfer_at = 0;
+		if (m_hsi_count && !m_hsi_hold_valid)
+		{
+			m_hsi_hold_time = m_hsi_times[m_hsi_head];
+			m_hsi_hold_events = m_hsi_events[m_hsi_head];
+			m_hsi_head = (m_hsi_head + 1) % 7;
+			--m_hsi_count;
+			m_hsi_hold_valid = true;
+			if (!BIT(ioc1, 7))
+				pending_irq |= IRQ_HSI;
+			hsi_update_status();
+		}
+	}
+	if (is_196())
+	{
+		if (current_time >= timer1_overflow)
+		{
+			ios1 |= 0x20;
+			if (BIT(ioc1, 2)) pending_irq |= IRQ_TIMER;
+			timer1_overflow = timer_time_until(1, current_time, 0);
+		}
+		if (current_time >= timer2_overflow)
+		{
+			ios1 |= 0x10;
+			if (BIT(ioc1, 3)) pending_irq |= IRQ_TIMER;
+			pending_irq |= 0x1000;
+			// KB Timer2 reports both 8000h and 0000h crossings.
+			timer2_overflow = timer_time_until(2, current_time, timer_value(2, current_time) < 0x8000 ? 0x8000 : 0);
+		}
+		check_irq();
+		event_time = std::min(timer1_overflow, timer2_overflow);
+	}
+	if (m_hsi_transfer_at && (!event_time || m_hsi_transfer_at < event_time))
+		event_time = m_hsi_transfer_at;
 	for(int i=0; i<8; i++) {
 		if(!BIT(hso_active, i) && BIT(ios0, 7)) {
 			hso_info[i] = hso_cam_hold;

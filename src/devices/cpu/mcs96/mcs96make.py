@@ -160,7 +160,7 @@ class OpcodeList:
             opc = None
             if i >= 0x100 and i-0x100+0xfe00 in self.opcode_per_id:
                 opc = self.opcode_per_id[i-0x100+0xfe00]
-            if opc is None and (i & 0xff) in self.opcode_per_id:
+            if opc is None and i < 0x100 and i in self.opcode_per_id:
                 opc = self.opcode_per_id[i & 0xff]
             if opc is not None:
                 nm = opc.name + "_" + opc.amode
@@ -169,6 +169,7 @@ class OpcodeList:
                 print("\tcase 0x%03x: %s_full(); break;" % (i, nm), file=f)
         print("\tcase 0x200: fetch_full(); break;", file=f)
         print("\tcase 0x201: fetch_noirq_full(); break;", file=f)
+        print("\tdefault: illegal_opcode(); break;", file=f)
         print("\t}", file=f)
         print("}", file=f)
 

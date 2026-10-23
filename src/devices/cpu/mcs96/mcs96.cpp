@@ -17,7 +17,8 @@ mcs96_device::mcs96_device(const machine_config &mconfig, device_type type, cons
 	cpu_device(mconfig, type, tag, owner, clock),
 	program_config("program", ENDIANNESS_LITTLE, data_width, 16),
 	regs_config("register", ENDIANNESS_LITTLE, 16, 8, 0, regs_map),
-	program(nullptr), regs(nullptr), register_file(*this, "register_file"),
+	io_config("io", ENDIANNESS_LITTLE, data_width, 16),
+	program(nullptr), regs(nullptr), io(nullptr), register_file(*this, "register_file"),
 	icount(0), bcount(0), inst_state(0), cycles_scaling(0), pending_irq(0),
 	PC(0), PPC(0), PSW(0), OP1(0), OP2(0), OP3(0), OPI(0), TMP(0), irq_requested(false), m_long_index(false)
 {
@@ -34,6 +35,7 @@ void mcs96_device::device_start()
 		m_pr8 = [this](offs_t address) -> u8 { return m_cache16.read_byte(address); };
 	}
 	regs = &space(AS_DATA);
+	io = has_configured_map(AS_IO) ? &space(AS_IO) : program;
 
 	set_icountptr(icount);
 
@@ -77,6 +79,7 @@ void mcs96_device::device_reset()
 	PC = 0x2080;
 	PPC = PC;
 	PSW = 0;
+	pending_irq = 0;
 	irq_requested = false;
 	inst_state = STATE_FETCH;
 }
@@ -102,7 +105,9 @@ void mcs96_device::recompute_bcount(uint64_t event_time)
 
 void mcs96_device::check_irq()
 {
-	irq_requested = (PSW & pending_irq) && (PSW & F_I);
+	irq_requested = interrupt_pending() != 0;
+	if (irq_requested && suspended(SUSPEND_REASON_HALT))
+		resume(SUSPEND_REASON_HALT);
 }
 
 void mcs96_device::int_mask_w(u8 data)
@@ -118,7 +123,7 @@ u8 mcs96_device::int_mask_r()
 
 void mcs96_device::int_pending_w(u8 data)
 {
-	pending_irq = data;
+	pending_irq = (pending_irq & 0xff00) | data;
 	check_irq();
 }
 
@@ -136,9 +141,10 @@ void mcs96_device::execute_run()
 
 	while(icount > 0) {
 		while(icount > bcount) {
-			int picount = inst_state >= 0x200 ? -1 : icount;
+			const int previous_state = inst_state;
+			const int picount = icount;
 			do_exec_full();
-			if(icount == picount) {
+			if(icount == picount && inst_state == previous_state) {
 				fatalerror("Unhandled %x (%04x)\n", inst_state, PPC);
 			}
 		}
@@ -151,6 +157,12 @@ void mcs96_device::execute_run()
 
 device_memory_interface::space_config_vector mcs96_device::memory_space_config() const
 {
+	if (has_configured_map(AS_IO))
+		return space_config_vector {
+			std::make_pair(AS_PROGRAM, &program_config),
+			std::make_pair(AS_DATA, &regs_config),
+			std::make_pair(AS_IO, &io_config)
+		};
 	return space_config_vector {
 		std::make_pair(AS_PROGRAM, &program_config),
 		std::make_pair(AS_DATA, &regs_config)
@@ -215,7 +227,7 @@ void mcs96_device::any_w8(u16 adr, u8 data)
 	if (adr < 0x100)
 		regs->write_byte(adr, data);
 	else
-		program->write_byte(adr, data);
+		io->write_byte(adr, data);
 }
 
 void mcs96_device::any_w16(u16 adr, u16 data)
@@ -224,7 +236,7 @@ void mcs96_device::any_w16(u16 adr, u16 data)
 	if (adr < 0x100)
 		regs->write_word(adr, data);
 	else
-		program->write_word(adr, data);
+		io->write_word(adr, data);
 }
 
 u8 mcs96_device::any_r8(u16 adr)
@@ -232,7 +244,7 @@ u8 mcs96_device::any_r8(u16 adr)
 	if (adr < 0x100)
 		return regs->read_byte(adr);
 	else
-		return program->read_byte(adr);
+		return io->read_byte(adr);
 }
 
 u16 mcs96_device::any_r16(u16 adr)
@@ -241,7 +253,7 @@ u16 mcs96_device::any_r16(u16 adr)
 	if (adr < 0x100)
 		return regs->read_word(adr);
 	else
-		return program->read_word(adr);
+		return io->read_word(adr);
 }
 
 bool mcs96_device::memory_translate(int spacenum, int intention, offs_t &address, address_space *&target_space)
@@ -405,6 +417,21 @@ void mcs96_device::set_nz16(uint16_t v)
 		PSW |= F_Z;
 	else if(int16_t(v) < 0)
 		PSW |= F_N;
+}
+
+void mcs96_device::illegal_opcode()
+{
+	if (!is_cmos())
+	{
+		next(4);
+		return;
+	}
+	const u16 sp = reg_r16(0x18) - 2;
+	reg_w16(0x18, sp);
+	any_w16(sp, u16(PPC + 1));
+	PC = any_r16(0x2012);
+	icount -= cycles_scaling * (sp < 0x100 ? 16 : 18);
+	inst_state = STATE_FETCH_NOIRQ;
 }
 
 // Shift counts come from an immediate nibble or a register's low five bits.
