@@ -1,0 +1,722 @@
+<?xml version="1.0"?>
+<!--
+license:CC0-1.0
+copyright-holders:giulioz
+Roland MV-30 Studio M
+-->
+<mamelayout version="2">
+	<element name="rect">
+		<rect><color red="1" green="1" blue="1"/></rect>
+	</element>
+	<element name="led" defstate="0">
+		<rect state="0"><color red="0.22" green="0.22" blue="0.22"/></rect>
+		<rect state="1"><color red="1" green="1" blue="1"/></rect>
+	</element>
+	<element name="led_overlay" defstate="0">
+		<rect state="0"><color red="0" green="0" blue="0" alpha="0"/></rect>
+		<rect state="1"><color red="1" green="1" blue="1"/></rect>
+	</element>
+	<element name="key">
+		<rect state="0"><color red="0.3" green="0.31" blue="0.32"/></rect>
+		<rect state="0"><bounds x="0" y="0" width="1" height="0.06"/><color red="0.45" green="0.46" blue="0.47"/></rect>
+		<rect state="1"><color red="0.17" green="0.18" blue="0.19"/></rect>
+		<rect state="1"><bounds x="0" y="0" width="1" height="0.06"/><color red="0.32" green="0.33" blue="0.34"/></rect>
+	</element>
+	<element name="key_light">
+		<rect state="0"><color red="0.78" green="0.79" blue="0.77"/></rect>
+		<rect state="0"><bounds x="0" y="0" width="1" height="0.06"/><color red="0.93" green="0.94" blue="0.92"/></rect>
+		<rect state="1"><color red="0.58" green="0.59" blue="0.57"/></rect>
+		<rect state="1"><bounds x="0" y="0" width="1" height="0.06"/><color red="0.73" green="0.74" blue="0.72"/></rect>
+	</element>
+	<element name="fader_cap">
+		<rect><color red="0.16" green="0.16" blue="0.17"/></rect>
+		<rect><bounds x="0" y="0" width="1" height="0.12"/><color red="0.34" green="0.34" blue="0.35"/></rect>
+		<rect><bounds x="0.06" y="0.44" width="0.88" height="0.12"/><color red="0.92" green="0.92" blue="0.9"/></rect>
+	</element>
+	<element name="fader_area">
+		<rect><color red="0" green="0" blue="0" alpha="0"/></rect>
+	</element>
+	<element name="dial">
+		<disk><color red="0.12" green="0.12" blue="0.13"/></disk>
+		<disk><bounds x="0.04" y="0.04" width="0.92" height="0.92"/><color red="0.25" green="0.26" blue="0.27"/></disk>
+		<disk><bounds x="0.1" y="0.1" width="0.8" height="0.8"/><color red="0.21" green="0.22" blue="0.23"/></disk>
+	</element>
+	<element name="dial_dimple">
+		<disk><color red="0.13" green="0.13" blue="0.14"/></disk>
+		<disk><bounds x="0.12" y="0.12" width="0.76" height="0.76"/><color red="0.19" green="0.2" blue="0.21"/></disk>
+	</element>
+	<element name="text_roland">
+		<text string="Roland" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_music_production_system_mv_30">
+		<text string="MUSIC PRODUCTION SYSTEM MV-30" align="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_studio_m">
+		<text string="STUDIO M" align="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_shift">
+		<text string="SHIFT"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_f1">
+		<text string="F1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_f2">
+		<text string="F2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_f3">
+		<text string="F3"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_f4">
+		<text string="F4"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_f5">
+		<text string="F5"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_exit">
+		<text string="EXIT"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_compu_mixer">
+		<text string="COMPU MIXER"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_max">
+		<text string="MAX" align="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_r_ch">
+		<text string="(R)" align="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_l_ch">
+		<text string="(L)" align="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_min">
+		<text string="MIN" align="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_volume">
+		<text string="VOLUME"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_scale_10">
+		<text string="10" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_scale_0">
+		<text string="0" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_mix_mode">
+		<text string="MIX MODE"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_sequencer">
+		<text string="SEQUENCER"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_compu">
+		<text string="COMPU"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_manual">
+		<text string="MANUAL"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_song_select">
+		<text string="SONG SELECT"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_status">
+		<text string="STATUS"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_locate">
+		<text string="LOCATE"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_mark">
+		<text string="MARK"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_tempo">
+		<text string="TEMPO"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_ctrl">
+		<text string="CTRL"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_rec">
+		<text string="REC"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_meas_dec">
+		<text string="MEAS DEC"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_start_stop">
+		<text string="START/STOP"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_meas_inc">
+		<text string="MEAS INC"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_rew">
+		<text string="◁◁"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_play_stop">
+		<text string="▷/□"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_ff">
+		<text string="▷▷"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_shift_top">
+		<text string="|◁◁ (SHIFT)" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_shift_end">
+		<text string="(SHIFT) ▷▷|" align="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_pcm_card_a">
+		<text string="PCM CARD A"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_pcm_card_b">
+		<text string="PCM CARD B"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_up">
+		<text string="▲"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_left">
+		<text string="◀"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_right">
+		<text string="▶"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_down">
+		<text string="▼"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_ins">
+		<text string="INS"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_del">
+		<text string="DEL"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_play">
+		<text string="PLAY"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_chain">
+		<text string="CHAIN"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_load">
+		<text string="LOAD"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_disk">
+		<text string="DISK"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_mix">
+		<text string="MIX"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_timbre">
+		<text string="TIMBRE"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_edit">
+		<text string="EDIT"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_system">
+		<text string="SYSTEM"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_track">
+		<text string="TRACK" align="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_step">
+		<text string="STEP"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_real">
+		<text string="REAL"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_time">
+		<text string="TIME"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_micro">
+		<text string="MICRO"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_scope">
+		<text string="SCOPE"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_pattern">
+		<text string="PATTERN" align="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_beat">
+		<text string="BEAT" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_value">
+		<text string="VALUE" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_minus">
+		<text string="−"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_plus">
+		<text string="+"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_stu">
+		<text string="STU" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_7">
+		<text string="7"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_flat">
+		<text string="b"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_vwx">
+		<text string="VWX" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_8">
+		<text string="8"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_sharp">
+		<text string="#"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_yz">
+		<text string="YZ!" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_9">
+		<text string="9"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_jkl">
+		<text string="JKL" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_4">
+		<text string="4"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_e">
+		<text string="E"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_mno">
+		<text string="MNO" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_5">
+		<text string="5"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_f">
+		<text string="F"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_pqr">
+		<text string="PQR" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_6">
+		<text string="6"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_g">
+		<text string="G"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_abc">
+		<text string="ABC" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_1">
+		<text string="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_b">
+		<text string="B"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_def">
+		<text string="DEF" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_2">
+		<text string="2"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_c">
+		<text string="C"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_ghi">
+		<text string="GHI" align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_3">
+		<text string="3"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_d">
+		<text string="D"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_space">
+		<text string="SPACE.," align="1"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_0">
+		<text string="0"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_a">
+		<text string="A"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_enter">
+		<text string="ENTER"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_1_9">
+		<text string="1/9"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_2_10">
+		<text string="2/10"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_3_11">
+		<text string="3/11"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_4_12">
+		<text string="4/12"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_5_13">
+		<text string="5/13"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_6_14">
+		<text string="6/14"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_7_15">
+		<text string="7/15"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="text_8_16">
+		<text string="8/16"><color red="1" green="1" blue="1"/></text>
+	</element>
+	<element name="script_warning" defstate="1">
+		<text state="1" string="To drag the faders and VALUE dial, enable the layout plugin (-plugin layout)." align="0"><color red="0.55" green="0.56" blue="0.56"/></text>
+	</element>
+
+	<view name="Front Panel">
+		<element ref="rect"><bounds x="0" y="0" width="1480" height="892"/><color red="0.56" green="0.57" blue="0.56"/></element>
+
+		<!-- Logo and display -->
+		<element ref="text_roland"><bounds x="30" y="14" width="150" height="40"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_music_production_system_mv_30"><bounds x="470" y="30" width="260" height="16"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_studio_m"><bounds x="740" y="18" width="150" height="34"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="rect"><bounds x="30" y="62" width="860" height="206"/><color red="0.2" green="0.21" blue="0.22"/></element>
+		<screen index="0"><bounds x="90" y="69" width="720" height="192"/></screen>
+
+		<!-- SHIFT (wired to JUMP), F1..F5, EXIT -->
+		<element ref="key" inputtag="KEY0" inputmask="0x80"><bounds x="30" y="282" width="130" height="40"/></element>
+		<element ref="text_shift"><bounds x="37.8" y="295.5" width="114.4" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY1" inputmask="0x80"><bounds x="176" y="282" width="108" height="40"/></element>
+		<element ref="text_f1"><bounds x="182.48" y="295.5" width="95.04" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY2" inputmask="0x80"><bounds x="288" y="282" width="108" height="40"/></element>
+		<element ref="text_f2"><bounds x="294.48" y="295.5" width="95.04" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY3" inputmask="0x80"><bounds x="400" y="282" width="108" height="40"/></element>
+		<element ref="text_f3"><bounds x="406.48" y="295.5" width="95.04" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY4" inputmask="0x80"><bounds x="512" y="282" width="108" height="40"/></element>
+		<element ref="text_f4"><bounds x="518.48" y="295.5" width="95.04" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY5" inputmask="0x80"><bounds x="624" y="282" width="108" height="40"/></element>
+		<element ref="text_f5"><bounds x="630.48" y="295.5" width="95.04" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY6" inputmask="0x80"><bounds x="760" y="282" width="130" height="40"/></element>
+		<element ref="text_exit"><bounds x="767.8" y="295.5" width="114.4" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+
+		<!-- Compu mixer: track keys with bicolor LEDs, faders and VOLUME -->
+		<element ref="rect"><bounds x="204" y="339.5" width="287.67" height="2"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="rect"><bounds x="592.33" y="339.5" width="287.67" height="2"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_compu_mixer"><bounds x="497.67" y="334" width="88.66" height="13"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led0_6"><bounds x="227" y="368" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led_overlay" name="led7_6"><bounds x="227" y="368" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="led" name="led1_6"><bounds x="315" y="368" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led_overlay" name="led6_6"><bounds x="315" y="368" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="led" name="led2_6"><bounds x="403" y="368" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led_overlay" name="led5_6"><bounds x="403" y="368" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="led" name="led3_6"><bounds x="491" y="368" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led_overlay" name="led4_6"><bounds x="491" y="368" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="led" name="led4_5"><bounds x="579" y="368" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led_overlay" name="led3_5"><bounds x="579" y="368" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="led" name="led5_5"><bounds x="667" y="368" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led_overlay" name="led2_5"><bounds x="667" y="368" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="led" name="led6_5"><bounds x="755" y="368" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led_overlay" name="led1_5"><bounds x="755" y="368" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="led" name="led7_5"><bounds x="843" y="368" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led_overlay" name="led0_5"><bounds x="843" y="368" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<repeat count="8">
+			<param name="i" start="0" increment="1"/>
+			<param name="n" start="1" increment="1"/>
+			<param name="m" start="9" increment="1"/>
+			<param name="lx" start="210" increment="88"/>
+			<param name="kx" start="208" increment="88"/>
+			<param name="fx" start="204" increment="88"/>
+			<param name="sx" start="225" increment="88"/>
+			<param name="ix" start="231" increment="88"/>
+			<param name="cx" start="211" increment="88"/>
+			<element ref="text_~n~_~m~"><bounds x="~lx~" y="351" width="48" height="13"/><color red="0.1" green="0.1" blue="0.11"/></element>
+			<element ref="key" inputtag="KEY~i~" inputmask="0x40"><bounds x="~kx~" y="382" width="52" height="36"/></element>
+			<repeat count="11">
+				<param name="y" start="456.5" increment="22"/>
+				<element ref="rect"><bounds x="~fx~" y="~y~" width="60" height="1"/><color red="0.4" green="0.41" blue="0.4"/></element>
+			</repeat>
+			<element ref="rect"><bounds x="~sx~" y="444" width="18" height="246"/><color red="0.42" green="0.43" blue="0.42"/></element>
+			<element ref="rect"><bounds x="~ix~" y="450" width="6" height="234"/><color red="0.1" green="0.1" blue="0.11"/></element>
+			<element ref="fader_area" id="fader~i~"><bounds x="~fx~" y="440" width="60" height="254"/></element>
+			<element ref="fader_cap" id="fadercap~i~">
+				<animate inputtag="FADER~i~" inputmask="0xff"/>
+				<bounds state="100" x="~cx~" y="444" width="46" height="26"/>
+				<bounds state="0" x="~cx~" y="664" width="46" height="26"/>
+			</element>
+		</repeat>
+		<element ref="text_max"><bounds x="162" y="448" width="34" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_r_ch"><bounds x="162" y="460" width="34" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_l_ch"><bounds x="162" y="662" width="34" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_min"><bounds x="162" y="674" width="34" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_volume"><bounds x="46" y="414" width="80" height="14"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_scale_10"><bounds x="104" y="450" width="24" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_scale_0"><bounds x="104" y="670" width="24" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<repeat count="11">
+			<param name="y" start="456.5" increment="22"/>
+			<element ref="rect"><bounds x="66" y="~y~" width="40" height="1"/><color red="0.4" green="0.41" blue="0.4"/></element>
+		</repeat>
+		<element ref="rect"><bounds x="77" y="444" width="18" height="246"/><color red="0.42" green="0.43" blue="0.42"/></element>
+		<element ref="rect"><bounds x="83" y="450" width="6" height="234"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="fader_area" id="fader8"><bounds x="56" y="440" width="60" height="254"/></element>
+		<element ref="fader_cap" id="fadercap8">
+			<animate inputtag="VOLUME" inputmask="0xff"/>
+			<bounds state="100" x="63" y="444" width="46" height="26"/>
+			<bounds state="0" x="63" y="664" width="46" height="26"/>
+		</element>
+
+		<!-- Mix mode, sequencer keys and transport -->
+		<element ref="rect"><bounds x="204" y="719" width="38.24" height="2"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="rect"><bounds x="313.76" y="719" width="38.24" height="2"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_mix_mode"><bounds x="248.24" y="714" width="59.52" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="rect"><bounds x="468" y="719" width="166.52" height="2"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="rect"><bounds x="713.48" y="719" width="166.52" height="2"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_sequencer"><bounds x="640.52" y="714" width="66.96" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_compu"><bounds x="190" y="729" width="88" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led1_4"><bounds x="227" y="745" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="key" inputtag="KEY1" inputmask="0x10"><bounds x="208" y="757" width="52" height="34"/></element>
+		<element ref="text_manual"><bounds x="278" y="729" width="88" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led2_4"><bounds x="315" y="745" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="key" inputtag="KEY2" inputmask="0x10"><bounds x="296" y="757" width="52" height="34"/></element>
+		<element ref="text_song_select"><bounds x="454" y="729" width="88" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led3_4"><bounds x="491" y="745" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="key" inputtag="KEY3" inputmask="0x10"><bounds x="472" y="757" width="52" height="34"/></element>
+		<element ref="text_status"><bounds x="542" y="729" width="88" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led4_4"><bounds x="579" y="745" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="key" inputtag="KEY4" inputmask="0x10"><bounds x="560" y="757" width="52" height="34"/></element>
+		<element ref="text_locate"><bounds x="630" y="729" width="88" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led5_4"><bounds x="667" y="745" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="key" inputtag="KEY5" inputmask="0x10"><bounds x="648" y="757" width="52" height="34"/></element>
+		<element ref="text_mark"><bounds x="718" y="729" width="88" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led6_4"><bounds x="755" y="745" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="key" inputtag="KEY6" inputmask="0x10"><bounds x="736" y="757" width="52" height="34"/></element>
+		<element ref="text_tempo"><bounds x="806" y="729" width="88" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led7_4"><bounds x="843" y="745" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="key" inputtag="KEY7" inputmask="0x10"><bounds x="824" y="757" width="52" height="34"/></element>
+		<element ref="key" inputtag="KEY0" inputmask="0x10"><bounds x="40" y="757" width="70" height="34"/></element>
+		<element ref="text_ctrl"><bounds x="44.2" y="767.5" width="61.6" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="led" name="led4_3"><bounds x="491" y="802" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key" inputtag="KEY4" inputmask="0x08"><bounds x="468" y="818" width="60" height="44"/></element>
+		<element ref="text_rec"><bounds x="471.6" y="833.5" width="52.8" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_meas_dec"><bounds x="542" y="800" width="88" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_start_stop"><bounds x="668" y="800" width="100" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led6_3"><bounds x="770" y="802" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="text_meas_inc"><bounds x="806" y="800" width="88" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY5" inputmask="0x08"><bounds x="546" y="818" width="80" height="44"/></element>
+		<element ref="text_rew"><bounds x="550.8" y="823" width="70.4" height="30.6"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY6" inputmask="0x08"><bounds x="636" y="818" width="164" height="44"/></element>
+		<element ref="text_play_stop"><bounds x="645.84" y="823" width="144.32" height="30.6"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY7" inputmask="0x08"><bounds x="810" y="818" width="80" height="44"/></element>
+		<element ref="text_ff"><bounds x="814.8" y="823" width="70.4" height="30.6"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_shift_top"><bounds x="546" y="866" width="90" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_shift_end"><bounds x="800" y="866" width="90" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+
+		<!-- PCM card slots -->
+		<element ref="text_pcm_card_a"><bounds x="960" y="16" width="220" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="rect"><bounds x="960" y="32" width="220" height="10"/><color red="0.3" green="0.31" blue="0.3"/></element>
+		<element ref="text_pcm_card_b"><bounds x="1220" y="16" width="220" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="rect"><bounds x="1220" y="32" width="220" height="10"/><color red="0.3" green="0.31" blue="0.3"/></element>
+
+		<!-- Cursor keys, INS/DEL and mode keys -->
+		<element ref="rect"><bounds x="924" y="62" width="530" height="300"/><color red="0.5" green="0.51" blue="0.5"/></element>
+		<element ref="key" inputtag="KEY0" inputmask="0x04"><bounds x="1006" y="80" width="72" height="54"/></element>
+		<element ref="text_up"><bounds x="1010.32" y="85" width="63.36" height="39.6"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY1" inputmask="0x04"><bounds x="938" y="140" width="62" height="66"/></element>
+		<element ref="text_left"><bounds x="941.72" y="151" width="54.56" height="39.6"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY2" inputmask="0x04"><bounds x="1084" y="140" width="62" height="66"/></element>
+		<element ref="text_right"><bounds x="1087.72" y="151" width="54.56" height="39.6"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY3" inputmask="0x04"><bounds x="1006" y="212" width="72" height="54"/></element>
+		<element ref="text_down"><bounds x="1010.32" y="217" width="63.36" height="39.6"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY4" inputmask="0x04"><bounds x="946" y="302" width="56" height="40"/></element>
+		<element ref="text_ins"><bounds x="949.36" y="315.5" width="49.28" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY5" inputmask="0x04"><bounds x="1018" y="302" width="56" height="40"/></element>
+		<element ref="text_del"><bounds x="1021.36" y="315.5" width="49.28" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="led" name="led7_1"><bounds x="1270" y="72" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY7" inputmask="0x02"><bounds x="1244" y="84" width="66" height="44"/></element>
+		<element ref="text_play"><bounds x="1247.96" y="100" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led7_0"><bounds x="1344" y="72" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY7" inputmask="0x01"><bounds x="1318" y="84" width="66" height="44"/></element>
+		<element ref="text_chain"><bounds x="1321.96" y="94" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_load"><bounds x="1321.96" y="106" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led3_0"><bounds x="1418" y="72" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY3" inputmask="0x01"><bounds x="1392" y="84" width="66" height="44"/></element>
+		<element ref="text_disk"><bounds x="1395.96" y="100" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led6_1"><bounds x="1270" y="142" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY6" inputmask="0x02"><bounds x="1244" y="154" width="66" height="44"/></element>
+		<element ref="text_compu"><bounds x="1247.96" y="164" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_mix"><bounds x="1247.96" y="176" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led6_0"><bounds x="1344" y="142" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY6" inputmask="0x01"><bounds x="1318" y="154" width="66" height="44"/></element>
+		<element ref="text_timbre"><bounds x="1321.96" y="164" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_edit"><bounds x="1321.96" y="176" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led2_0"><bounds x="1418" y="142" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY2" inputmask="0x01"><bounds x="1392" y="154" width="66" height="44"/></element>
+		<element ref="text_system"><bounds x="1395.96" y="170" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_track"><bounds x="1166" y="238" width="70" height="13"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_step"><bounds x="1318" y="270" width="66" height="10"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led5_1"><bounds x="1270" y="212" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY5" inputmask="0x02"><bounds x="1244" y="224" width="66" height="44"/></element>
+		<element ref="text_real"><bounds x="1247.96" y="234" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_time"><bounds x="1247.96" y="246" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led5_0"><bounds x="1344" y="212" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY5" inputmask="0x01"><bounds x="1318" y="224" width="66" height="44"/></element>
+		<element ref="text_micro"><bounds x="1321.96" y="234" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_scope"><bounds x="1321.96" y="246" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led1_0"><bounds x="1418" y="212" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY1" inputmask="0x01"><bounds x="1392" y="224" width="66" height="44"/></element>
+		<element ref="text_edit"><bounds x="1395.96" y="240" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_pattern"><bounds x="1166" y="308" width="70" height="13"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_step"><bounds x="1318" y="340" width="66" height="10"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led4_1"><bounds x="1270" y="282" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY4" inputmask="0x02"><bounds x="1244" y="294" width="66" height="44"/></element>
+		<element ref="text_real"><bounds x="1247.96" y="304" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_time"><bounds x="1247.96" y="316" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led4_0"><bounds x="1344" y="282" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY4" inputmask="0x01"><bounds x="1318" y="294" width="66" height="44"/></element>
+		<element ref="text_micro"><bounds x="1321.96" y="304" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="text_scope"><bounds x="1321.96" y="316" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led0_0"><bounds x="1418" y="282" width="14" height="8"/><color red="1" green="0.12" blue="0.08"/></element>
+		<element ref="key_light" inputtag="KEY0" inputmask="0x01"><bounds x="1392" y="294" width="66" height="44"/></element>
+		<element ref="text_edit"><bounds x="1395.96" y="310" width="58.08" height="10.8"/><color red="0.1" green="0.1" blue="0.11"/></element>
+
+		<!-- BEAT LEDs and VALUE dial -->
+		<element ref="text_beat"><bounds x="940" y="372" width="60" height="12"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="led" name="led1_2"><bounds x="944" y="390" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led" name="led2_2"><bounds x="980" y="390" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led" name="led3_2"><bounds x="1016" y="390" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="led" name="led4_2"><bounds x="1052" y="390" width="14" height="8"/><color red="0.25" green="1" blue="0.2"/></element>
+		<element ref="text_value"><bounds x="940" y="410" width="80" height="13"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="dial" id="dial"><bounds x="958" y="440" width="216" height="216"/></element>
+		<element ref="dial_dimple" id="dial_dimple"><bounds x="1088" y="470" width="46" height="46"/></element>
+		<element ref="key" inputtag="VALUE" inputmask="0x01"><bounds x="938" y="618" width="40" height="34"/></element>
+		<element ref="text_minus"><bounds x="940.4" y="621" width="35.2" height="25.2"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="VALUE" inputmask="0x02"><bounds x="1154" y="618" width="40" height="34"/></element>
+		<element ref="text_plus"><bounds x="1156.4" y="621" width="35.2" height="25.2"/><color red="0.92" green="0.92" blue="0.9"/></element>
+
+		<!-- Ten-key pad and SHIFT / ENTER -->
+		<element ref="text_stu"><bounds x="1244" y="420" width="40" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY6" inputmask="0x20"><bounds x="1244" y="434" width="66" height="56"/></element>
+		<element ref="text_7"><bounds x="1247.96" y="452" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_flat"><bounds x="1294" y="474" width="12" height="12"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_vwx"><bounds x="1318" y="420" width="40" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY3" inputmask="0x20"><bounds x="1318" y="434" width="66" height="56"/></element>
+		<element ref="text_8"><bounds x="1321.96" y="452" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_sharp"><bounds x="1368" y="474" width="12" height="12"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_yz"><bounds x="1392" y="420" width="40" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY3" inputmask="0x08"><bounds x="1392" y="434" width="66" height="56"/></element>
+		<element ref="text_9"><bounds x="1395.96" y="452" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_jkl"><bounds x="1244" y="504" width="40" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY5" inputmask="0x20"><bounds x="1244" y="518" width="66" height="56"/></element>
+		<element ref="text_4"><bounds x="1247.96" y="536" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_e"><bounds x="1294" y="558" width="12" height="12"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_mno"><bounds x="1318" y="504" width="40" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY2" inputmask="0x20"><bounds x="1318" y="518" width="66" height="56"/></element>
+		<element ref="text_5"><bounds x="1321.96" y="536" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_f"><bounds x="1368" y="558" width="12" height="12"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_pqr"><bounds x="1392" y="504" width="40" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY2" inputmask="0x08"><bounds x="1392" y="518" width="66" height="56"/></element>
+		<element ref="text_6"><bounds x="1395.96" y="536" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_g"><bounds x="1442" y="558" width="12" height="12"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_abc"><bounds x="1244" y="588" width="40" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY4" inputmask="0x20"><bounds x="1244" y="602" width="66" height="56"/></element>
+		<element ref="text_1"><bounds x="1247.96" y="620" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_b"><bounds x="1294" y="642" width="12" height="12"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_def"><bounds x="1318" y="588" width="40" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY1" inputmask="0x20"><bounds x="1318" y="602" width="66" height="56"/></element>
+		<element ref="text_2"><bounds x="1321.96" y="620" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_c"><bounds x="1368" y="642" width="12" height="12"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_ghi"><bounds x="1392" y="588" width="40" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY1" inputmask="0x08"><bounds x="1392" y="602" width="66" height="56"/></element>
+		<element ref="text_3"><bounds x="1395.96" y="620" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_d"><bounds x="1442" y="642" width="12" height="12"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_space"><bounds x="1244" y="672" width="60" height="11"/><color red="0.1" green="0.1" blue="0.11"/></element>
+		<element ref="key" inputtag="KEY0" inputmask="0x20"><bounds x="1244" y="686" width="66" height="56"/></element>
+		<element ref="text_0"><bounds x="1247.96" y="704" width="58.08" height="18"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="text_a"><bounds x="1294" y="726" width="12" height="12"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY0" inputmask="0x08"><bounds x="1318" y="686" width="140" height="56"/></element>
+		<element ref="text_enter"><bounds x="1326.4" y="707.5" width="123.2" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="key" inputtag="KEY7" inputmask="0x20"><bounds x="950" y="686" width="232" height="56"/></element>
+		<element ref="text_shift"><bounds x="963.92" y="707.5" width="204.16" height="11.7"/><color red="0.92" green="0.92" blue="0.9"/></element>
+		<element ref="script_warning" id="warning"><bounds x="924" y="852" width="540" height="13"/></element>
+	</view>
+
+	<script><![CDATA[
+		-- Faders (incl. VOLUME) are dragged directly; the VALUE dial turns by
+		-- pulsing the driver's Value -/+ inputs, one detent per pulse.
+		file:set_resolve_tags_callback(
+			function()
+				local view = file.views["Front Panel"]
+				local function field_of(tag)
+					local port = file.device:ioport(tag)
+					for _, f in pairs(port.fields) do return f end
+				end
+				local faders = {}
+				for i = 0, 8 do
+					faders[#faders + 1] = {
+						area = view.items["fader" .. i],
+						cap = view.items["fadercap" .. i],
+						field = field_of(i < 8 and ("FADER" .. i) or "VOLUME") }
+				end
+				local dial = view.items["dial"]
+				local dimple = view.items["dial_dimple"]
+				local value = file.device:ioport("VALUE")
+				local dec, inc = value.fields["Value -"], value.fields["Value +"]
+				local dial_port = file.device:ioport("DIAL")
+				local STEP = math.pi / 9 -- 18 detents per turn
+				local drag, pending, pulsing, turned = nil, 0, nil, 0
+
+				local function angle(x, y)
+					local b = dial.bounds
+					return math.atan(y - (b.y0 + b.y1) / 2, x - (b.x0 + b.x1) / 2)
+				end
+
+				view:set_pointer_updated_callback(
+					function(type, id, dev, x, y, btn, dn, up, cnt)
+						if btn & 1 == 0 then
+							drag = nil
+							return
+						end
+						if dn & 1 ~= 0 then
+							drag = nil
+							for _, f in ipairs(faders) do
+								if f.area.bounds:includes(x, y) then
+									drag = { fader = f }
+								end
+							end
+							if not drag and dial.bounds:includes(x, y) then
+								drag = { angle = angle(x, y), sweep = 0 }
+							end
+						end
+						if not drag then
+							return
+						elseif drag.fader then
+							local area, cap = drag.fader.area.bounds, drag.fader.cap.bounds.height
+							local v = (area.y1 - 4 - cap / 2 - y) / (area.height - 8 - cap) * 100
+							drag.fader.field.user_value = math.max(0, math.min(100, math.floor(v + 0.5)))
+						else
+							local a = angle(x, y)
+							local d = a - drag.angle
+							if d > math.pi then d = d - 2 * math.pi elseif d < -math.pi then d = d + 2 * math.pi end
+							drag.angle = a
+							drag.sweep = drag.sweep + d
+							while drag.sweep >= STEP do pending = pending + 1; drag.sweep = drag.sweep - STEP end
+							while drag.sweep <= -STEP do pending = pending - 1; drag.sweep = drag.sweep + STEP end
+						end
+					end)
+				local function release() drag = nil end
+				view:set_pointer_left_callback(release)
+				view:set_pointer_aborted_callback(release)
+				view:set_forget_pointers_callback(release)
+
+				-- One press or release per frame, so the 1 kHz panel scan sees every detent.
+				view:set_prepare_items_callback(
+					function()
+						if pulsing then
+							pulsing:set_value(0)
+							pulsing = nil
+						elseif pending ~= 0 then
+							pulsing = pending > 0 and inc or dec
+							pulsing:set_value(1)
+							turned = turned + (pending > 0 and 1 or -1)
+							pending = pending - (pending > 0 and 1 or -1)
+						end
+					end)
+
+				-- The dimple follows mouse detents and the host DIAL input.
+				local db, mb = dial.bounds, dimple.bounds
+				local cx, cy = (db.x0 + db.x1) / 2, (db.y0 + db.y1) / 2
+				local dx, dy = (mb.x0 + mb.x1) / 2 - cx, (mb.y0 + mb.y1) / 2 - cy
+				local r, w, h = math.sqrt(dx * dx + dy * dy), mb.width, mb.height
+				local base = math.atan(dy, dx)
+				dimple:set_bounds_callback(
+					function()
+						local a = base + (turned + dial_port:read()) * STEP
+						local x, y = cx + r * math.cos(a), cy + r * math.sin(a)
+						return emu.render_bounds(x - w / 2, y - h / 2, x + w / 2, y + h / 2)
+					end)
+
+				view.items["warning"]:set_state(0)
+			end)
+	]]></script>
+</mamelayout>

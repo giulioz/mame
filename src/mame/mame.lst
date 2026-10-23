@@ -40507,6 +40507,9 @@ mt32
 @source:roland/roland_mt80s.cpp
 mt80s
 
+@source:roland/roland_mv30.cpp
+mv30
+
 @source:roland/roland_pg1000.cpp
 pg1000
 
